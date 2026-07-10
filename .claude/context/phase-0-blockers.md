@@ -23,15 +23,27 @@ públicos de mercado de los exchanges no tienen esa restricción.
       viejo dan ≤1/seg por símbolo. Marcar granularidad/origen por registro.
 - Corre 24/7 desde el MVP.
 
-## Bloqueante C — Baseline/benchmark del win-rate
-Sin baseline, el win-rate no significa nada (si BTC sube el 65% de los días, un agente "long-only" supera
-el 50% sin edge real).
-- [ ] Definir un **benchmark pasivo** (ej. estrategia direccional/aleatoria en el mismo período) contra el
-      que se compara cada agente.
-- [ ] Definir cómo se calcula n (tamaño de muestra) e intervalo de confianza en el ranking.
-- [ ] Pre-registrar qué estrategias/reglas usa cada agente (con `strategy_id`) **antes** de ver resultados.
-- [ ] Reemplazar el umbral plano de 0.5% por normalización por ATR/volatilidad del activo.
-- **Definir esto antes de escribir el Agente Evaluador.**
+## Bloqueante C — Baseline/benchmark del win-rate (RESUELTO)
+**Estado: cerrado 2026-07-10.** Implementado en `backend/src/heatsignal/evaluation/`
+(`strategy_registry.py`, `baseline.py`, `evaluator.py`, `hypothesis_log.py`), 46 tests pasando. Sin
+baseline, el win-rate no significa nada (si BTC sube el 65% de los días, un agente "long-only" supera el
+50% sin edge real) — ya no es el caso: todo pasa por el Evaluador antes de reportarse.
+- [x] Definir un **benchmark pasivo**: `baseline.py` — `RandomBaseline`, `AlwaysLongBaseline`,
+      `MomentumBaseline`, todos reproducibles por seed.
+- [x] Definir cómo se calcula n (tamaño de muestra) e intervalo de confianza: `evaluator.py` —
+      `wilson_ci()` (IC de Wilson 95%), `n>=30` como mínimo (`Evaluator.PASS_MIN_N`), significancia vía
+      test binomial (scipy) contra H0: win_rate=0.5.
+- [x] Pre-registrar qué estrategias/reglas usa cada agente (con `strategy_id`) **antes** de ver
+      resultados: `strategy_registry.py` — `StrategyRegistry`, pre-registro inmutable sobre SQLite
+      append-only (triggers a nivel de motor bloquean `UPDATE`/`DELETE`, no es solo convención).
+- [ ] Reemplazar el umbral plano de 0.5% por normalización por ATR/volatilidad del activo — **no es del
+      Evaluador**, es del Analista de Liquidaciones (Fase 2, sin empezar todavía). Queda pendiente ahí.
+- Criterio de aprobación implementado: `n>=30 AND p_value<0.05 AND wilson_ci[0]>0.50 AND sharpe>1.0 AND`
+  superar los 3 baselines en un criterio **compuesto** (avg_return mayor + sharpe mayor + max_drawdown
+  menor en valor absoluto — `_beats_baseline`, no alcanza con ganar en una sola métrica). `n<30` siempre
+  resuelve en `passed=False, reason="insufficient_data"` — sin fallos silenciosos.
+- El log de resultados (`hypothesis_log.py`) nunca pisa una evaluación previa: hipótesis fallidas quedan
+  tan registradas como las exitosas (anti-p-hacking).
 
 ## Checklist de higiene (rápida, hacer también en Fase 0)
 - [ ] Gestión de secretos: API key de CoinGlass en `.env` (fuera de git), plan de rotación, dónde vive.
