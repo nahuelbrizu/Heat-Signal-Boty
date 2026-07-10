@@ -11,6 +11,39 @@
 
 ## Entradas
 
+### 2026-07-10 — Redis Streams, watchdog, FastAPI y primer agente LangGraph
+- **Redis Streams como sink real** (`schema/sink.py`): `RedisStreamSink` sobre `redis.asyncio`,
+  implementa `EventSink` sin que `BinanceWorker` se entere. Stream key `heatsignal:{symbol}:{kind}`
+  (ej. `heatsignal:BTC-USDT:liquidation`), payload `json.dumps(event.model_dump(mode="json"))`, `MAXLEN`
+  aprox. configurable (default 10 000), pool de conexiones configurable (default 10 vía
+  `max_connections`). `RedisStreamSink.connect()` es el punto de entrada de producción: prueba `PING`
+  con timeout y cae a `ConsoleSink` si Redis no responde al arrancar (no crashea el proceso de ingesta);
+  `write()` loguea y descarta si Redis se cae en operación, nunca propaga. Testeado con `fakeredis`
+  (`redis>=5.0`, `fakeredis>=2.0` — el segundo solo en `requirements-dev.txt`), sin Redis real en tests.
+  - Iteración: la primera versión agrupaba por `kind` solamente (`heatsignal:stream:{kind}`) y dejaba
+    propagar excepciones de Redis al llamador; se corrigió a pedido a stream-por-símbolo y swallow interno
+    de errores, con pool configurable y fallback a `ConsoleSink`.
+- **Watchdog de socket zombie** (`ingestion/binance_worker.py`): `on_close` del conector no cubre el caso
+  de un socket que queda "vivo" a nivel TCP pero deja de recibir datos. Se agregó `_watchdog()` (task
+  separada, sondea cada `watchdog_poll_s`, default 5s) que fuerza `_connection_dead.set()` si no llega
+  ningún mensaje en `message_timeout_s` (default 60s) — `_last_message_at` se actualiza en `_on_message`
+  ante cualquier frame, incluso no-JSON.
+- **Decisión FastAPI cerrada** (`decisions.md`, `CLAUDE.md`): esqueleto mínimo en
+  `backend/src/heatsignal/api/app.py` (`create_app()` + `GET /health`). El dashboard/API pública quedan
+  para Fase 4.
+- **Primer agente LangGraph**: `agents/liquidation_analyst.py` (Analista de Liquidaciones, sin los otros
+  2 analistas ni la capa de debate todavía) + `agents/state.py` (`GraphState`) + `agents/graph.py`
+  (`build_graph()`, grafo de un solo nodo). Un call batcheado con salida estructurada Pydantic
+  (`LiquidationAnalysisBatch`) para todos los símbolos de la ventana, no uno por símbolo. El LLM se
+  inyecta (`BaseChatModel`), no se instancia adentro — el proveedor concreto sigue sin decidirse en
+  `decisions.md`, y esto lo deja testeable con un modelo falso sin red ni API key.
+- 81 tests pasando (74 previos + 7 nuevos: 6 del analista/grafo, 1 del healthcheck; el rediseño del sink
+  de Redis sumó/reemplazó tests dentro de los 74).
+- Pendiente: wiring real — nada todavía lee del Redis Stream para alimentar `liquidations_by_symbol` del
+  grafo (el analista recibe el estado ya armado); falta decidir el proveedor de LLM concreto para poder
+  correr el grafo fuera de tests; Order Flow y Contexto de Mercado (los otros 2 analistas paralelos) y la
+  capa de debate siguen sin empezar.
+
 ### 2026-07-10 — Bloqueante C (benchmark/baseline estadístico)
 - Se implementó el Bloqueante C completo (baseline/benchmark del win-rate, ver `phase-0-blockers.md` y
   `phase-3-evaluation.md`) en `backend/src/heatsignal/evaluation/`:

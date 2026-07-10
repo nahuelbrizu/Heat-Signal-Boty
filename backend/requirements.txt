@@ -2,3 +2,8 @@ pydantic>=2
 binance-futures-connector
 scipy>=1.10
 numpy>=1.24
+redis>=5.0
+fastapi>=0.115
+uvicorn[standard]>=0.30
+langgraph>=1.0
+langchain-core>=1.0

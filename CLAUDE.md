@@ -35,7 +35,7 @@ ejecución. La integridad estadística del ranking es el núcleo del producto, n
 | Capa | Tecnología |
 |---|---|
 | Frontend | Next.js |
-| Backend | FastAPI (o NestJS — decisión abierta) |
+| Backend | **FastAPI** (decidido — ver `.claude/context/decisions.md`) |
 | Base de datos | PostgreSQL + TimescaleDB |
 | Cache / buffers | Redis |
 | Orquestación de agentes | **LangGraph** (decidido — ver `.claude/context/agents.md`) |

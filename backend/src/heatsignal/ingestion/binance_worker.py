@@ -18,6 +18,10 @@ Notas de diseno (verificadas contra la doc de Binance, jul 2026):
     sink async usamos run_coroutine_threadsafe contra el loop principal.
   - Reconexion: el objetivo es que si la conexion muere, se reconstruya sola con
     backoff exponencial + jitter, re-suscribiendo todos los simbolos.
+  - Watchdog de socket zombie: `on_close` no dispara si el socket queda "vivo" a
+    nivel TCP pero deja de recibir datos. Un watchdog aparte mide el tiempo desde
+    el ultimo mensaje (`message_timeout_s`, default 60s) y fuerza reconexion si
+    se excede.
 
 Este archivo es un esqueleto de produccion: la logica de normalizacion y el ciclo
 de vida estan completos; ajustar detalles de campos si la doc del exchange cambia.
@@ -83,15 +87,20 @@ class BinanceWorker:
         *,
         max_backoff_s: float = 60.0,
         base_backoff_s: float = 1.0,
+        message_timeout_s: float = 60.0,
+        watchdog_poll_s: float = 5.0,
     ) -> None:
         self._symbols = [s.upper() for s in symbols]
         self._sink = sink
         self._base_backoff = base_backoff_s
         self._max_backoff = max_backoff_s
+        self._message_timeout_s = message_timeout_s
+        self._watchdog_poll_s = watchdog_poll_s
         self._loop: asyncio.AbstractEventLoop | None = None
         self._client: UMFuturesWebsocketClient | None = None
         self._stop = asyncio.Event()
         self._connection_dead = asyncio.Event()
+        self._last_message_at: float = 0.0
 
     # ---- bridge sincrono -> async -------------------------------------------
 
@@ -101,6 +110,7 @@ class BinanceWorker:
         Debe ser rapido y NO lanzar: cualquier excepcion aca puede matar el hilo del
         stream en silencio. Por eso todo va envuelto y logueado.
         """
+        self._last_message_at = time.monotonic()  # cualquier frame cuenta como "vivo"
         try:
             msg = json.loads(raw)
         except (ValueError, TypeError):
@@ -198,6 +208,33 @@ class BinanceWorker:
         self._subscribe_all(client)
         return client
 
+    # ---- watchdog de socket zombie -------------------------------------------
+
+    def _is_connection_stale(self) -> bool:
+        """True si no llegó ningún mensaje en `_message_timeout_s` segundos.
+
+        `on_close` del conector no cubre el caso de un socket zombie (la
+        conexión TCP sigue "viva" pero Binance dejó de empujar datos, o el
+        cierre no se propaga a `on_close` por lo que sea): este es el único
+        chequeo que lo detecta.
+        """
+        return time.monotonic() - self._last_message_at > self._message_timeout_s
+
+    async def _watchdog(self) -> None:
+        """Sondea periódicamente y marca `_connection_dead` si detecta un socket zombie."""
+        while not self._stop.is_set():
+            await asyncio.sleep(self._watchdog_poll_s)
+            if self._is_connection_stale():
+                idle_s = time.monotonic() - self._last_message_at
+                log.warning(
+                    "sin mensajes de Binance en %.0fs (limite %.0fs) - posible socket "
+                    "zombie, forzando reconexion",
+                    idle_s,
+                    self._message_timeout_s,
+                )
+                self._connection_dead.set()
+                return
+
     async def run(self) -> None:
         """Corre para siempre: conecta, vigila, y reconecta con backoff+jitter."""
         self._loop = asyncio.get_running_loop()
@@ -208,15 +245,18 @@ class BinanceWorker:
             try:
                 log.info("conectando worker Binance (intento %d)", attempt + 1)
                 self._client = self._open_client()
+                self._last_message_at = time.monotonic()  # arranca el reloj del watchdog aca
                 attempt = 0  # conexion abierta: resetear backoff
 
-                # Vigilar hasta que la conexion muera o pidan stop.
+                # Vigilar hasta que la conexion muera, el watchdog detecte un socket
+                # zombie, o pidan stop.
                 stop_task = asyncio.create_task(self._stop.wait())
                 dead_task = asyncio.create_task(self._connection_dead.wait())
+                watchdog_task = asyncio.create_task(self._watchdog())
                 await asyncio.wait(
-                    {stop_task, dead_task}, return_when=asyncio.FIRST_COMPLETED
+                    {stop_task, dead_task, watchdog_task}, return_when=asyncio.FIRST_COMPLETED
                 )
-                for t in (stop_task, dead_task):
+                for t in (stop_task, dead_task, watchdog_task):
                     t.cancel()
 
             except Exception:  # noqa: BLE001

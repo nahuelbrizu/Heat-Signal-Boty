@@ -20,12 +20,15 @@
   alto con volatilidad/drawdown peores no es edge real, es más riesgo. Pre-registro de hipótesis inmutable
   (`StrategyRegistry`) y log de resultados que nunca pisa una evaluación previa (`HypothesisLog`), ambos
   sobre SQLite append-only con triggers a nivel de motor. Fecha: 2026-07-10.
+- **Backend → FastAPI.** Sobre NestJS. Razón: mismo lenguaje que el resto del stack de agentes
+  (LangGraph, evaluation/, ingestion/ ya son Python) — un solo runtime, sin puente entre proceso
+  Node y proceso Python para el mismo dominio. Esqueleto mínimo en
+  `backend/src/heatsignal/api/app.py` (`create_app()` + `GET /health`); el dashboard, el reporte diario
+  y la API pública de señales quedan para Fase 4. Fecha: 2026-07-10.
 
 ## Abiertas
 - ~~Plan de CoinGlass a contratar.~~ **Ya no aplica al core** — la fuente primaria pasó a WS nativos.
   Solo se retomaría si se implementa la fuente BYOK opcional (y ahí el plan lo elige el usuario).
-- **Backend: FastAPI vs NestJS.** Sin decidir. FastAPI encaja mejor si el resto del stack de agentes es
-  Python (LangGraph lo es). Sesgo tentativo hacia FastAPI por esa razón, pero no cerrado.
 
 ## Plantilla para nuevas decisiones
 ```
