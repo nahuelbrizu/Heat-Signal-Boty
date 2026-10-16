@@ -455,7 +455,11 @@ class OkxWorker:
             except (asyncio.CancelledError, OkxContractError):
                 raise
             except Exception:  # noqa: BLE001
-                log.exception("error en el worker de OKX")
+                if self._stop.is_set():
+                    # stop() cerro el socket a proposito: el ConnectionClosedOK que sigue no es un error.
+                    log.debug("worker de OKX cerrado por stop()", exc_info=True)
+                else:
+                    log.exception("error en el worker de OKX")
 
             if self._stop.is_set():
                 break

@@ -229,3 +229,16 @@ async def test_consume_writes_events_and_returns_on_timeout() -> None:
 
     await worker._consume(FakeWS())
     assert [e.kind for e in sink.buffer] == ["liquidation"]
+
+
+async def test_run_does_not_log_error_when_stopped(monkeypatch, caplog: pytest.LogCaptureFixture) -> None:
+    worker = _worker()
+
+    async def closed_by_stop() -> None:
+        await worker.stop()
+        raise RuntimeError("ConnectionClosedOK simulado")
+
+    monkeypatch.setattr(worker, "_run_once", closed_by_stop)
+    with caplog.at_level("ERROR", logger="heatsignal.ingestion.bybit"):
+        await worker.run()
+    assert "error en el worker" not in caplog.text
