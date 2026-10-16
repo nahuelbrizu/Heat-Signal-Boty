@@ -11,6 +11,21 @@
 
 ## Entradas
 
+### 2026-10-17
+- Ola multi-agente (5 worktrees, mergeados en `ingestion-binance-bybit`): worker OKX (ctVal por REST,
+  liquidaciones PARTIAL), persistencia (TimescaleSink, Fanout, Throttle, health, `ingestion/run.py`,
+  compose), features (`liqcluster-v1`, ATR Wilder, order flow, `regime-v1`, `builder.py`), grafo LangGraph
+  (analistas -> debate -> sintetizador -> redactor con guardrail) y evaluación Fase 3 (`pending_store`,
+  resolver, calibración, reporte). Smoke test en vivo de los 3 exchanges sin reconexiones.
+- Fixes: rutas nuevas de Binance Futures WS (`/market`, `/public`), `forceOrder` PARTIAL, lado de
+  liquidación de Bybit invertido, precio de salida por mark.
+- VM de prueba: GCP e2-small en asia-northeast1-a (Debian 13, 2 vCPU, 1.9 GB, disco 10 GB, sin swap).
+  Los 3 exchanges responden desde Tokio.
+- Decisión: datos de mercado solo en memoria (ver decisions.md). `MemoryWindowSink` +
+  `HEATSIGNAL_STORAGE=memory` como default; unidad systemd en `deploy/`.
+- Pendiente: desplegar en la VM (swap + venv + systemd), cableado end-to-end memoria -> features ->
+  grafo -> pending_store, API key de Anthropic, estrategias pre-registradas por el usuario.
+
 ### 2026-10-17 — Worker de Bybit
 
 - `ingestion/bybit_worker.py` (asyncio + `websockets`, sin conector de terceros): `allLiquidation` (FULL,

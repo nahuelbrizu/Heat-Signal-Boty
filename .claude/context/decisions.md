@@ -25,6 +25,18 @@
   Node y proceso Python para el mismo dominio. Esqueleto mínimo en
   `backend/src/heatsignal/api/app.py` (`create_app()` + `GET /health`); el dashboard, el reporte diario
   y la API pública de señales quedan para Fase 4. Fecha: 2026-07-10.
+- **Datos de mercado en la etapa de prueba → solo en memoria (pass-through).** Sobre persistirlos en
+  TimescaleDB/Redis. Razón: es un proyecto de prueba; el usuario pidió que los datos solo pasen, sin
+  guardarse ni exponerse en otro lado. También evita disco/RAM extra en la VM e2-small y no guarda ni
+  redistribuye datos crudos de los exchanges. `HEATSIGNAL_STORAGE=memory` (default) usa
+  `storage/memory.py::MemoryWindowSink`: ventana en RAM por tipo y símbolo (trades 30 min, tickers 2 h,
+  liquidaciones 24 h) con tope duro de eventos. Costo aceptado: cada reinicio vacía la ventana
+  (calentamiento) y no hay historia para recalcular features con un heatmap nuevo. Sin fallos silenciosos:
+  `data_gaps()` declara el calentamiento, la retención menor a la ventana pedida y los huecos por tope.
+  **Lo que SÍ persiste:** hipótesis y resoluciones (`pending_store`, SQLite append-only). Sin eso no hay
+  win-rate medible y se rompe el anti-p-hacking. El precio de salida sale de klines REST de Binance, no de
+  datos guardados. Los features agregados (no los eventos crudos) se envían al proveedor LLM cuando corre
+  el grafo. El modo `persistent` (compose) queda en el código, apagado. Fecha: 2026-10-17.
 
 ## Abiertas
 - ~~Plan de CoinGlass a contratar.~~ **Ya no aplica al core** — la fuente primaria pasó a WS nativos.

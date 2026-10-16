@@ -46,6 +46,8 @@ services:
     restart: unless-stopped
     env_file: .env
     environment:
+      # El stack de compose es el modo con persistencia; la VM de prueba corre en modo memory sin compose.
+      HEATSIGNAL_STORAGE: persistent
       REDIS_URL: redis://redis:6379/0
       DATABASE_URL: postgresql://${POSTGRES_USER:-heatsignal}:${POSTGRES_PASSWORD}@timescaledb:5432/${POSTGRES_DB:-heatsignal}
     depends_on:

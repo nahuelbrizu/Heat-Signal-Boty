@@ -5,9 +5,17 @@ Corre un worker WS por exchange en paralelo y los cablea a los sinks:
 
     worker -> CountingSink (health por worker)
            -> ThrottledSink (tickers a 1/seg por source+symbol)
-           -> FanoutSink(RedisStreamSink, TimescaleSink)
+           -> FanoutSink(MemoryWindowSink)                 HEATSIGNAL_STORAGE=memory (default)
+           -> FanoutSink(RedisStreamSink, TimescaleSink)   HEATSIGNAL_STORAGE=persistent
+
+En modo `memory` los datos de mercado solo pasan: viven en una ventana en RAM y se descartan
+(decisions.md, "Datos de mercado solo en memoria"). REDIS_URL / DATABASE_URL se ignoran con aviso.
 
 Configuracion por variables de entorno (ver `.env.example` en la raiz del repo):
+  HEATSIGNAL_STORAGE            "memory" | "persistent"
+  HEATSIGNAL_MEM_TRADES_S       1800   retencion en RAM por tipo (modo memory)
+  HEATSIGNAL_MEM_TICKERS_S      7200
+  HEATSIGNAL_MEM_LIQUIDATIONS_S 86400
   HEATSIGNAL_SYMBOLS            "BTCUSDT,SOLUSDT"   simbolos en formato del exchange (sin guion)
   HEATSIGNAL_EXCHANGES          "binance,bybit,okx" exchanges a habilitar (okx solo si el modulo existe)
   REDIS_URL                     p.ej. redis://localhost:6379/0     (opcional)
@@ -37,6 +45,7 @@ from typing import Any
 
 from ..schema.sink import ConsoleSink, EventSink, RedisStreamSink
 from ..storage.fanout import FanoutSink
+from ..storage.memory import MemoryWindowSink
 from ..storage.throttle import ThrottledSink
 from ..storage.timescale import TimescaleSink, _redact
 from .binance_worker import BinanceWorker
@@ -62,6 +71,7 @@ else:  # pragma: no cover
     WORKER_FACTORIES["okx"] = OkxWorker
 
 KNOWN_EXCHANGES = ("binance", "bybit", "okx")
+STORAGE_MODES = ("memory", "persistent")
 SHUTDOWN_TIMEOUT_S = 3.0
 
 
@@ -73,6 +83,10 @@ class RunConfig:
     exchanges: tuple[str, ...]
     redis_url: str | None
     database_url: str | None
+    storage: str = "memory"
+    mem_trades_s: float = 1800.0
+    mem_tickers_s: float = 7200.0
+    mem_liquidations_s: float = 86400.0
     ticker_interval_s: float = 1.0
     db_batch_size: int = 500
     db_flush_s: float = 1.0
@@ -129,11 +143,19 @@ class RunConfig:
             value = int(_float(name, default))
             return value if value > 0 else None
 
+        storage = (_opt("HEATSIGNAL_STORAGE") or "memory").lower()
+        if storage not in STORAGE_MODES:
+            raise ValueError(f"HEATSIGNAL_STORAGE invalido: {storage!r} (opciones: {STORAGE_MODES})")
+
         return cls(
             symbols=symbols,
             exchanges=exchanges,
             redis_url=_opt("REDIS_URL"),
             database_url=_opt("DATABASE_URL"),
+            storage=storage,
+            mem_trades_s=_float("HEATSIGNAL_MEM_TRADES_S", 1800.0),
+            mem_tickers_s=_float("HEATSIGNAL_MEM_TICKERS_S", 7200.0),
+            mem_liquidations_s=_float("HEATSIGNAL_MEM_LIQUIDATIONS_S", 86400.0),
             ticker_interval_s=_float("HEATSIGNAL_TICKER_INTERVAL_S", 1.0),
             db_batch_size=int(_float("HEATSIGNAL_DB_BATCH_SIZE", 500)),
             db_flush_s=_float("HEATSIGNAL_DB_FLUSH_S", 1.0),
@@ -159,8 +181,29 @@ class RunConfig:
 
 # ---- sinks ----------------------------------------------------------------------------------------
 
+def _throttled(cfg: RunConfig, sinks: list[EventSink]) -> ThrottledSink:
+    intervals = {"ticker": cfg.ticker_interval_s} if cfg.ticker_interval_s > 0 else {}
+    return ThrottledSink(FanoutSink(*sinks), intervals)
+
+
 async def build_sinks(cfg: RunConfig) -> tuple[ThrottledSink, list[EventSink]]:
-    """Arma Throttled -> Fanout(Redis, Timescale). Nunca lanza por falta de Redis/DB."""
+    """Arma Throttled -> Fanout(...) segun `cfg.storage`. Nunca lanza por falta de Redis/DB."""
+    if cfg.storage == "memory":
+        for name, value in (("REDIS_URL", cfg.redis_url), ("DATABASE_URL", cfg.database_url)):
+            if value:
+                log.warning("HEATSIGNAL_STORAGE=memory: %s configurado pero se IGNORA (no se persiste)", name)
+        memory = MemoryWindowSink(retention_s={
+            "trade": cfg.mem_trades_s,
+            "ticker": cfg.mem_tickers_s,
+            "liquidation": cfg.mem_liquidations_s,
+        })
+        log.info(
+            "modo memory: datos de mercado solo en RAM (trades %.0fs, tickers %.0fs, liquidaciones %.0fs), "
+            "nada se escribe a disco",
+            cfg.mem_trades_s, cfg.mem_tickers_s, cfg.mem_liquidations_s,
+        )
+        return _throttled(cfg, [memory]), [memory]
+
     real: list[EventSink] = []
 
     if cfg.redis_url:
@@ -198,9 +241,7 @@ async def build_sinks(cfg: RunConfig) -> tuple[ThrottledSink, list[EventSink]]:
         log.warning("!!! ningun sink real disponible - usando ConsoleSink (los datos NO se guardan) !!!")
         real.append(ConsoleSink())
 
-    fanout = FanoutSink(*real)
-    intervals = {"ticker": cfg.ticker_interval_s} if cfg.ticker_interval_s > 0 else {}
-    return ThrottledSink(fanout, intervals), real
+    return _throttled(cfg, real), real
 
 
 # ---- ciclo de vida --------------------------------------------------------------------------------

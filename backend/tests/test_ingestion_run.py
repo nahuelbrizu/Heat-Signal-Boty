@@ -13,6 +13,7 @@ from heatsignal.ingestion.run import RunConfig, build_sinks
 from heatsignal.schema.events import Exchange, TickerEvent
 from heatsignal.schema.sink import BufferedSink, ConsoleSink
 from heatsignal.storage.fanout import FanoutSink
+from heatsignal.storage.memory import MemoryWindowSink
 from heatsignal.storage.throttle import ThrottledSink
 
 # ---- config ---------------------------------------------------------------------------------------
@@ -25,6 +26,7 @@ def test_config_defaults() -> None:
     assert cfg.redis_url is None and cfg.database_url is None
     assert cfg.ticker_interval_s == 1.0
     assert cfg.run_seconds is None
+    assert cfg.storage == "memory"
 
 
 def test_config_parses_env() -> None:
@@ -50,6 +52,7 @@ def test_config_parses_env() -> None:
     {"HEATSIGNAL_EXCHANGES": "binance,kraken"},
     {"HEATSIGNAL_SYMBOLS": " , "},
     {"HEATSIGNAL_TICKER_INTERVAL_S": "rapido"},
+    {"HEATSIGNAL_STORAGE": "disco"},
 ])
 def test_config_rejects_invalid(env: dict[str, str]) -> None:
     with pytest.raises(ValueError):
@@ -67,8 +70,23 @@ def test_enabled_exchanges_skips_unavailable_okx(monkeypatch, caplog) -> None:
 # ---- sinks ----------------------------------------------------------------------------------------
 
 
+async def test_build_sinks_memory_mode_ignores_redis_and_db(caplog) -> None:
+    cfg = RunConfig.from_env({
+        "REDIS_URL": "redis://r:6379/0",
+        "DATABASE_URL": "postgresql://x:y@h/db",
+        "HEATSIGNAL_MEM_TRADES_S": "600",
+    })
+    with caplog.at_level(logging.WARNING):
+        throttled, sinks = await build_sinks(cfg)
+    assert len(sinks) == 1 and isinstance(sinks[0], MemoryWindowSink)
+    assert sinks[0]._retention_ms["trade"] == 600_000
+    assert "REDIS_URL configurado pero se IGNORA" in caplog.text
+    assert "DATABASE_URL configurado pero se IGNORA" in caplog.text
+    await throttled.close()
+
+
 async def test_build_sinks_falls_back_to_console_without_redis_or_db(caplog) -> None:
-    cfg = RunConfig.from_env({})
+    cfg = RunConfig.from_env({"HEATSIGNAL_STORAGE": "persistent"})
     with caplog.at_level(logging.WARNING):
         throttled, sinks = await build_sinks(cfg)
     assert isinstance(throttled, ThrottledSink)
@@ -80,6 +98,7 @@ async def test_build_sinks_falls_back_to_console_without_redis_or_db(caplog) -> 
 
 async def test_build_sinks_unreachable_backends_do_not_crash() -> None:
     cfg = RunConfig.from_env({
+        "HEATSIGNAL_STORAGE": "persistent",
         "REDIS_URL": "redis://127.0.0.1:1/0",
         "DATABASE_URL": "postgresql://x:y@127.0.0.1:1/db",
     })

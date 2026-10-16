@@ -1,0 +1,28 @@
+# Ingesta de HeatSignal en modo memory (sin Postgres/Redis): los datos de mercado solo pasan por RAM.
+# Instalar: sudo cp deploy/heatsignal-ingestion.service /etc/systemd/system/
+#           sudo systemctl daemon-reload && sudo systemctl enable --now heatsignal-ingestion
+# Logs:     journalctl -u heatsignal-ingestion -f
+[Unit]
+Description=HeatSignal ingestion (memory mode)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=nahue
+WorkingDirectory=/home/nahue/heatsignal/backend
+EnvironmentFile=-/home/nahue/heatsignal/.env
+Environment=HEATSIGNAL_STORAGE=memory
+Environment=PYTHONPATH=/home/nahue/heatsignal/backend/src
+ExecStart=/home/nahue/heatsignal/backend/.venv/bin/python -m heatsignal.ingestion.run
+Restart=always
+RestartSec=5
+# Tope de RAM para no tumbar la VM de 2 GB (la ventana de trades de 30 min ronda 160-250 MB).
+MemoryMax=700M
+# Sin escritura a disco salvo el home (para las hipotesis, cuando se cableen).
+ProtectSystem=strict
+ReadWritePaths=/home/nahue/heatsignal
+PrivateTmp=true
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target
