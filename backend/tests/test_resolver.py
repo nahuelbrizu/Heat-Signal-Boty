@@ -328,7 +328,7 @@ def test_binance_request_params() -> None:
     http = FakeHttp(200, [_kline(CANDLE_MS)])
     BinanceKlinePriceSource(http_get=http).price_at("BTC-USDT", TS)
     url = urlparse(http.urls[0])
-    assert (url.scheme, url.netloc, url.path) == ("https", "fapi.binance.com", "/fapi/v1/klines")
+    assert (url.scheme, url.netloc, url.path) == ("https", "fapi.binance.com", "/fapi/v1/markPriceKlines")
     assert parse_qs(url.query) == {
         "symbol": ["BTCUSDT"],
         "interval": ["1m"],
