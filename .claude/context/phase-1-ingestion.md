@@ -72,6 +72,26 @@ bloqueante de Fase 1 — se puede empezar con clusters simples por nivel de prec
 - Filtrar/marcar DEX chicos como "baja confianza" (esto ahora es menos relevante porque arrancamos con los
   3 grandes, pero mantener el campo de confianza por si se suman fuentes).
 
+## Persistencia + runner (implementado oct 2026)
+- `python -m heatsignal.ingestion.run` (`ingestion/run.py`): corre los workers habilitados en paralelo
+  (`HEATSIGNAL_EXCHANGES`, `HEATSIGNAL_SYMBOLS`), shutdown limpio con SIGINT/SIGTERM. OKX se importa
+  opcional (`try: from .okx_worker import OkxWorker`): se habilita solo cuando el módulo exista.
+- Cadena de sinks: `worker -> CountingSink (health) -> ThrottledSink -> FanoutSink(RedisStreamSink, TimescaleSink)`.
+  Sin `REDIS_URL`/`DATABASE_URL` (o sin respuesta) → warning fuerte y sigue con lo que haya; si no queda nada,
+  `ConsoleSink`. Nunca crashea por eso.
+- `storage/timescale.py`: tablas `liquidations`/`trades`/`tickers` (espejan `schema/events.py`, con `source`,
+  `coverage`, `is_block_trade`, `ts timestamptz` + ms crudos). Hypertables + compresión (7d) + retención
+  (trades 30d, tickers 90d, liquidaciones sin borrar) **solo si existe la extensión timescaledb**; en Postgres
+  plano queda modo `plain` (retención manual: `prune_plain()` / `RETENTION_NOTE`). Escritura por lotes con
+  `COPY` en una transacción; cola acotada con contadores explícitos (`dropped_overflow`, `dropped_rejected`,
+  `dropped_on_close`, `failed_flushes`).
+- `storage/throttle.py`: tickers a ≤1/seg por (source, symbol), last-value-wins con flush al final de la
+  ventana (el valor final nunca se pierde). Liquidaciones y trades pasan intactos.
+- `ingestion/health.py`: métrica de uptime por worker (`connected` = recibió datos en los últimos 30s,
+  `reconnects`, `uptime_ratio`, eventos por tipo), logueada cada `HEATSIGNAL_HEALTH_LOG_S`. `reconnects` se
+  infiere del log "conectando worker X" — reemplazar por hook explícito cuando se toquen los workers.
+- Deploy: `docker-compose.yml` (timescaledb-pg16, redis:7, ingestion, api), `backend/Dockerfile`, `.env.example`.
+
 ## Salida de Fase 1
 3 workers (Binance, Bybit, OKX) corriendo 24/7, normalizando a esquema común, escribiendo a TimescaleDB +
 buffers Redis, con métrica de uptime por worker y campo de granularidad/origen por registro.

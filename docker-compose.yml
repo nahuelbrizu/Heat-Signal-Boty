@@ -1,0 +1,67 @@
+# HeatSignal - stack local: TimescaleDB + Redis + ingesta + API.
+# Uso:  cp .env.example .env  (y completar POSTGRES_PASSWORD)  &&  docker compose up -d --build
+services:
+  timescaledb:
+    image: timescale/timescaledb:latest-pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-heatsignal}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?definir POSTGRES_PASSWORD en .env}
+      POSTGRES_DB: ${POSTGRES_DB:-heatsignal}
+    volumes:
+      - timescale-data:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:5433:5432"   # 5433 en el host para no chocar con un Postgres local
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  redis:
+    image: redis:7
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+    ports:
+      - "127.0.0.1:6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  ingestion:
+    build: ./backend
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      DATABASE_URL: postgresql://${POSTGRES_USER:-heatsignal}:${POSTGRES_PASSWORD}@timescaledb:5432/${POSTGRES_DB:-heatsignal}
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    stop_grace_period: 30s   # SIGTERM -> flush de pendientes antes del SIGKILL
+
+  api:
+    build: ./backend
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      DATABASE_URL: postgresql://${POSTGRES_USER:-heatsignal}:${POSTGRES_PASSWORD}@timescaledb:5432/${POSTGRES_DB:-heatsignal}
+    command: ["uvicorn", "heatsignal.api.app:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000"]
+    ports:
+      - "127.0.0.1:8000:8000"
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+volumes:
+  timescale-data:
+  redis-data:
