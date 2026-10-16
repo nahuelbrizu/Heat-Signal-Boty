@@ -73,6 +73,22 @@
    silencioso); los fallos salen por una taxonomía de error tipada; datos viejos se rechazan, no se
    reportan como actuales.
 
+## Estado de implementación (Fase 2)
+
+Código en `backend/src/heatsignal/agents/` (`graph.py` tiene el diagrama). Desvíos/precisiones respecto
+del diseño de arriba:
+- El **Evaluador/Juez no es un nodo de este grafo**: el Sintetizador persiste `PendingHypothesis` vía el
+  protocolo `PendingHypothesisStore.add()` y la Fase 3 (`evaluation/`) las resuelve fuera del grafo.
+  Orden real: analistas (paralelo) → debate (N rondas) → sintetizador → redactor.
+- Los analistas leen `FeatureSet` (`schema/features.py`), no eventos crudos. Los números
+  (notional, imbalance, régimen, precio de entrada) los pone el código; el LLM interpreta.
+- El Sintetizador solo elige entre `allowed_strategies` (pre-registradas); cualquier `strategy_id`
+  desconocido se rechaza y loguea en código. `entry_reference_price` = `context.mark_price`.
+- El Redactor tiene un guardrail en código (`guardrails.py`): 1 reintento con feedback y, si vuelve a
+  fallar, el reporte queda `guardrail_failed` (no publicable).
+- Checkpoint: `thread_id = "{símbolos ordenados}:{run_id}"`, `AsyncSqliteSaver` (`checkpoint.py`).
+- Ruteo de modelos en `llm_factory.py` (proveedor: decisión abierta, ver `decisions.md`).
+
 ## Lo que NO copiamos de TradingAgents
 - Su capa de datos (yfinance/Alpha Vantage por fecha) es point-in-time sobre equities. No sirve.
 - Sus analistas de fundamentals/earnings/Reddit — no aplican a derivados cripto.
