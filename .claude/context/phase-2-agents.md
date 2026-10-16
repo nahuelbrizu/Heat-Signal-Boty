@@ -25,3 +25,12 @@
 
 ## Salida de Fase 2
 Grafo que produce hipótesis estructuradas y las persiste (pendientes), sin publicar aún ningún número.
+
+## Estado (2026-10-17)
+Grafo implementado (detalle en `agents.md`) y **cableado end-to-end**: `pipeline/analysis.py`
+(`AnalysisLoop`) corre dentro del proceso de ingesta cada `HEATSIGNAL_ANALYSIS_INTERVAL_S` (900 s):
+ventana en memoria -> `build_feature_set` -> grafo -> `PendingHypothesisStore` (SQLite). Cada ciclo
+termina en un estado explícito: `warmup` (ventana incompleta tras reinicio, no se llama al LLM),
+`no_strategies`, `no_llm` (sin `ANTHROPIC_API_KEY`), `ran` o `error`. Solo se ofrecen al Sintetizador
+estrategias no `evaluated`. **Inactivo en la VM** hasta que haya API key y estrategias pre-registradas
+(`estado.md`). Sin validar contra la API real.

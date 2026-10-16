@@ -29,6 +29,7 @@
   (`warmup`, `no_strategies`, `no_llm`, `ran`, `error`). Evaluacion por timer systemd cada 5 min.
   CLI `python -m heatsignal.evaluation.register_strategy` para pre-registrar estrategias.
 - Pendiente: API key de Anthropic en el `.env` de la VM y estrategias pre-registradas por el usuario.
+- Se actualizaron los estados de las fases y se creó `estado.md` (foto actual + lista de pendientes).
 
 ### 2026-10-17 — Worker de Bybit
 

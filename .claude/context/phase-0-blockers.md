@@ -14,14 +14,16 @@ públicos de mercado de los exchanges no tienen esa restricción.
 - Ya NO es un bloqueante duro para el dashboard público.
 
 ## Bloqueante B — Diseño de la capa de ingesta (WS nativos)
-**En diseño.** Fuente = WS públicos de Binance + Bybit + OKX. Diseño detallado en `phase-1-ingestion.md`.
+**Estado: implementado 2026-10-17.** Fuente = WS públicos de Binance + Bybit + OKX. Detalle en
+`phase-1-ingestion.md`; corre 24/7 en la VM de prueba (ver `estado.md`).
 - [x] Endpoints verificados contra doc oficial de cada exchange (liquidaciones/trades/ticker).
 - [x] Decisión: **1 worker por exchange** (multiplexa canales), no 1 por stream.
-- [ ] Implementar reconexión/backoff+jitter, replay de suscripciones, heartbeat, checkpointing.
-- [ ] Implementar adaptadores de normalización por exchange (formatos distintos) a esquema común UTC.
-- ⚠️ Cobertura de liquidaciones no uniforme: solo `allLiquidation` de Bybit da todo; Binance (`forceOrder`), OKX y el Bybit
-      viejo dan ≤1/seg por símbolo. Marcar granularidad/origen por registro.
-- Corre 24/7 desde el MVP.
+- [x] Reconexión con backoff+jitter, replay de suscripciones al reconectar, heartbeat por exchange y
+      watchdog de socket zombie. El "checkpointing" de la ingesta no aplica en modo memory (cada reinicio
+      vacía la ventana y se declara como calentamiento).
+- [x] Adaptadores de normalización por exchange a esquema común UTC (`schema/events.py`).
+- ⚠️ Cobertura de liquidaciones no uniforme: solo `allLiquidation` de Bybit es FULL; Binance (`forceOrder`,
+      la última por símbolo cada 1000ms) y OKX son PARTIAL. Marcado por registro en `coverage`.
 
 ## Bloqueante C — Baseline/benchmark del win-rate (RESUELTO)
 **Estado: cerrado 2026-07-10.** Implementado en `backend/src/heatsignal/evaluation/`
@@ -48,10 +50,11 @@ baseline, el win-rate no significa nada (si BTC sube el 65% de los días, un age
   tan registradas como las exitosas (anti-p-hacking).
 
 ## Checklist de higiene (rápida, hacer también en Fase 0)
-- [ ] Gestión de secretos: API key de CoinGlass en `.env` (fuera de git), plan de rotación, dónde vive.
-- [ ] Política de retención de `raw_snapshots` (tick-by-tick crece rápido — dimensionar antes de que el
-      storage bill escale).
-- [ ] Decidir plan de CoinGlass a contratar (ver `decisions.md`).
+- [x] Gestión de secretos: `.env` fuera de git (`.env.example` versionado sin valores). La única clave
+      del core es `ANTHROPIC_API_KEY`, que vive solo en el `.env` de la VM. Plan de rotación: pendiente.
+- [x] Retención de datos crudos: resuelta por la decisión "datos de mercado solo en memoria" (no se
+      guardan). Si se vuelve a modo `persistent`, la política está en `storage/timescale.py`.
+- ~~Decidir plan de CoinGlass a contratar.~~ No aplica al core (ver `decisions.md`).
 
 ## Salida de Fase 0
 Un documento corto que responda: (a) ¿se puede publicar contenido derivado? (b) diseño de ingesta WS

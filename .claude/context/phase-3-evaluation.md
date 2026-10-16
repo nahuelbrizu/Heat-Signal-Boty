@@ -53,6 +53,12 @@ Implementado en `backend/src/heatsignal/evaluation/` (107 tests en `test_pending
 - `job.py` — `python -m heatsignal.evaluation.job [--db ...]`: resuelve vencidas y evalua todas las
   estrategias; exit code 1 si hubo errores transitorios de la fuente.
 
+- `register_strategy.py` — `python -m heatsignal.evaluation.register_strategy archivo.json | --list`:
+  pre-registro por CLI (rechaza `strategy_id`/`status`/`registered_at` en el JSON: los asigna el sistema).
+- En la VM: `heatsignal-eval.timer` corre `job.py --public-only` cada 5 min sobre
+  `~/heatsignal/data/heatsignal_eval.sqlite` (la misma base que usa el ciclo de análisis).
+
+Resuelto: `price_kind` default ahora es `mark` (consistente con la entrada en mark price).
 Pendiente: baseline momentum del Evaluador recibe precios de entrada de senales consecutivas (mezcla
-simbolos si la estrategia opera varios); exponer reportes en la API (Fase 4); `price_kind` default
-`last` vs entrada en mark price.
+simbolos si la estrategia opera varios); exponer reportes en la API (Fase 4); decidir si se publica el
+supuesto de 10 bps de costo. Shadow mode: arranca cuando haya estrategias + API key (`estado.md`).

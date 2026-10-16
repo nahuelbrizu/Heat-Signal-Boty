@@ -4,6 +4,8 @@
 > exchanges, no CoinGlass) — igual confirmar los ítems livianos de ToS de exchange en `phase-0-blockers.md`
 > antes de publicar.
 
+**Estado (2026-10-17): no iniciado.** Solo existe `GET /health` (`api/app.py`). Pendientes en `estado.md`.
+
 ## Dashboard (Next.js)
 - Señales rankeadas por win-rate calibrado, con n e intervalo de confianza visibles (no ocultar la
   incertidumbre).

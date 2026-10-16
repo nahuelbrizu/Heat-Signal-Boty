@@ -48,7 +48,13 @@
   Structured output con `method="json_schema"` (Sonnet 5.5 rechaza `tool_choice` forzado, que es lo
   que usa el método por defecto de langchain). Los nodos reciben el LLM inyectado, así que cambiar de
   proveedor no toca el grafo. Pendiente: confirmar proveedor + presupuesto, y validar con una API key
-  real (no hay key en la máquina de desarrollo; todo está testeado con modelos falsos).
+  real (no hay key en la máquina de desarrollo; todo está testeado con modelos falsos). El grafo ya
+  está cableado en la VM y arranca solo cuando aparezca `ANTHROPIC_API_KEY` en su `.env`.
+- **Símbolos iniciales.** Corriendo BTCUSDT + SOLUSDT; propuesta sumar ETHUSDT. Falta confirmación.
+- **Supuesto de costos publicado.** 10 bps round-trip (taker 5 bps × 2, sin slippage ni funding). Decidir
+  si se publica así o se modela slippage/funding antes de mostrar números.
+- **Umbral de régimen (`regime-v1`).** 2 ATR de desplazamiento en 20 barras de 60 s; calibrar con datos
+  del shadow (cambiarlo = nuevo id de versión).
 
 ## Plantilla para nuevas decisiones
 ```

@@ -120,6 +120,19 @@ Cambiar lógica o defaults = nuevo `heatmap_model_id`. Composición en `features
   infiere del log "conectando worker X" — reemplazar por hook explícito cuando se toquen los workers.
 - Deploy: `docker-compose.yml` (timescaledb-pg16, redis:7, ingestion, api), `backend/Dockerfile`, `.env.example`.
 
+## Modo memory (default desde 2026-10-17)
+Decisión en `decisions.md` ("Datos de mercado solo en memoria"). `HEATSIGNAL_STORAGE=memory` cambia la
+cadena a `worker -> CountingSink -> ThrottledSink -> FanoutSink(MemoryWindowSink)`; Redis y TimescaleDB
+no se usan (sus URLs se ignoran con warning). `storage/memory.py`: ventana por (tipo, símbolo), poda por
+`ts_ingest_ms`, retención trades 30 min / tickers 2 h / liquidaciones 24 h, tope duro de eventos, y
+`data_gaps()` que declara calentamiento, retención < ventana y huecos por tope. El ciclo de análisis
+(`pipeline/analysis.py`) lee la ventana en el mismo proceso. Deploy: `deploy/*.service` (systemd, sin
+Docker). Lo de "Persistencia + runner" de abajo sigue vigente para el modo `persistent`.
+
 ## Salida de Fase 1
 3 workers (Binance, Bybit, OKX) corriendo 24/7, normalizando a esquema común, escribiendo a TimescaleDB +
 buffers Redis, con métrica de uptime por worker y campo de granularidad/origen por registro.
+
+**Estado (2026-10-17): cumplida en modo memory** — los 3 workers corren 24/7 en la VM de prueba con
+métrica de uptime y `coverage` por registro; la escritura a TimescaleDB/Redis está implementada pero
+apagada por decisión (datos solo en RAM).
