@@ -65,6 +65,15 @@ CoinGlass daba el heatmap ya calculado; ahora lo construimos a partir de liquida
 profundidad de order book. Debe ser: versionado (`heatmap_model_id`), transparente y auditable. No es un
 bloqueante de Fase 1 — se puede empezar con clusters simples por nivel de precio y refinar después.
 
+**Implementado: `liqcluster-v1`** (`backend/src/heatsignal/features/heatmap.py`, algoritmo completo en el
+docstring). Ventana `(now - window, now]` sin lookahead. Bin anclado a 0 con ancho **normalizado por
+volatilidad**: `w = 0.25 × ATR` (Wilder 14 sobre barras cerradas de 60s, `features/volatility.py`); sin ATR,
+fallback `0.1%` del mark (o del VWAP de las liquidaciones si tampoco hay mark), **declarado en `data_gaps`**.
+Clustering "pico + vecinos": bins por notional descendente, cada semilla absorbe bins contiguos no vacíos hasta
+2 bins de distancia (cluster ≤ 5 bins = 1.25 ATR). Por cluster: notional, n, `dominant_side` (≥60% del
+notional, si no `None`), `sources`, `partial_coverage_share` y `distance_atr` vs mark. Top 10 por notional.
+Cambiar lógica o defaults = nuevo `heatmap_model_id`. Composición en `features/builder.py → FeatureSet`.
+
 ## Reglas
 - Verificar cada canal contra la doc oficial del exchange antes de implementar (los canales migran).
 - Fallos tipados y explícitos — sin huecos silenciosos. Stream caído = marcado; nada aguas abajo corre

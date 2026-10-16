@@ -36,8 +36,10 @@ baseline, el win-rate no significa nada (si BTC sube el 65% de los días, un age
 - [x] Pre-registrar qué estrategias/reglas usa cada agente (con `strategy_id`) **antes** de ver
       resultados: `strategy_registry.py` — `StrategyRegistry`, pre-registro inmutable sobre SQLite
       append-only (triggers a nivel de motor bloquean `UPDATE`/`DELETE`, no es solo convención).
-- [ ] Reemplazar el umbral plano de 0.5% por normalización por ATR/volatilidad del activo — **no es del
-      Evaluador**, es del Analista de Liquidaciones (Fase 2, sin empezar todavía). Queda pendiente ahí.
+- [x] Reemplazar el umbral plano de 0.5% por normalización por ATR/volatilidad del activo — **no es del
+      Evaluador**: vive en la capa de features. ATR Wilder en `features/volatility.py`; el heatmap
+      `liqcluster-v1` usa bin = 0.25 × ATR y expone `distance_atr` por cluster (fallback % del mark solo sin
+      ATR, declarado en `data_gaps`).
 - Criterio de aprobación implementado: `n>=30 AND p_value<0.05 AND wilson_ci[0]>0.50 AND sharpe>1.0 AND`
   superar los 3 baselines en un criterio **compuesto** (avg_return mayor + sharpe mayor + max_drawdown
   menor en valor absoluto — `_beats_baseline`, no alcanza con ganar en una sola métrica). `n<30` siempre
