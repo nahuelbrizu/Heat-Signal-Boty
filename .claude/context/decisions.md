@@ -29,6 +29,14 @@
 ## Abiertas
 - ~~Plan de CoinGlass a contratar.~~ **Ya no aplica al core** — la fuente primaria pasó a WS nativos.
   Solo se retomaría si se implementa la fuente BYOK opcional (y ahí el plan lo elige el usuario).
+- **Proveedor LLM del grafo → Anthropic (PROPUESTA, falta confirmación humana).** Implementado como
+  default en `backend/src/heatsignal/agents/llm_factory.py` (`make_llms`) vía `langchain-anthropic`:
+  `claude-haiku-5-5` (analistas, modelo económico) y `claude-sonnet-5-5` (debate, sintetizador,
+  redactor). IDs confirmados contra la tabla de modelos vigente del skill `claude-api` (2026-10).
+  Structured output con `method="json_schema"` (Sonnet 5.5 rechaza `tool_choice` forzado, que es lo
+  que usa el método por defecto de langchain). Los nodos reciben el LLM inyectado, así que cambiar de
+  proveedor no toca el grafo. Pendiente: confirmar proveedor + presupuesto, y validar con una API key
+  real (no hay key en la máquina de desarrollo; todo está testeado con modelos falsos).
 
 ## Plantilla para nuevas decisiones
 ```
