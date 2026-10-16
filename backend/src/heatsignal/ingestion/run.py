@@ -79,6 +79,9 @@ class RunConfig:
     health_log_s: float = 60.0
     stale_after_s: float = 30.0
     run_seconds: float | None = None
+    trades_retention_days: int | None = 30
+    tickers_retention_days: int | None = 90
+    compress_after_days: int | None = 7
     log_level: str = "INFO"
 
     @classmethod
@@ -120,6 +123,12 @@ class RunConfig:
             raise ValueError("HEATSIGNAL_EXCHANGES vacio")
 
         run_seconds = _float("HEATSIGNAL_RUN_SECONDS", 0.0)
+
+        def _days(name: str, default: int) -> int | None:
+            # 0 = sin politica (sin retencion / sin compresion).
+            value = int(_float(name, default))
+            return value if value > 0 else None
+
         return cls(
             symbols=symbols,
             exchanges=exchanges,
@@ -131,6 +140,9 @@ class RunConfig:
             health_log_s=_float("HEATSIGNAL_HEALTH_LOG_S", 60.0),
             stale_after_s=_float("HEATSIGNAL_STALE_AFTER_S", 30.0),
             run_seconds=run_seconds if run_seconds > 0 else None,
+            trades_retention_days=_days("HEATSIGNAL_TRADES_RETENTION_DAYS", 30),
+            tickers_retention_days=_days("HEATSIGNAL_TICKERS_RETENTION_DAYS", 90),
+            compress_after_days=_days("HEATSIGNAL_COMPRESS_AFTER_DAYS", 7),
             log_level=(_opt("HEATSIGNAL_LOG_LEVEL") or "INFO").upper(),
         )
 
@@ -162,7 +174,15 @@ async def build_sinks(cfg: RunConfig) -> tuple[ThrottledSink, list[EventSink]]:
 
     if cfg.database_url:
         ts_sink = await TimescaleSink.connect(
-            cfg.database_url, batch_size=cfg.db_batch_size, flush_interval_s=cfg.db_flush_s
+            cfg.database_url,
+            batch_size=cfg.db_batch_size,
+            flush_interval_s=cfg.db_flush_s,
+            retention_days={
+                "liquidations": None,  # nucleo del producto: nunca se borran
+                "trades": cfg.trades_retention_days,
+                "tickers": cfg.tickers_retention_days,
+            },
+            compress_after_days=cfg.compress_after_days,
         )
         if ts_sink is None:
             log.warning(
