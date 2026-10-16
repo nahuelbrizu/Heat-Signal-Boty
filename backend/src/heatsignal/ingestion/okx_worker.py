@@ -428,7 +428,7 @@ class OkxWorker:
 
     async def _run_once(self) -> None:
         await self._load_contract_values()
-        async with websockets.connect(self._url, open_timeout=10, ping_interval=None) as ws:
+        async with websockets.connect(self._url, open_timeout=10, close_timeout=2, ping_interval=None) as ws:
             self._ws = ws
             self._tickers.clear()  # estado nuevo por conexion: nada viejo se mezcla
             await ws.send(self._subscribe_message())
