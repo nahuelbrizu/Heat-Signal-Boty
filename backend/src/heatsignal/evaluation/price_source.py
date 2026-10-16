@@ -139,7 +139,7 @@ class BinanceKlinePriceSource:
         *,
         interval: str = "1m",
         max_staleness: timedelta = timedelta(minutes=2),
-        price_kind: str = "last",
+        price_kind: str = "mark",
         timeout_s: float = 10.0,
         http_get: HttpGet | None = None,
         base_url: str | None = None,

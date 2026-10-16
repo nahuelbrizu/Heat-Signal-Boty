@@ -91,7 +91,7 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument("--no-data-grace-min", type=float, default=DEFAULT_NO_DATA_GRACE.total_seconds() / 60)
     parser.add_argument("--interval", default="1m", help="intervalo de kline de Binance")
     parser.add_argument("--max-staleness-s", type=float, default=120.0)
-    parser.add_argument("--price-kind", choices=["last", "mark"], default="last")
+    parser.add_argument("--price-kind", choices=["last", "mark"], default="mark")
     parser.add_argument("--public-only", action="store_true", help="imprimir solo la vista publica")
     return parser.parse_args(argv)
 
