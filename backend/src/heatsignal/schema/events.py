@@ -57,6 +57,7 @@ class TradeEvent(BaseModel):
     qty: float
     ts_event_ms: int
     ts_ingest_ms: int
+    is_block_trade: bool = False     # Bybit `BT`: block trade negociado fuera del libro
 
 
 class TickerEvent(BaseModel):

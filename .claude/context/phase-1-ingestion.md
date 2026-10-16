@@ -28,8 +28,14 @@
   ⚠️ NO usar `liquidation.<symbol>` — está **deprecado** y empuja como máximo 1 por segundo por símbolo
   (no captura todas → hueco de datos silencioso).
 - Trades: `publicTrade.<symbol>`.
-- Ticker: `tickers.<symbol>`.
-- Sin API key para canales públicos.
+- Ticker: `tickers.<symbol>` — en linear manda `snapshot` y después `delta`s; un campo ausente en el delta
+  significa "sin cambios" → mantener cache por símbolo y mergear (limpiarlo al reconectar).
+- Sin API key para canales públicos. Endpoint: `wss://stream.bybit.com/v5/public/linear`.
+- ⚠️ En `allLiquidation`, `S` es el lado de la **posición** liquidada (`Buy` = long liquidado), al revés que
+  Binance (`S` = lado de la orden). El worker lo invierte. `p` es el precio de quiebra.
+- `publicTrade`: `S` = lado del taker (sin invertir); `BT` = block trade (→ `TradeEvent.is_block_trade`).
+- Heartbeat: mandar `{"op":"ping"}` cada 20s (sin ping ni datos, Bybit corta a los 10 min).
+- Implementado en `backend/src/heatsignal/ingestion/bybit_worker.py` (asyncio puro sobre `websockets`).
 
 ### OKX V5
 - Endpoint público: `wss://ws.okx.com:8443/ws/v5/public` (sin auth para canales públicos).

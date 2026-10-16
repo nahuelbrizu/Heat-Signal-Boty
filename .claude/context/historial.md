@@ -11,6 +11,22 @@
 
 ## Entradas
 
+### 2026-10-17 — Worker de Bybit
+
+- `ingestion/bybit_worker.py` (asyncio + `websockets`, sin conector de terceros): `allLiquidation` (FULL,
+  lado invertido posición→orden), `publicTrade` (taker side + `is_block_trade`), `tickers` (merge
+  snapshot+delta con cache por símbolo, limpiado en cada reconexión). Ping JSON cada 20s, timeout de
+  mensajes como watchdog de socket zombie, backoff+jitter y re-suscripción en cada conexión.
+  Canales verificados contra la doc oficial de Bybit V5; patrones tomados de NautilusTrader/Hummingbot.
+- `TradeEvent.is_block_trade` (default False) agregado al esquema; `websockets>=12` explícito en
+  `requirements.txt`.
+- `test_bybit_worker.py`: 15 tests (payloads de la doc oficial). Total 96 pasando.
+- Demo en vivo 40s (BTC/SOL): 2902 trades, 701 tickers, 1 liquidación, todo normalizado.
+- El desfasaje `ts_ingest - ts_event` (~2s) es el reloj de WSL: +1.9s vs `fapi.binance.com/fapi/v1/time`.
+  En producción hace falta NTP; no usar `ts_ingest_ms` para medir latencia hasta corregirlo.
+- Pendiente: los tickers de Bybit llegan cada 100ms (~10/s por símbolo) — evaluar throttling antes de
+  escribir a Redis/Timescale. Worker de OKX.
+
 ### 2026-10-17 — Binance Futures recibe datos reales: el "bloqueo de red" era la ruta legacy
 
 - Revisando el feed de liquidaciones de Hummingbot (`data_feed/liquidations_feed/binance/constants.py`) se
