@@ -1,20 +1,49 @@
 """
-Estado compartido del grafo LangGraph (ver `agents.md`).
+Estado compartido del grafo LangGraph (ver `agents.md`). Un unico estado que
+crece con el grafo: cada nodo escribe solo sus propias claves.
 
-Hoy tiene un solo nodo (Analista de Liquidaciones). Los próximos agentes
-(Order Flow, Contexto de Mercado, debate Alcista/Bajista, Estratega,
-Evaluador, Redactor) suman sus propios campos acá — no reemplazan estos ni
-arrancan un `GraphState` nuevo, es un único estado que crece con el grafo.
+Entrada (la arma quien invoca el grafo):
+    run_id               identificador de la corrida (tambien va en thread_id)
+    features_by_symbol   FeatureSet por simbolo (capa `features/`, sin LLM)
+    allowed_strategies   estrategias PRE-REGISTRADAS que el Sintetizador puede instanciar
+
+Salidas por nodo:
+    liquidation_analyses / order_flow_analyses / market_context_analyses  (analistas, paralelo)
+    debate_transcript (reducer: concatenacion) + debate_round             (debate)
+    pending_hypotheses + synthesis_decisions                              (sintetizador)
+    report                                                                (redactor)
 """
 
 from __future__ import annotations
 
-from typing import TypedDict
+import operator
+from typing import Annotated, TypedDict
 
-from ..schema.events import LiquidationEvent
+from ..evaluation.strategy_registry import StrategyHypothesis
+from ..schema.features import FeatureSet
+from ..schema.hypotheses import PendingHypothesis
+from .debate import DebateTurn
 from .liquidation_analyst import LiquidationAnalysis
+from .market_context_analyst import MarketContextAnalysis
+from .order_flow_analyst import OrderFlowAnalysis
+from .redactor import RunReport
+from .synthesizer import SymbolDecision
 
 
 class GraphState(TypedDict, total=False):
-    liquidations_by_symbol: dict[str, list[LiquidationEvent]]
+    # --- entrada ---
+    run_id: str
+    features_by_symbol: dict[str, FeatureSet]
+    allowed_strategies: list[StrategyHypothesis]
+    # --- analistas (paralelo; cada uno escribe su clave, sin conflicto de fan-in) ---
     liquidation_analyses: list[LiquidationAnalysis]
+    order_flow_analyses: list[OrderFlowAnalysis]
+    market_context_analyses: list[MarketContextAnalysis]
+    # --- debate ---
+    debate_transcript: Annotated[list[DebateTurn], operator.add]
+    debate_round: int
+    # --- sintetizador ---
+    pending_hypotheses: list[PendingHypothesis]
+    synthesis_decisions: list[SymbolDecision]
+    # --- redactor ---
+    report: RunReport

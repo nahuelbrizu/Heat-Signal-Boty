@@ -6,7 +6,8 @@ a estos modelos ANTES de escribir al sink. Todo timestamp en UTC (epoch ms).
 
 Principio del proyecto: sin fallos silenciosos. Cada evento lleva su `source` y,
 para liquidaciones, la `coverage` (full vs partial), porque la cobertura NO es
-uniforme entre exchanges (Bybit allLiquidation da todas; Binance y OKX dan <=1/seg por simbolo).
+uniforme entre exchanges (Bybit allLiquidation da todas; Binance da <=1/seg por simbolo; OKX
+"no representa el total" segun su doc).
 """
 
 from __future__ import annotations
@@ -24,7 +25,7 @@ class Side(str, Enum):
 
 class Coverage(str, Enum):
     FULL = "full"        # el stream empuja todas las liquidaciones (Bybit allLiquidation)
-    PARTIAL = "partial"  # el stream submuestrea (Binance forceOrder, OKX, Bybit deprecado): <=1/seg/simbolo
+    PARTIAL = "partial"  # el stream submuestrea (Binance forceOrder, OKX liquidation-orders, Bybit deprecado)
 
 
 class Exchange(str, Enum):

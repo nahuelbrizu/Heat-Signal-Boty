@@ -249,7 +249,9 @@ class BybitWorker:
                 await self._safe_write(event)
 
     async def _run_once(self) -> None:
-        async with websockets.connect(self._url, open_timeout=10, ping_interval=None) as ws:
+        async with websockets.connect(
+            self._url, open_timeout=10, close_timeout=2, ping_interval=None
+        ) as ws:
             self._ws = ws
             self._tickers.clear()  # el server manda snapshots nuevos al re-suscribir
             await ws.send(self._subscribe_message())

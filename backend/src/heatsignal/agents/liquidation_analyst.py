@@ -1,87 +1,100 @@
 """
-Analista de Liquidaciones — primer nodo del grafo LangGraph (ver `agents.md`).
-
-Primer agente implementado. Sin la capa de debate todavía (agents.md la ubica
-recién después de los 3 analistas en paralelo) ni los otros dos analistas
-(Order Flow, Contexto de Mercado) — esos son el próximo paso, no este.
+Analista de Liquidaciones — nodo de la capa de analistas (paralelo) del grafo.
 
 Contrato de este nodo:
-  - Recibe liquidaciones YA normalizadas (`LiquidationEvent`, ver
-    `schema/events.py`) agrupadas por símbolo — típicamente una ventana
-    reciente leída del Redis Stream `heatsignal:{symbol}:liquidation` (ver
-    `schema/sink.py`), aunque este módulo no lee Redis directamente: el
-    estado del grafo ya llega armado. Leer del stream es responsabilidad de
-    quien invoca el grafo, no de este nodo.
+  - Lee `features_by_symbol[*].heatmap` (`schema/features.py`): clusters del
+    heatmap propio YA normalizados por ATR (`distance_atr`) por la capa de
+    features. Este nodo no lee eventos crudos ni calcula el heatmap.
   - Hace UN call batcheado con salida estructurada Pydantic para todos los
-    símbolos de la ventana en un solo turno (regla de `phase-2-agents.md`:
-    "no 1 call por agente por par" — acá "por símbolo").
-  - No calcula el heatmap propio todavía (`heatmap_model_id`, ver
-    `phase-1-ingestion.md`) — eso es un paso posterior. Hoy arma un resumen
-    crudo (conteo, notional, sesgo de lado, rango de precio) por símbolo y
-    deja que el LLM lo interprete en lenguaje histórico, no predictivo.
+    simbolos (regla de `phase-2-agents.md`: no 1 call por agente por par).
+  - Los campos numericos (`notional_usd_total`, `n_liquidations`,
+    `nearest_cluster_distance_atr`) los completa el CODIGO desde el heatmap,
+    no el LLM: el LLM interpreta, no transcribe numeros.
+  - `data_gaps` del FeatureSet se unen por codigo a la salida (sin fallos
+    silenciosos), ademas de pasarse en el prompt.
 
-El LLM se inyecta (no se instancia acá): mantiene el nodo agnóstico de
-proveedor mientras esa decisión siga sin cerrarse en `decisions.md`, y lo hace
-testeable con un modelo falso, sin llamadas de red ni API key.
+El LLM se inyecta (no se instancia aca): el nodo queda agnostico de proveedor
+y testeable con un modelo falso, sin red ni API key.
 """
 
 from __future__ import annotations
 
-from collections import Counter
 from typing import TYPE_CHECKING, Any, Callable
 
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 
-from ..schema.events import LiquidationEvent, Side
+from ..schema.events import Side
+from ..schema.features import FeatureSet
+from ._common import (
+    HISTORICAL_LANGUAGE_RULE,
+    MISSING_ANALYSIS_TEXT,
+    merge_gaps,
+    reconcile_by_symbol,
+    render_heatmap,
+)
 
 if TYPE_CHECKING:
     from .state import GraphState
 
 _SYSTEM_PROMPT = (
-    "Sos el Analista de Liquidaciones de HeatSignal. Recibís, por símbolo, un resumen "
-    "crudo de liquidaciones forzadas recientes (conteo, notional total en USD, sesgo de "
-    "lado compra/venta, rango de precio). Para cada símbolo del input, devolvé un análisis "
-    "del cluster en lenguaje histórico ('los clusters similares reaccionaron...'), nunca "
-    "predictivo ('va a reaccionar...'). No inventes símbolos que no estén en el input, y no "
-    "omitas ninguno de los que sí están."
+    "Sos el Analista de Liquidaciones de HeatSignal. Recibis, por simbolo, los clusters del "
+    "heatmap propio de liquidaciones: banda de precio, notional, lado de la orden dominante "
+    "(SELL = longs liquidados), distancia al mark en unidades de ATR y fraccion de cobertura "
+    "PARCIAL. Interpreta los clusters SIEMPRE en unidades de ATR (nunca con umbrales planos "
+    "en porcentaje) y considera que una cobertura PARCIAL alta subestima el notional real. "
+    + HISTORICAL_LANGUAGE_RULE
 )
 
 
 class LiquidationAnalysis(BaseModel):
-    """Análisis de un símbolo para la ventana de liquidaciones recibida."""
+    """Analisis de un simbolo para el heatmap de liquidaciones recibido."""
 
     symbol: str
-    cluster_summary: str = Field(description="Resumen histórico del cluster, no predictivo")
-    dominant_side: Side | None = Field(default=None, description="Lado dominante del cluster, si lo hay")
-    notional_usd_total: float
-    n_liquidations: int
+    cluster_summary: str = Field(description="Resumen historico del/los cluster(s), no predictivo")
+    dominant_side: Side | None = Field(default=None, description="Lado de orden dominante, si lo hay")
+    notional_usd_total: float = Field(default=0.0, description="Completado por codigo desde el heatmap")
+    n_liquidations: int = Field(default=0, description="Completado por codigo desde el heatmap")
+    nearest_cluster_distance_atr: float | None = Field(
+        default=None, description="Completado por codigo: cluster mas cercano al mark, en ATR"
+    )
     confidence: float = Field(ge=0.0, le=1.0, description="Confianza del analista en el resumen, 0-1")
+    data_gaps: list[str] = Field(default_factory=list, description="Huecos de datos que afectan el analisis")
 
 
 class LiquidationAnalysisBatch(BaseModel):
-    """Salida estructurada de un call batcheado: un análisis por símbolo de la ventana."""
+    """Salida estructurada de un call batcheado: un analisis por simbolo."""
 
     analyses: list[LiquidationAnalysis]
 
 
-def _summarize_window(symbol: str, events: list[LiquidationEvent]) -> str:
-    """Arma el resumen crudo (no interpretado) que se le pasa al LLM para un símbolo.
+def _summarize_heatmap(fs: FeatureSet) -> str:
+    """Texto (no interpretado) que se le pasa al LLM para un simbolo.
 
-    Sin fallos silenciosos: una ventana vacía para un símbolo se reporta como
-    tal en el prompt, no se omite — el LLM debe saber que no hubo actividad,
-    no adivinar.
+    Un heatmap sin clusters se reporta como tal, no se omite: el LLM debe
+    saber que no hubo actividad, no adivinar.
     """
-    if not events:
-        return f"{symbol}: sin liquidaciones en la ventana."
-    sides = Counter(e.side for e in events)
-    notional_total = sum(e.notional_usd for e in events)
-    prices = [e.price for e in events]
-    return (
-        f"{symbol}: {len(events)} liquidaciones, notional total ${notional_total:,.0f}, "
-        f"lado: {sides.get(Side.BUY, 0)} buy / {sides.get(Side.SELL, 0)} sell, "
-        f"precio min/max ${min(prices):,.2f}/${max(prices):,.2f}."
+    return render_heatmap(fs)
+
+
+def _fill_from_heatmap(item: LiquidationAnalysis, fs: FeatureSet) -> LiquidationAnalysis:
+    clusters = fs.heatmap.clusters
+    distances = [c.distance_atr for c in clusters if c.distance_atr is not None]
+    return item.model_copy(
+        update={
+            "notional_usd_total": sum(c.notional_usd for c in clusters),
+            "n_liquidations": sum(c.n_events for c in clusters),
+            "nearest_cluster_distance_atr": min(distances, key=abs) if distances else None,
+            "data_gaps": merge_gaps(fs.data_gaps, item.data_gaps),
+        }
+    )
+
+
+def _missing(fs: FeatureSet) -> LiquidationAnalysis:
+    return _fill_from_heatmap(
+        LiquidationAnalysis(symbol=fs.symbol, cluster_summary=MISSING_ANALYSIS_TEXT, confidence=0.0),
+        fs,
     )
 
 
@@ -90,27 +103,27 @@ def make_liquidation_analyst_node(
 ) -> Callable[["GraphState"], Any]:
     """Devuelve el nodo del grafo, con el LLM ya cerrado sobre el closure.
 
-    `llm` debe soportar `.with_structured_output(Schema)` (contrato estándar
-    de `langchain_core.language_models.BaseChatModel`) — el proveedor
-    concreto (Anthropic, OpenAI, lo que sea) lo decide quien arma el grafo.
+    `llm` debe soportar `.with_structured_output(Schema)`.
     """
     structured_llm = llm.with_structured_output(LiquidationAnalysisBatch)
 
     async def _node(state: "GraphState") -> dict[str, Any]:
-        liquidations_by_symbol: dict[str, list[LiquidationEvent]] = state.get(
-            "liquidations_by_symbol", {}
-        )
-        if not liquidations_by_symbol:
+        features: dict[str, FeatureSet] = state.get("features_by_symbol") or {}
+        if not features:
             return {"liquidation_analyses": []}
 
-        window_summary = "\n".join(
-            _summarize_window(symbol, events) for symbol, events in liquidations_by_symbol.items()
-        )
         messages = [
             SystemMessage(content=_SYSTEM_PROMPT),
-            HumanMessage(content=window_summary),
+            HumanMessage(content="\n".join(_summarize_heatmap(fs) for fs in features.values())),
         ]
         result: LiquidationAnalysisBatch = await structured_llm.ainvoke(messages)
-        return {"liquidation_analyses": result.analyses}
+        analyses = reconcile_by_symbol(
+            result.analyses,
+            features,
+            node_name="liquidation_analyst",
+            fill=_fill_from_heatmap,
+            make_missing=_missing,
+        )
+        return {"liquidation_analyses": analyses}
 
     return _node

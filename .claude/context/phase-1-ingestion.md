@@ -37,13 +37,32 @@
 - Heartbeat: mandar `{"op":"ping"}` cada 20s (sin ping ni datos, Bybit corta a los 10 min).
 - Implementado en `backend/src/heatsignal/ingestion/bybit_worker.py` (asyncio puro sobre `websockets`).
 
-### OKX V5
-- Endpoint público: `wss://ws.okx.com:8443/ws/v5/public` (sin auth para canales públicos).
-- Liquidaciones: canal `liquidation-orders` — ⚠️ **como máximo 1 update por segundo por contrato**
-  (no captura todas, igual que el Bybit viejo). Documentar como cobertura parcial.
-- Trades: canal `trades`.
-- Ticker: canal `tickers`.
-- Ping/pong: si no llega mensaje en ~20s, mandar `ping`; si faltan 2 pongs seguidos, reconectar.
+### OKX V5 (perps lineales SWAP) — verificado doc + WS en vivo, oct 2026
+- Endpoint público: `wss://ws.okx.com/ws/v5/public` (doc actual, sin puerto; `:8443` también conecta).
+  REST: `https://openapi.okx.com` (⚠️ responde 403 sin header `User-Agent`).
+- Suscripción: `{"op":"subscribe","args":[{"channel":..., "instId"|"instType":...}]}`. Ack
+  `{"event":"subscribe",...}`; fallo `{"event":"error","code":"60018",...}` (instId inexistente);
+  `{"event":"notice","code":"64008"}` = upgrade en 60s → reconectar.
+- Liquidaciones: `liquidation-orders` **por `instType: SWAP`** (todo el mercado; se filtra por instId).
+  Doc: "This data doesn't represent the total number of liquidations on OKX" → **PARTIAL** (la doc
+  vieja decía máx 1 orden/contrato/seg; la actual ya no lo cuantifica). No viene en orden cronológico.
+  - ⚠️ `side` = "Order side" (lado de la **orden** de liquidación) → se usa tal cual (sell = long
+    liquidado). `posSide` = long/short (hedge) o `net`. Ejemplo doc: posSide=short, side=buy.
+    En vivo: siempre posSide=long ↔ side=sell. **Al revés que Bybit allLiquidation.**
+  - `bkPx` = precio contra la cuenta de liquidación del sistema (≈ quiebra).
+- ⚠️ `sz` (liquidaciones y trades) está en **contratos** para SWAP → `qty = sz × ctVal`, con `ctVal`
+  de `GET /api/v5/public/instruments?instType=SWAP` (lineal: en activo base; BTC 0.01, SOL 1, ETH 0.1).
+  Se carga al arrancar y en cada reconexión; símbolo sin ctVal válido o inverso → `OkxContractError`
+  (el worker se detiene, nunca escala mal en silencio).
+- Trades: `trades` **agrega** por (orden taker, precio, source) — campo `count` (≈ aggTrade de Binance).
+  `trades-all` (1 por match) vive en `/ws/v5/business`, no en `/public`.
+- Ticker: `tickers` en SWAP **no** trae mark/funding/OI. TickerEvent = merge por instId de `tickers.last`
+  + `mark-price.markPx` (200ms/10s) + `funding-rate.fundingRate` (30–90s) + `open-interest.oiCcy`/`oiUsd`
+  (3s; `oi` está en contratos). Cache limpio en cada reconexión.
+- Heartbeat: OKX corta a los 30s sin datos. Si no llega nada en 20s → mandar el string `ping`, esperar
+  `pong`; 40s sin ningún mensaje → reconectar.
+- Implementado en `backend/src/heatsignal/ingestion/okx_worker.py`. Símbolos aceptados: `BTC-USDT-SWAP`,
+  `BTC-USDT` o `BTCUSDT`; salen como `BTC-USDT`.
 
 ## ⚠️ Limitación de datos a documentar (no esconder)
 La cobertura de liquidaciones **no es uniforme**: solo `allLiquidation` de Bybit da el flujo completo; Binance (`forceOrder`),
@@ -65,12 +84,41 @@ CoinGlass daba el heatmap ya calculado; ahora lo construimos a partir de liquida
 profundidad de order book. Debe ser: versionado (`heatmap_model_id`), transparente y auditable. No es un
 bloqueante de Fase 1 — se puede empezar con clusters simples por nivel de precio y refinar después.
 
+**Implementado: `liqcluster-v1`** (`backend/src/heatsignal/features/heatmap.py`, algoritmo completo en el
+docstring). Ventana `(now - window, now]` sin lookahead. Bin anclado a 0 con ancho **normalizado por
+volatilidad**: `w = 0.25 × ATR` (Wilder 14 sobre barras cerradas de 60s, `features/volatility.py`); sin ATR,
+fallback `0.1%` del mark (o del VWAP de las liquidaciones si tampoco hay mark), **declarado en `data_gaps`**.
+Clustering "pico + vecinos": bins por notional descendente, cada semilla absorbe bins contiguos no vacíos hasta
+2 bins de distancia (cluster ≤ 5 bins = 1.25 ATR). Por cluster: notional, n, `dominant_side` (≥60% del
+notional, si no `None`), `sources`, `partial_coverage_share` y `distance_atr` vs mark. Top 10 por notional.
+Cambiar lógica o defaults = nuevo `heatmap_model_id`. Composición en `features/builder.py → FeatureSet`.
+
 ## Reglas
 - Verificar cada canal contra la doc oficial del exchange antes de implementar (los canales migran).
 - Fallos tipados y explícitos — sin huecos silenciosos. Stream caído = marcado; nada aguas abajo corre
   como si el dato estuviera completo.
 - Filtrar/marcar DEX chicos como "baja confianza" (esto ahora es menos relevante porque arrancamos con los
   3 grandes, pero mantener el campo de confianza por si se suman fuentes).
+
+## Persistencia + runner (implementado oct 2026)
+- `python -m heatsignal.ingestion.run` (`ingestion/run.py`): corre los workers habilitados en paralelo
+  (`HEATSIGNAL_EXCHANGES`, `HEATSIGNAL_SYMBOLS`), shutdown limpio con SIGINT/SIGTERM. OKX se importa
+  opcional (`try: from .okx_worker import OkxWorker`): se habilita solo cuando el módulo exista.
+- Cadena de sinks: `worker -> CountingSink (health) -> ThrottledSink -> FanoutSink(RedisStreamSink, TimescaleSink)`.
+  Sin `REDIS_URL`/`DATABASE_URL` (o sin respuesta) → warning fuerte y sigue con lo que haya; si no queda nada,
+  `ConsoleSink`. Nunca crashea por eso.
+- `storage/timescale.py`: tablas `liquidations`/`trades`/`tickers` (espejan `schema/events.py`, con `source`,
+  `coverage`, `is_block_trade`, `ts timestamptz` + ms crudos). Hypertables + compresión (7d) + retención
+  (trades 30d, tickers 90d, liquidaciones sin borrar) **solo si existe la extensión timescaledb**; en Postgres
+  plano queda modo `plain` (retención manual: `prune_plain()` / `RETENTION_NOTE`). Escritura por lotes con
+  `COPY` en una transacción; cola acotada con contadores explícitos (`dropped_overflow`, `dropped_rejected`,
+  `dropped_on_close`, `failed_flushes`).
+- `storage/throttle.py`: tickers a ≤1/seg por (source, symbol), last-value-wins con flush al final de la
+  ventana (el valor final nunca se pierde). Liquidaciones y trades pasan intactos.
+- `ingestion/health.py`: métrica de uptime por worker (`connected` = recibió datos en los últimos 30s,
+  `reconnects`, `uptime_ratio`, eventos por tipo), logueada cada `HEATSIGNAL_HEALTH_LOG_S`. `reconnects` se
+  infiere del log "conectando worker X" — reemplazar por hook explícito cuando se toquen los workers.
+- Deploy: `docker-compose.yml` (timescaledb-pg16, redis:7, ingestion, api), `backend/Dockerfile`, `.env.example`.
 
 ## Salida de Fase 1
 3 workers (Binance, Bybit, OKX) corriendo 24/7, normalizando a esquema común, escribiendo a TimescaleDB +

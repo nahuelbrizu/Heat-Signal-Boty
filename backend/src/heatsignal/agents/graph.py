@@ -1,40 +1,89 @@
 """
-Esqueleto del grafo LangGraph (ver `agents.md`).
+Grafo LangGraph de Fase 2 (ver `agents.md` / `phase-2-agents.md`).
 
-Hoy: un solo nodo, el Analista de Liquidaciones — sin la capa de debate ni el
-resto de los analistas paralelos (Order Flow, Contexto de Mercado) todavía.
-Los próximos nodos se agregan a ESTE grafo, no arrancan uno nuevo:
+    START
+      |-----------------------------|------------------------------|
+      v                             v                              v
+    liquidation_analyst      order_flow_analyst       market_context_analyst   (cheap, paralelo)
+      |-----------------------------|------------------------------|
+                                    v  (fan-in: espera a los tres)
+                              bull_strategist  <-----------------+          (strong)
+                                    v                            |
+                              bear_strategist  -- round < N -----+          (strong)
+                                    | round >= N
+                                    v
+                               synthesizer  -> PendingHypothesisStore.add  (strong)
+                                    v
+                                redactor (guardrail + 1 reintento)          (strong)
+                                    v
+                                   END
 
-    [Ingesta: WS + REST]
-            |
-            v
-    ANALISTAS (paralelo)          <- hoy solo "liquidation_analyst"
-            |
-            v
-    DEBATE (bull vs bear)         <- sin implementar
-            |
-            v
-    Estratega/Sintetizador        <- sin implementar
-            |
-            v
-    Evaluador/Juez                <- ya existe standalone en evaluation/,
-    Redactor                         falta conectarlo a este grafo
+El Evaluador/Juez vive en `evaluation/` (Fase 3) y resuelve las hipotesis
+pendientes fuera de este grafo.
+
+Los LLM se inyectan (no se instancian aca): `llm_factory.make_llms()` arma el
+par real; los tests usan modelos falsos.
 """
 
 from __future__ import annotations
 
+from typing import Any
+
 from langchain_core.language_models import BaseChatModel
-from langgraph.graph import END
+from langgraph.graph import END, START
 from langgraph.graph.state import CompiledStateGraph, StateGraph
 
+from .debate import make_debate_node, make_debate_router
+from .hypothesis_store import PendingHypothesisStore
 from .liquidation_analyst import make_liquidation_analyst_node
+from .market_context_analyst import make_market_context_analyst_node
+from .order_flow_analyst import make_order_flow_analyst_node
+from .redactor import make_redactor_node
 from .state import GraphState
+from .synthesizer import DEFAULT_HORIZON_S, make_synthesizer_node
+
+ANALYST_NODES = ("liquidation_analyst", "order_flow_analyst", "market_context_analyst")
 
 
-def build_graph(llm: BaseChatModel) -> CompiledStateGraph:
-    """Compila el grafo. `llm` se inyecta para no atar el grafo a un proveedor."""
+def build_graph(
+    cheap_llm: BaseChatModel,
+    strong_llm: BaseChatModel | None = None,
+    *,
+    max_debate_rounds: int = 1,
+    checkpointer: Any | None = None,
+    hypothesis_store: PendingHypothesisStore | None = None,
+    default_horizon_s: int = DEFAULT_HORIZON_S,
+) -> CompiledStateGraph:
+    """Compila el grafo completo.
+
+    `strong_llm=None` reutiliza `cheap_llm` (compatibilidad con el esqueleto
+    previo `build_graph(llm)`); en produccion pasar ambos via `make_llms()`.
+    """
+    if max_debate_rounds < 1:
+        raise ValueError("max_debate_rounds debe ser >= 1")
+    strong = strong_llm if strong_llm is not None else cheap_llm
+
     graph = StateGraph(GraphState)
-    graph.add_node("liquidation_analyst", make_liquidation_analyst_node(llm))
-    graph.set_entry_point("liquidation_analyst")
-    graph.add_edge("liquidation_analyst", END)
-    return graph.compile()
+    graph.add_node("liquidation_analyst", make_liquidation_analyst_node(cheap_llm))
+    graph.add_node("order_flow_analyst", make_order_flow_analyst_node(cheap_llm))
+    graph.add_node("market_context_analyst", make_market_context_analyst_node(cheap_llm))
+    graph.add_node("bull_strategist", make_debate_node(strong, "bull"))
+    graph.add_node("bear_strategist", make_debate_node(strong, "bear"))
+    graph.add_node(
+        "synthesizer",
+        make_synthesizer_node(strong, hypothesis_store=hypothesis_store, default_horizon_s=default_horizon_s),
+    )
+    graph.add_node("redactor", make_redactor_node(strong))
+
+    for node in ANALYST_NODES:
+        graph.add_edge(START, node)
+    graph.add_edge(list(ANALYST_NODES), "bull_strategist")
+    graph.add_edge("bull_strategist", "bear_strategist")
+    graph.add_conditional_edges(
+        "bear_strategist",
+        make_debate_router(max_debate_rounds),
+        {"bull_strategist": "bull_strategist", "synthesizer": "synthesizer"},
+    )
+    graph.add_edge("synthesizer", "redactor")
+    graph.add_edge("redactor", END)
+    return graph.compile(checkpointer=checkpointer)
