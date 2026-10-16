@@ -1,0 +1,370 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HeatSignal panel</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --panel: #ffffff; --ink: #1b1f24; --muted: #5d6673; --line: #e2e5ea;
+    --ok: #1a7f4b; --warn: #a15c00; --bad: #c0362c; --info: #2457c5;
+    --buy: #1a7f4b; --sell: #c0362c; --chip: #eef1f5;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0f1216; --panel: #171b21; --ink: #e6e9ee; --muted: #98a2b0; --line: #2a3039;
+      --ok: #45c47f; --warn: #e3a33b; --bad: #f0675b; --info: #6f9bff;
+      --buy: #45c47f; --sell: #f0675b; --chip: #222831;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0f1216; --panel: #171b21; --ink: #e6e9ee; --muted: #98a2b0; --line: #2a3039;
+    --ok: #45c47f; --warn: #e3a33b; --bad: #f0675b; --info: #6f9bff;
+    --buy: #45c47f; --sell: #f0675b; --chip: #222831;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+         font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  main { max-width: 1200px; margin: 0 auto; padding: 16px; }
+  header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 16px; margin-bottom: 12px; }
+  h1 { font-size: 20px; margin: 0; }
+  h2 { font-size: 15px; margin: 0 0 10px; }
+  h3 { font-size: 14px; margin: 0 0 8px; }
+  .muted { color: var(--muted); }
+  .mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+  .banner { background: var(--chip); border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px;
+            margin-bottom: 16px; color: var(--muted); }
+  section { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px;
+            margin-bottom: 16px; }
+  .grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
+  .card { border: 1px solid var(--line); border-radius: 8px; padding: 12px; min-width: 0; }
+  .kv { display: grid; grid-template-columns: auto 1fr; gap: 2px 12px; }
+  .kv dt { color: var(--muted); }
+  .kv dd { margin: 0; text-align: right; font-family: var(--mono); font-variant-numeric: tabular-nums;
+           overflow-wrap: anywhere; }
+  .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 6px;
+         vertical-align: middle; background: var(--muted); }
+  .dot.ok { background: var(--ok); } .dot.bad { background: var(--bad); }
+  .chip { display: inline-block; padding: 1px 8px; border-radius: 999px; background: var(--chip);
+          font-size: 12px; font-weight: 600; }
+  .chip.ok { color: var(--ok); } .chip.warn { color: var(--warn); } .chip.bad { color: var(--bad); }
+  .chip.info { color: var(--info); }
+  .buy { color: var(--buy); } .sell { color: var(--sell); }
+  .table-wrap { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; font-size: 12px; white-space: nowrap; }
+  td.num, th.num { text-align: right; font-family: var(--mono); font-variant-numeric: tabular-nums;
+                   white-space: nowrap; }
+  ul.gaps { margin: 6px 0 0; padding-left: 18px; color: var(--warn); }
+  .bar { position: relative; height: 8px; background: var(--chip); border-radius: 4px; overflow: hidden;
+         margin: 6px 0 2px; }
+  .bar > span { position: absolute; top: 0; bottom: 0; }
+  .bar .mid { left: 50%; width: 1px; background: var(--muted); }
+  .row { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; }
+  button { font: inherit; padding: 4px 12px; border-radius: 6px; border: 1px solid var(--line);
+           background: var(--panel); color: var(--ink); cursor: pointer; }
+  button:hover { border-color: var(--muted); }
+  .empty { color: var(--muted); font-style: italic; }
+  .err { color: var(--bad); }
+  footer { color: var(--muted); font-size: 12px; margin: 8px 0 24px; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>HeatSignal · panel interno</h1>
+    <span class="muted" id="hdr-meta">cargando…</span>
+    <span class="err" id="hdr-err"></span>
+  </header>
+  <div class="banner">
+    Datos de mercado solo en memoria: nada de esta página se guarda ni se publica. Solo persisten las
+    estrategias y las hipótesis.
+  </div>
+
+  <section>
+    <h2>Exchanges</h2>
+    <div class="grid" id="workers"></div>
+  </section>
+
+  <section>
+    <h2>Mercado (ventana en memoria)</h2>
+    <div class="table-wrap"><table id="market"></table></div>
+  </section>
+
+  <section>
+    <div class="row" style="justify-content: space-between; margin-bottom: 10px;">
+      <h2 style="margin:0">Ciclo de análisis</h2>
+      <span id="graph-state"></span>
+    </div>
+    <div id="cycle"></div>
+  </section>
+
+  <section>
+    <div class="row" style="justify-content: space-between; margin-bottom: 10px;">
+      <h2 style="margin:0">Features en vivo</h2>
+      <div class="row"><span class="muted" id="feat-ts"></span><button id="feat-btn">Recalcular</button></div>
+    </div>
+    <div class="grid" id="features" style="grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));"></div>
+  </section>
+
+  <section>
+    <h2>Estrategias pre-registradas</h2>
+    <div class="table-wrap"><table id="strategies"></table></div>
+  </section>
+
+  <section>
+    <h2>Hipótesis <span class="muted" id="hyp-count"></span></h2>
+    <div class="table-wrap"><table id="hypotheses"></table></div>
+  </section>
+
+  <footer id="footer"></footer>
+</main>
+
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+
+function el(tag, attrs, ...children) {
+  const node = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs || {})) {
+    if (v === undefined || v === null) continue;
+    if (k === "class") node.className = v; else node.setAttribute(k, v);
+  }
+  for (const c of children.flat()) {
+    if (c === null || c === undefined || c === false) continue;
+    node.append(c instanceof Node ? c : document.createTextNode(String(c)));
+  }
+  return node;
+}
+
+const nf = (d) => new Intl.NumberFormat("es-AR", { maximumFractionDigits: d });
+function num(v, d = 2) { return v === null || v === undefined ? "—" : nf(d).format(v); }
+function price(v) {
+  if (v === null || v === undefined) return "—";
+  const a = Math.abs(v);
+  return nf(a >= 1000 ? 1 : a >= 1 ? 3 : 6).format(v);
+}
+function usd(v) {
+  if (v === null || v === undefined) return "—";
+  const a = Math.abs(v), s = v < 0 ? "-" : "";
+  if (a >= 1e9) return s + "$" + nf(2).format(a / 1e9) + "B";
+  if (a >= 1e6) return s + "$" + nf(2).format(a / 1e6) + "M";
+  if (a >= 1e3) return s + "$" + nf(1).format(a / 1e3) + "k";
+  return s + "$" + nf(0).format(a);
+}
+function pct(v, d = 2) { return v === null || v === undefined ? "—" : nf(d).format(v) + "%"; }
+function ago(ms, now) {
+  if (!ms) return "—";
+  const s = Math.max(0, (now - ms) / 1000);
+  if (s < 60) return Math.round(s) + " s";
+  if (s < 3600) return Math.round(s / 60) + " min";
+  return nf(1).format(s / 3600) + " h";
+}
+function dur(s) {
+  if (s === null || s === undefined) return "—";
+  if (s < 60) return Math.round(s) + " s";
+  if (s < 3600) return Math.round(s / 60) + " min";
+  return nf(1).format(s / 3600) + " h";
+}
+function time(ms) { return ms ? new Date(ms).toLocaleTimeString("es-AR") : "—"; }
+function sideSpan(side) {
+  if (!side) return "—";
+  const buy = String(side).toLowerCase() === "buy";
+  return el("span", { class: buy ? "buy" : "sell" }, buy ? "BUY" : "SELL");
+}
+const STATUS_CHIP = {
+  ran: ["ok", "corrió"], warmup: ["info", "calentando"], no_strategies: ["warn", "sin estrategias"],
+  no_llm: ["warn", "sin LLM"], error: ["bad", "error"],
+  pending: ["info", "pendiente"], resolved: ["ok", "resuelta"], expired_no_data: ["warn", "sin datos"],
+  running: ["ok", "activa"], evaluated: ["info", "evaluada"],
+};
+function chip(status) {
+  const [cls, label] = STATUS_CHIP[status] || ["", status];
+  return el("span", { class: "chip " + cls }, label);
+}
+function table(node, headers, rows, emptyText) {
+  node.replaceChildren();
+  node.append(el("thead", {}, el("tr", {}, headers.map(([h, cls]) => el("th", { class: cls }, h)))));
+  const body = el("tbody");
+  if (!rows.length) {
+    body.append(el("tr", {}, el("td", { colspan: headers.length, class: "empty" }, emptyText)));
+  }
+  for (const r of rows) body.append(el("tr", {}, r.map(([v, cls]) => el("td", { class: cls }, v))));
+  node.append(body);
+}
+
+// ---- status ---------------------------------------------------------------------------------------
+
+function renderWorkers(workers, now) {
+  const box = $("workers");
+  box.replaceChildren();
+  if (!workers.length) { box.append(el("p", { class: "empty" }, "Sin workers registrados todavía.")); return; }
+  for (const w of workers) {
+    const ev = w.events || {};
+    box.append(el("div", { class: "card" },
+      el("h3", {}, el("span", { class: "dot " + (w.connected ? "ok" : "bad") }), w.worker,
+        el("span", { class: "muted" }, w.connected ? " · conectado" : " · sin datos")),
+      el("dl", { class: "kv" },
+        el("dt", {}, "último mensaje"), el("dd", {}, w.last_message_age_s === null ? "—" : w.last_message_age_s + " s"),
+        el("dt", {}, "reconexiones"), el("dd", {}, w.reconnects),
+        el("dt", {}, "uptime"), el("dd", {}, w.uptime_ratio === null ? "—" : pct(w.uptime_ratio * 100, 1)),
+        el("dt", {}, "trades"), el("dd", {}, num(ev.trade || 0, 0)),
+        el("dt", {}, "tickers"), el("dd", {}, num(ev.ticker || 0, 0)),
+        el("dt", {}, "liquidaciones"), el("dd", {}, num(ev.liquidation || 0, 0)),
+      )));
+  }
+}
+
+function renderMarket(memory, now) {
+  const symbols = memory ? Object.entries(memory.symbols).sort() : [];
+  const rows = symbols.map(([sym, m]) => {
+    const mk = m.mark_by_source || {};
+    const t = m.last_trade, l = m.last_liquidation;
+    return [
+      [sym], [price(mk.binance), "num"], [price(mk.bybit), "num"], [price(mk.okx), "num"],
+      [t ? el("span", {}, sideSpan(t.side), " ", price(t.price), el("span", { class: "muted" }, " · " + t.source)) : "—"],
+      [num(m.counts.trade, 0), "num"], [num(m.counts.ticker, 0), "num"], [num(m.counts.liquidation, 0), "num"],
+      [l ? el("span", {}, sideSpan(l.side), " ", usd(l.notional_usd), " @ ", price(l.price),
+              el("span", { class: "muted" }, " · " + l.source + " · hace " + ago(l.ts_ms, now))) : "—"],
+    ];
+  });
+  table($("market"), [["Símbolo"], ["Mark Binance", "num"], ["Mark Bybit", "num"], ["Mark OKX", "num"],
+    ["Último trade"], ["Trades", "num"], ["Tickers", "num"], ["Liqs", "num"], ["Última liquidación"]],
+    rows, memory ? "La ventana todavía está vacía." : "Modo memory apagado: no hay ventana para mostrar.");
+}
+
+function renderCycle(analysis) {
+  const gs = $("graph-state");
+  gs.replaceChildren(!analysis.enabled ? chip("error")
+    : analysis.graph_enabled ? el("span", { class: "chip ok" }, "grafo habilitado")
+    : el("span", { class: "chip warn" }, "grafo deshabilitado: falta ANTHROPIC_API_KEY"));
+  if (!analysis.enabled) gs.replaceChildren(el("span", { class: "chip warn" }, "ciclo apagado"));
+  const box = $("cycle");
+  box.replaceChildren();
+  const c = analysis.last_cycle;
+  if (!c) {
+    box.append(el("p", { class: "empty" },
+      analysis.enabled ? "Todavía no corrió ningún ciclo (el primero corre un intervalo después del arranque)."
+                       : "El ciclo de análisis está apagado."));
+    return;
+  }
+  const ts = Number((c.run_id.match(/(\d+)$/) || [])[1]);
+  box.append(el("div", { class: "row" }, chip(c.status),
+    el("span", { class: "mono" }, c.run_id),
+    el("span", { class: "muted" }, time(ts)),
+    el("span", {}, "hipótesis: ", el("b", {}, c.n_hypotheses))));
+  if (c.detail) box.append(el("p", { class: "muted", style: "margin:8px 0 0" }, c.detail));
+}
+
+function renderStrategies(evaln) {
+  if (!evaln.available) {
+    table($("strategies"), [["Estado"]], [], "Base de hipótesis no disponible (ciclo de análisis apagado).");
+    table($("hypotheses"), [["Estado"]], [], "—");
+    $("hyp-count").textContent = "";
+    return;
+  }
+  table($("strategies"), [["Descripción"], ["Estado"], ["Horizonte", "num"], ["Autor"], ["Registrada"], ["ID"]],
+    evaln.strategies.map((s) => [[s.description], [chip(s.status)], [dur(s.horizon_s), "num"], [s.author],
+      [new Date(s.registered_at).toLocaleString("es-AR")], [el("span", { class: "mono muted" }, s.strategy_id.slice(0, 8))]]),
+    "Ninguna todavía. Registrala con: python -m heatsignal.evaluation.register_strategy archivo.json");
+  $("hyp-count").textContent = "· " + evaln.total_hypotheses + " en total, " + evaln.pending_count + " pendientes";
+  table($("hypotheses"), [["Creada"], ["Símbolo"], ["Dir."], ["Conf.", "num"], ["Entrada", "num"],
+    ["Horizonte", "num"], ["Estado"], ["Salida", "num"], ["PnL neto", "num"], ["Justificación"]],
+    evaln.hypotheses.map((h) => [[new Date(h.created_at).toLocaleString("es-AR")], [h.symbol],
+      [el("span", { class: h.direction === "LONG" ? "buy" : "sell" }, h.direction)], [num(h.confidence, 2), "num"],
+      [price(Number(h.entry)), "num"], [dur(h.horizon_s), "num"], [chip(h.status)],
+      [h.exit === null ? "—" : price(Number(h.exit)), "num"],
+      [h.pnl_pct === null ? "—" : el("span", { class: h.pnl_pct > 0 ? "buy" : "sell" }, pct(h.pnl_pct)), "num"],
+      [h.rationale]]),
+    "Sin hipótesis todavía.");
+}
+
+async function refreshStatus() {
+  try {
+    const r = await fetch("/api/status", { cache: "no-store" });
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    const s = await r.json();
+    $("hdr-err").textContent = "";
+    $("hdr-meta").textContent = "proceso arriba hace " + dur(s.uptime_s) + " · actualizado " + time(s.now_ms) +
+      " · símbolos " + (s.config.symbols || []).join(", ");
+    renderWorkers(s.workers, s.now_ms);
+    renderMarket(s.memory, s.now_ms);
+    renderCycle(s.analysis);
+    renderStrategies(s.evaluation);
+    if (s.memory) {
+      const st = s.memory.stats;
+      $("footer").textContent = "memoria · escritos " + num(st.written, 0) + " · vencidos " + num(st.expired, 0) +
+        " · expulsados por tope " + num(st.evicted_by_cap, 0) + " · ventana desde " + time(s.memory.started_at_ms);
+    }
+  } catch (e) {
+    $("hdr-err").textContent = "sin conexión con el proceso (" + e.message + ")";
+  }
+}
+
+// ---- features -------------------------------------------------------------------------------------
+
+function featureCard(fs) {
+  const ctx = fs.context, of = fs.order_flow, hm = fs.heatmap;
+  const funding = Object.entries(ctx.funding_rate_by_exchange || {})
+    .map(([ex, v]) => ex + " " + pct(v * 100, 4)).join(" · ") || "—";
+  const imb = of.imbalance || 0;
+  const bar = el("div", { class: "bar", title: "imbalance " + num(imb, 3) },
+    el("span", { class: "mid" }),
+    el("span", { style: "background: var(" + (imb >= 0 ? "--buy" : "--sell") + "); " +
+      (imb >= 0 ? "left:50%; width:" : "right:50%; width:") + Math.min(50, Math.abs(imb) * 50) + "%" }));
+  const clusters = el("table");
+  table(clusters, [["Rango"], ["Notional", "num"], ["Lado"], ["Dist. ATR", "num"], ["Fuentes"]],
+    hm.clusters.map((c) => [[el("span", { class: "mono" }, price(c.price_low) + " – " + price(c.price_high))],
+      [usd(c.notional_usd) + " · " + c.n_events, "num"], [sideSpan(c.dominant_side)],
+      [num(c.distance_atr, 2), "num"],
+      [c.sources.join(", ") + (c.partial_coverage_share > 0 ? " (" + pct(c.partial_coverage_share * 100, 0) + " parcial)" : "")]]),
+    "Sin liquidaciones en la ventana.");
+  return el("div", { class: "card" },
+    el("h3", {}, fs.symbol, " ", chip(ctx.regime === "unknown" ? "régimen ?" : ctx.regime)),
+    el("dl", { class: "kv" },
+      el("dt", {}, "mark"), el("dd", {}, price(ctx.mark_price)),
+      el("dt", {}, "ATR (60s, 14)"), el("dd", {}, ctx.atr === null ? "—" : price(ctx.atr) + " · " + pct(ctx.atr_pct, 3)),
+      el("dt", {}, "funding"), el("dd", {}, funding),
+      el("dt", {}, "open interest"), el("dd", {}, usd(ctx.open_interest_usd) + (ctx.oi_change_pct === null ? "" : " · " + pct(ctx.oi_change_pct))),
+      el("dt", {}, "compra / venta taker"), el("dd", {}, usd(of.buy_volume_usd) + " / " + usd(of.sell_volume_usd)),
+      el("dt", {}, "CVD"), el("dd", { class: of.cvd_usd >= 0 ? "buy" : "sell" }, usd(of.cvd_usd)),
+      el("dt", {}, "trades · block"), el("dd", {}, num(of.n_trades, 0) + " · " + usd(of.block_trade_volume_usd)),
+    ),
+    bar,
+    el("p", { class: "muted", style: "margin:2px 0 10px; font-size:12px" },
+      "order flow últimos " + dur(of.window_s) + " · heatmap " + hm.heatmap_model_id + " sobre " + dur(hm.window_s)),
+    el("div", { class: "table-wrap" }, clusters),
+    fs.data_gaps.length ? el("ul", { class: "gaps" }, fs.data_gaps.map((g) => el("li", {}, g))) : null,
+  );
+}
+
+async function refreshFeatures() {
+  const box = $("features");
+  $("feat-btn").disabled = true;
+  try {
+    const r = await fetch("/api/features", { cache: "no-store" });
+    if (r.status === 503) {
+      box.replaceChildren(el("p", { class: "empty" }, (await r.json()).detail));
+      return;
+    }
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    const data = await r.json();
+    box.replaceChildren(...Object.values(data.features).map(featureCard));
+    $("feat-ts").textContent = "calculado " + time(data.ts_ms);
+  } catch (e) {
+    box.replaceChildren(el("p", { class: "err" }, "No se pudieron calcular: " + e.message));
+  } finally {
+    $("feat-btn").disabled = false;
+  }
+}
+
+$("feat-btn").addEventListener("click", refreshFeatures);
+refreshStatus();
+refreshFeatures();
+setInterval(refreshStatus, 5000);
+setInterval(refreshFeatures, 30000);
+</script>
+</body>
+</html>

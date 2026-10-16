@@ -4,7 +4,10 @@
 > exchanges, no CoinGlass) — igual confirmar los ítems livianos de ToS de exchange en `phase-0-blockers.md`
 > antes de publicar.
 
-**Estado (2026-10-17): no iniciado.** Solo existe `GET /health` (`api/app.py`). Pendientes en `estado.md`.
+**Estado (2026-10-17):** dashboard público, API pública y reporte diario **no iniciados**. Existe un
+**panel interno** de operación (`api/panel.py` + `api/panel.html`, sin dependencias externas) que corre
+dentro del proceso de ingesta en 127.0.0.1 y se abre por túnel SSH: no es producto público y no expone
+datos fuera de la VM. Pendientes en `estado.md`.
 
 ## Dashboard (Next.js)
 - Señales rankeadas por win-rate calibrado, con n e intervalo de confianza visibles (no ocultar la

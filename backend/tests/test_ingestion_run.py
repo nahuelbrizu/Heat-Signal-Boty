@@ -133,6 +133,7 @@ async def test_run_wires_workers_and_shuts_down_cleanly(monkeypatch, tmp_path) -
     cfg = RunConfig.from_env({
         "HEATSIGNAL_EXCHANGES": "bybit", "HEATSIGNAL_RUN_SECONDS": "0.2",
         "HEATSIGNAL_EVAL_DB": str(tmp_path / "eval.sqlite"),
+        "HEATSIGNAL_PANEL_PORT": "0",
     })
     await run_mod.run(cfg)
     assert (tmp_path / "eval.sqlite").exists()  # el ciclo de analisis arranco (sin key: solo features)

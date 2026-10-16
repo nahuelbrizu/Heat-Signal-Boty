@@ -11,7 +11,7 @@
 | 1 — Ingesta | **En producción de prueba** (VM, modo memory, 24/7) | `phase-1-ingestion.md` |
 | 2 — Agentes | Implementado y cableado; **inactivo** hasta tener API key + estrategias | `phase-2-agents.md`, `agents.md` |
 | 3 — Evaluación | Implementado; timer cada 5 min en la VM, sin hipótesis todavía | `phase-3-evaluation.md` |
-| 4 — Producto | **No iniciado** (solo `GET /health` en FastAPI) | `phase-4-product.md` |
+| 4 — Producto | Panel **interno** listo (no público); dashboard/API pública/reporte no iniciados | `phase-4-product.md` |
 
 Código: rama `ingestion-binance-bybit` (último commit con el cableado end-to-end), **sin push** a GitHub.
 Tests: 379 pasando, 1 skipped (`backend/`, `.venv/bin/pytest -q`).
@@ -29,6 +29,11 @@ Tests: 379 pasando, 1 skipped (`backend/`, `.venv/bin/pytest -q`).
 - Estado actual de cada ciclo: `no_strategies` (todavía no hay estrategias pre-registradas) y el grafo
   deshabilitado por falta de `ANTHROPIC_API_KEY`.
 - Logs: `sudo journalctl -u heatsignal-ingestion -f`, `sudo journalctl -u heatsignal-eval -n 50`.
+- **Panel interno** (`api/panel.py` + `panel.html`): dentro del proceso de ingesta, escucha solo en
+  `127.0.0.1:8000` de la VM (sin puerto abierto en el firewall). Abrir con túnel SSH desde la PC:
+  `gcloud compute ssh --zone asia-northeast1-a instance-20261016-191100 --project vocal-operand-271906 -- -N -L 8000:localhost:8000`
+  y después `http://localhost:8000`. Muestra exchanges, ventana en memoria, último ciclo, features en
+  vivo, estrategias e hipótesis. Solo lectura.
 
 ## Pendientes — los define el usuario (bloquean el modo shadow)
 
@@ -62,6 +67,7 @@ Ingesta:
       agendado. Irrelevante mientras se use modo memory.
 
 Producto (Fase 4):
+- [x] Panel interno de operación (túnel SSH, solo lectura).
 - [ ] Endpoints públicos FastAPI (reportes `public_view()` por estrategia).
 - [ ] Dashboard Next.js.
 - [ ] Reporte diario anclado en UTC.

@@ -147,6 +147,34 @@ class MemoryWindowSink:
     def tickers(self, symbol: str) -> list[TickerEvent]:
         return self._events("ticker", symbol)
 
+    def summary(self) -> dict[str, dict[str, object]]:
+        """Vista liviana por simbolo para el panel: conteos y ultimos valores (sin copiar ventanas)."""
+        self.prune()
+        out: dict[str, dict[str, object]] = {}
+        for (kind, symbol), buf in self._buf.items():
+            row = out.setdefault(symbol, {"counts": {k: 0 for k in KINDS}, "mark_by_source": {},
+                                          "last_trade": None, "last_liquidation": None})
+            row["counts"][kind] = len(buf)  # type: ignore[index]
+            if not buf:
+                continue
+            if kind == "trade":
+                t = buf[-1]
+                row["last_trade"] = {"source": t.source.value, "price": t.price, "side": t.side.value,
+                                     "ts_ms": t.ts_event_ms}
+            elif kind == "liquidation":
+                liq = buf[-1]
+                row["last_liquidation"] = {"source": liq.source.value, "price": liq.price,
+                                           "side": liq.side.value, "notional_usd": liq.notional_usd,
+                                           "ts_ms": liq.ts_event_ms}
+            elif kind == "ticker":
+                marks: dict[str, float] = row["mark_by_source"]  # type: ignore[assignment]
+                for ev in reversed(buf):
+                    if ev.mark_price is not None and ev.source.value not in marks:
+                        marks[ev.source.value] = ev.mark_price
+                    if len(marks) == 3:
+                        break
+        return out
+
     def data_gaps(self, symbol: str, window_s: int) -> list[str]:
         """Huecos de la ventana en memoria, en texto, para `FeatureSet.data_gaps`."""
         now = self._clock_ms()

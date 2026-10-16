@@ -99,6 +99,10 @@ class AnalysisLoop:
         self._clock_ms = clock_ms
         self.last_result: CycleResult | None = None
 
+    @property
+    def graph_enabled(self) -> bool:
+        return self._runner is not None
+
     async def build_features(self, now_ms: int) -> dict[str, FeatureSet]:
         out: dict[str, FeatureSet] = {}
         for sym in self._symbols:

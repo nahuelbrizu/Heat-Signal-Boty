@@ -30,6 +30,9 @@
   CLI `python -m heatsignal.evaluation.register_strategy` para pre-registrar estrategias.
 - Pendiente: API key de Anthropic en el `.env` de la VM y estrategias pre-registradas por el usuario.
 - Se actualizaron los estados de las fases y se creó `estado.md` (foto actual + lista de pendientes).
+- Push de la rama `ingestion-binance-bybit` a GitHub (sin PR).
+- Panel interno (`api/panel.py`): FastAPI + HTML propio en el mismo proceso de ingesta, 127.0.0.1:8000,
+  acceso por túnel SSH. Exchanges, ventana, ciclo, features en vivo, estrategias e hipótesis.
 
 ### 2026-10-17 — Worker de Bybit
 

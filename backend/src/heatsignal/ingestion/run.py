@@ -21,6 +21,8 @@ Configuracion por variables de entorno (ver `.env.example` en la raiz del repo):
   HEATSIGNAL_EVAL_DB            data/heatsignal_eval.sqlite   estrategias + hipotesis (lo unico persistido)
   HEATSIGNAL_CHECKPOINT_DB      data/heatsignal_checkpoints.sqlite   checkpoints del grafo
   ANTHROPIC_API_KEY             sin key el ciclo solo calcula features (avisa en cada ciclo)
+  HEATSIGNAL_PANEL_PORT         8000   panel interno en 127.0.0.1 (0 lo apaga); abrir con tunel SSH
+  HEATSIGNAL_PANEL_HOST         127.0.0.1
   HEATSIGNAL_SYMBOLS            "BTCUSDT,SOLUSDT"   simbolos en formato del exchange (sin guion)
   HEATSIGNAL_EXCHANGES          "binance,bybit,okx" exchanges a habilitar (okx solo si el modulo existe)
   REDIS_URL                     p.ej. redis://localhost:6379/0     (opcional)
@@ -97,6 +99,8 @@ class RunConfig:
     analysis_window_s: int = 1800
     eval_db: str = "data/heatsignal_eval.sqlite"
     checkpoint_db: str = "data/heatsignal_checkpoints.sqlite"
+    panel_port: int = 8000
+    panel_host: str = "127.0.0.1"
     ticker_interval_s: float = 1.0
     db_batch_size: int = 500
     db_flush_s: float = 1.0
@@ -170,6 +174,8 @@ class RunConfig:
             analysis_window_s=int(_float("HEATSIGNAL_ANALYSIS_WINDOW_S", 1800)),
             eval_db=_opt("HEATSIGNAL_EVAL_DB") or "data/heatsignal_eval.sqlite",
             checkpoint_db=_opt("HEATSIGNAL_CHECKPOINT_DB") or "data/heatsignal_checkpoints.sqlite",
+            panel_port=int(_float("HEATSIGNAL_PANEL_PORT", 8000)),
+            panel_host=_opt("HEATSIGNAL_PANEL_HOST") or "127.0.0.1",
             ticker_interval_s=_float("HEATSIGNAL_TICKER_INTERVAL_S", 1.0),
             db_batch_size=int(_float("HEATSIGNAL_DB_BATCH_SIZE", 500)),
             db_flush_s=_float("HEATSIGNAL_DB_FLUSH_S", 1.0),
@@ -260,14 +266,26 @@ async def build_sinks(cfg: RunConfig) -> tuple[ThrottledSink, list[EventSink]]:
 
 # ---- analisis (features -> grafo -> hipotesis) -----------------------------------------------------
 
+@dataclass
+class AnalysisHandles:
+    task: asyncio.Task
+    loop: Any  # pipeline.analysis.AnalysisLoop
+    registry: Any  # evaluation.strategy_registry.StrategyRegistry
+    store: Any  # evaluation.pending_store.PendingHypothesisStore
+
+
+def _memory_sink(sinks: list[EventSink]) -> MemoryWindowSink | None:
+    return next((s for s in sinks if isinstance(s, MemoryWindowSink)), None)
+
+
 async def start_analysis(
     cfg: RunConfig, sinks: list[EventSink], stop: asyncio.Event, stack: contextlib.AsyncExitStack
-) -> asyncio.Task | None:
+) -> AnalysisHandles | None:
     """Arranca el ciclo de analisis si corresponde. Todo lo que abre queda en `stack`."""
     if cfg.analysis_interval_s <= 0:
         log.info("analisis apagado (HEATSIGNAL_ANALYSIS_INTERVAL_S=0)")
         return None
-    memory = next((s for s in sinks if isinstance(s, MemoryWindowSink)), None)
+    memory = _memory_sink(sinks)
     if memory is None:
         log.warning("analisis en proceso solo disponible con HEATSIGNAL_STORAGE=memory - no se arranca")
         return None
@@ -308,7 +326,48 @@ async def start_analysis(
         memory, symbols, registry, graph_runner=runner,
         interval_s=cfg.analysis_interval_s, window_s=cfg.analysis_window_s,
     )
-    return asyncio.create_task(loop.run_forever(stop), name="analysis")
+    task = asyncio.create_task(loop.run_forever(stop), name="analysis")
+    return AnalysisHandles(task=task, loop=loop, registry=registry, store=store)
+
+
+# ---- panel interno --------------------------------------------------------------------------------
+
+async def start_panel(
+    cfg: RunConfig, sinks: list[EventSink], health: HealthRegistry, analysis: AnalysisHandles | None
+) -> tuple[Any, asyncio.Task] | None:
+    """Panel interno (api/panel.py) en el mismo event loop. Solo lectura; escucha en `panel_host`."""
+    if cfg.panel_port <= 0:
+        log.info("panel interno apagado (HEATSIGNAL_PANEL_PORT=0)")
+        return None
+    import uvicorn
+
+    from ..api.panel import PanelContext, create_panel_app
+
+    if cfg.panel_host not in ("127.0.0.1", "localhost", "::1"):
+        log.warning("!!! panel interno escuchando en %s: queda expuesto fuera de la maquina !!!", cfg.panel_host)
+    ctx = PanelContext(
+        health=health,
+        memory=_memory_sink(sinks),
+        analysis=analysis.loop if analysis else None,
+        registry=analysis.registry if analysis else None,
+        store=analysis.store if analysis else None,
+        config={
+            "symbols": list(cfg.symbols), "exchanges": list(cfg.exchanges), "storage": cfg.storage,
+            "analysis_interval_s": cfg.analysis_interval_s, "analysis_window_s": cfg.analysis_window_s,
+        },
+    )
+
+    class _Server(uvicorn.Server):
+        # Las senales las maneja run(); uvicorn no debe pisar esos handlers.
+        def capture_signals(self):  # type: ignore[override]
+            return contextlib.nullcontext()
+
+    server = _Server(uvicorn.Config(
+        create_panel_app(ctx), host=cfg.panel_host, port=cfg.panel_port, log_level="warning", access_log=False,
+    ))
+    task = asyncio.create_task(server.serve(), name="panel")
+    log.info("panel interno en http://%s:%d", cfg.panel_host, cfg.panel_port)
+    return server, task
 
 
 # ---- ciclo de vida --------------------------------------------------------------------------------
@@ -364,13 +423,18 @@ async def run(cfg: RunConfig, *, stop_event: asyncio.Event | None = None) -> Non
         health.run_sampler(sample_s=min(5.0, cfg.health_log_s), log_every_s=cfg.health_log_s)
     )
     analysis_stack = contextlib.AsyncExitStack()
-    analysis: asyncio.Task | None = None
+    analysis: AnalysisHandles | None = None
+    panel: tuple[Any, asyncio.Task] | None = None
 
     try:
         try:
             analysis = await start_analysis(cfg, sinks, stop, analysis_stack)
         except Exception:  # noqa: BLE001 - la ingesta sigue aunque el analisis no arranque
             log.exception("no se pudo arrancar el ciclo de analisis - la ingesta sigue sin el")
+        try:
+            panel = await start_panel(cfg, sinks, health, analysis)
+        except Exception:  # noqa: BLE001 - la ingesta sigue aunque el panel no arranque
+            log.exception("no se pudo arrancar el panel interno - la ingesta sigue sin el")
         if cfg.run_seconds:
             with contextlib.suppress(asyncio.TimeoutError):
                 await asyncio.wait_for(stop.wait(), timeout=cfg.run_seconds)
@@ -398,11 +462,18 @@ async def run(cfg: RunConfig, *, stop_event: asyncio.Event | None = None) -> Non
         await asyncio.gather(*tasks.values(), return_exceptions=True)
         sampler.cancel()
         await asyncio.gather(sampler, return_exceptions=True)
+        if panel is not None:
+            server, panel_task = panel
+            server.should_exit = True
+            with contextlib.suppress(asyncio.TimeoutError):
+                await asyncio.wait_for(asyncio.shield(panel_task), timeout=SHUTDOWN_TIMEOUT_S)
+            panel_task.cancel()
+            await asyncio.gather(panel_task, return_exceptions=True)
         if analysis is not None:
             with contextlib.suppress(asyncio.TimeoutError):
-                await asyncio.wait_for(asyncio.shield(analysis), timeout=SHUTDOWN_TIMEOUT_S)
-            analysis.cancel()
-            await asyncio.gather(analysis, return_exceptions=True)
+                await asyncio.wait_for(asyncio.shield(analysis.task), timeout=SHUTDOWN_TIMEOUT_S)
+            analysis.task.cancel()
+            await asyncio.gather(analysis.task, return_exceptions=True)
         await analysis_stack.aclose()
         await throttled.close()  # flush de tickers pendientes + cierre de fanout/sinks
         _log_final_stats(throttled, sinks, health)
