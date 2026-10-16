@@ -37,13 +37,32 @@
 - Heartbeat: mandar `{"op":"ping"}` cada 20s (sin ping ni datos, Bybit corta a los 10 min).
 - Implementado en `backend/src/heatsignal/ingestion/bybit_worker.py` (asyncio puro sobre `websockets`).
 
-### OKX V5
-- Endpoint público: `wss://ws.okx.com:8443/ws/v5/public` (sin auth para canales públicos).
-- Liquidaciones: canal `liquidation-orders` — ⚠️ **como máximo 1 update por segundo por contrato**
-  (no captura todas, igual que el Bybit viejo). Documentar como cobertura parcial.
-- Trades: canal `trades`.
-- Ticker: canal `tickers`.
-- Ping/pong: si no llega mensaje en ~20s, mandar `ping`; si faltan 2 pongs seguidos, reconectar.
+### OKX V5 (perps lineales SWAP) — verificado doc + WS en vivo, oct 2026
+- Endpoint público: `wss://ws.okx.com/ws/v5/public` (doc actual, sin puerto; `:8443` también conecta).
+  REST: `https://openapi.okx.com` (⚠️ responde 403 sin header `User-Agent`).
+- Suscripción: `{"op":"subscribe","args":[{"channel":..., "instId"|"instType":...}]}`. Ack
+  `{"event":"subscribe",...}`; fallo `{"event":"error","code":"60018",...}` (instId inexistente);
+  `{"event":"notice","code":"64008"}` = upgrade en 60s → reconectar.
+- Liquidaciones: `liquidation-orders` **por `instType: SWAP`** (todo el mercado; se filtra por instId).
+  Doc: "This data doesn't represent the total number of liquidations on OKX" → **PARTIAL** (la doc
+  vieja decía máx 1 orden/contrato/seg; la actual ya no lo cuantifica). No viene en orden cronológico.
+  - ⚠️ `side` = "Order side" (lado de la **orden** de liquidación) → se usa tal cual (sell = long
+    liquidado). `posSide` = long/short (hedge) o `net`. Ejemplo doc: posSide=short, side=buy.
+    En vivo: siempre posSide=long ↔ side=sell. **Al revés que Bybit allLiquidation.**
+  - `bkPx` = precio contra la cuenta de liquidación del sistema (≈ quiebra).
+- ⚠️ `sz` (liquidaciones y trades) está en **contratos** para SWAP → `qty = sz × ctVal`, con `ctVal`
+  de `GET /api/v5/public/instruments?instType=SWAP` (lineal: en activo base; BTC 0.01, SOL 1, ETH 0.1).
+  Se carga al arrancar y en cada reconexión; símbolo sin ctVal válido o inverso → `OkxContractError`
+  (el worker se detiene, nunca escala mal en silencio).
+- Trades: `trades` **agrega** por (orden taker, precio, source) — campo `count` (≈ aggTrade de Binance).
+  `trades-all` (1 por match) vive en `/ws/v5/business`, no en `/public`.
+- Ticker: `tickers` en SWAP **no** trae mark/funding/OI. TickerEvent = merge por instId de `tickers.last`
+  + `mark-price.markPx` (200ms/10s) + `funding-rate.fundingRate` (30–90s) + `open-interest.oiCcy`/`oiUsd`
+  (3s; `oi` está en contratos). Cache limpio en cada reconexión.
+- Heartbeat: OKX corta a los 30s sin datos. Si no llega nada en 20s → mandar el string `ping`, esperar
+  `pong`; 40s sin ningún mensaje → reconectar.
+- Implementado en `backend/src/heatsignal/ingestion/okx_worker.py`. Símbolos aceptados: `BTC-USDT-SWAP`,
+  `BTC-USDT` o `BTCUSDT`; salen como `BTC-USDT`.
 
 ## ⚠️ Limitación de datos a documentar (no esconder)
 La cobertura de liquidaciones **no es uniforme**: solo `allLiquidation` de Bybit da el flujo completo; Binance (`forceOrder`),
