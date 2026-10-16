@@ -11,6 +11,67 @@
 
 ## Entradas
 
+### 2026-10-17 — Binance Futures recibe datos reales: el "bloqueo de red" era la ruta legacy
+
+- Revisando el feed de liquidaciones de Hummingbot (`data_feed/liquidations_feed/binance/constants.py`) se
+  vio que usa `wss://fstream.binance.com/market/stream`. Binance separó los streams de Futures en
+  `/market` (aggTrade, markPrice, forceOrder) y `/public` (depth, bookTicker); el path legacy `/ws`
+  acepta el handshake y no manda nada. **El diagnóstico del 2026-07-11 (bloqueo de red) era incorrecto.**
+- `binance_worker.py`: `stream_url=MARKET_STREAM_URL` (`wss://fstream.binance.com/market`). `_demo()` corrido
+  45s contra Binance real: ~450 trades + tickers de BTC/SOL normalizados OK. Liquidaciones validadas con
+  `!forceOrder@arr` en vivo (`_normalize` OK sobre payloads reales).
+- **Corrección de cobertura:** `forceOrder` de Binance empuja solo la última liquidación por símbolo cada
+  1000ms (docstring del conector oficial; coincide con el espaciado ~1s observado en vivo). Se pasó de
+  `Coverage.FULL` a `Coverage.PARTIAL` en el worker, el test, `events.py`, `phase-0-blockers.md` y
+  `phase-1-ingestion.md`. Solo Bybit `allLiquidation` es FULL.
+- Revisado también el conector de Bybit de NautilusTrader: en `allLiquidation`, `S` es el lado de la
+  **posición** liquidada (`Buy` = long liquidado), al revés que Binance (`S` = lado de la orden). Tenerlo
+  en cuenta en el worker de Bybit. Hummingbot / NautilusTrader / Freqtrade quedan como referencia, no
+  dependencia (Zennbot descartado: EA cerrado de MT5 forex).
+- Observado: `ts_ingest_ms - ts_event_ms` ~1-2s; posible desfasaje del reloj de WSL, a revisar.
+- 81 tests pasando.
+- Próximo paso: worker de Bybit usando NautilusTrader/Hummingbot como referencia.
+
+### 2026-07-11 — `_demo()` corrido contra Binance real: hallazgo de bloqueo de red al WS de Futures
+
+- **Se corrió `binance_worker.py` de verdad** (`PYTHONPATH=src .venv/bin/python -m
+  heatsignal.ingestion.binance_worker`, venv con `binance-futures-connector 4.2.0` ya instalado) contra
+  `wss://fstream.binance.com` real, no simulado. Hasta esta sesión el archivo era "coherente por lectura"
+  pero nunca se había ejecutado.
+- **Resultado: la conexión y el ciclo de vida del worker funcionan correctamente, pero NUNCA llega ni un
+  solo evento de datos** (`forceOrder`/`aggTrade`/`markPriceUpdate`) para BTCUSDT/SOLUSDT en 3 intentos de
+  ~65s cada uno. El watchdog de socket zombie (`_watchdog`, `message_timeout_s=60s`) detectó correctamente
+  la ausencia de mensajes, forzó reconexión, y el backoff+jitter también se comportó como se diseñó — esa
+  parte del código quedó validada end-to-end contra infraestructura real.
+- **Causa raíz: NO es un bug del código.** Se aisló con websockets crudos (sin el conector de Binance) en
+  la misma sandbox:
+  - `wss://fstream.binance.com/ws/btcusdt@aggTrade` (Binance **Futures** WS, el que usa este worker): el
+    handshake HTTP completa (`on_open` dispara), pero **cero** frames de datos en ventanas de 10s, 15s y
+    30s.
+  - `wss://stream.binance.com:9443/ws/btcusdt@trade` (Binance **Spot** WS): 274 mensajes en 10s.
+  - `wss://stream.bybit.com/v5/public/linear` (`publicTrade.BTCUSDT`): mensajes normales en 10s.
+  - `wss://echo.websocket.org`: eco inmediato.
+  - `https://fapi.binance.com/fapi/v1/ping` (REST de Futures): `200 OK`.
+  - Conclusión: el egress de red de esta sandbox (o un filtro entre la sandbox y Binance) deja pasar el
+    handshake WS y el tráfico REST de Futures, pero **descarta selectivamente el plano de datos del stream
+    de Futures** (`fstream.binance.com`) — mientras que Spot, Bybit y un WS genérico andan sin problema.
+    No se pudo determinar desde acá si el filtro está del lado de la red de la sandbox o es Binance
+    limitando esta IP/rango específicamente para Futures WS; hace falta repetir la prueba desde una red sin
+    esa restricción (máquina del usuario, VPS) para distinguirlo.
+- **Impacto:** no se pudo confirmar en esta sesión que la normalización (`_normalize`) funcione contra
+  payloads reales de Binance Futures — sigue siendo "coherente por lectura" en ese punto específico, aunque
+  el ciclo de conexión/reconexión/watchdog sí quedó probado contra infraestructura real. Dado que
+  `phase-1-ingestion.md` exige que los workers corran 24/7 en producción, este bloqueo de red **no puede
+  reproducirse en este entorno de desarrollo** — el worker va a necesitar correr (o al menos probarse una
+  vez) desde una red distinta antes de confiar en que ingesta datos reales.
+- Sin cambios de código: no se tocó `binance_worker.py` porque no se encontró ningún bug atribuible al
+  código en sí.
+- Próximo paso sugerido: repetir el mismo test aislado (`wss://fstream.binance.com/ws/btcusdt@aggTrade`
+  crudo) desde otra red (la del usuario, o el VPS/servidor donde correrá el worker en producción) para
+  confirmar si ahí sí llegan datos. Si sí, el problema es 100% de esta sandbox y no bloquea nada. Si
+  tampoco llegan datos ahí, es un problema real (geo-bloqueo de Binance a la IP, o algo del lado de
+  Binance) que hay que resolver antes de depender de este worker en producción.
+
 ### 2026-07-10 — Redis Streams, watchdog, FastAPI y primer agente LangGraph
 - **Redis Streams como sink real** (`schema/sink.py`): `RedisStreamSink` sobre `redis.asyncio`,
   implementa `EventSink` sin que `BinanceWorker` se entere. Stream key `heatsignal:{symbol}:{kind}`

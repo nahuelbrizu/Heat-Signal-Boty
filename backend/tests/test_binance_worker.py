@@ -48,7 +48,7 @@ def test_norm_side() -> None:
 # ---- _normalize -------------------------------------------------------------------
 
 
-def test_normalize_force_order_is_full_coverage() -> None:
+def test_normalize_force_order_is_partial_coverage() -> None:
     worker = _worker()
     event = worker._normalize(
         {
@@ -62,7 +62,8 @@ def test_normalize_force_order_is_full_coverage() -> None:
     assert event.side == Side.SELL
     assert event.price == 50000.0
     assert event.notional_usd == 25000.0
-    assert event.coverage == Coverage.FULL
+    # forceOrder empuja solo la ultima liquidacion por simbolo cada 1000ms.
+    assert event.coverage == Coverage.PARTIAL
 
 
 def test_normalize_agg_trade_maker_flag_flips_taker_side() -> None:

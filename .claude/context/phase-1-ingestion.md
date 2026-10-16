@@ -14,11 +14,14 @@
 ## Endpoints verificados (confirmar siempre contra doc oficial antes de codear)
 
 ### Binance USDⓈ-M Futures
-- Liquidaciones: stream `<symbol>@forceOrder` (evento `forceOrder`) — **empuja todas las liquidaciones**.
+- Liquidaciones: stream `<symbol>@forceOrder` (evento `forceOrder`) — ⚠️ **NO empuja todas**: solo la última
+  liquidación por símbolo cada 1000ms (snapshot). Cobertura PARTIAL, como OKX.
   También existe `!forceOrder@arr` (all-market).
 - Trades: `<symbol>@aggTrade` / `<symbol>@trade`.
 - Ticker: `<symbol>@ticker` / mark price streams.
 - Sin API key para streams públicos.
+- ⚠️ **Rutas (oct 2026):** `wss://fstream.binance.com/market/...` para aggTrade/markPrice/forceOrder y
+  `/public/...` para depth/bookTicker. El path legacy `/ws` acepta el handshake pero **no manda datos**.
 
 ### Bybit V5 (linear/USDT perp)
 - Liquidaciones: usar `allLiquidation.<symbol>` (**empuja todas**, cada 500ms).
@@ -37,10 +40,10 @@
 - Ping/pong: si no llega mensaje en ~20s, mandar `ping`; si faltan 2 pongs seguidos, reconectar.
 
 ## ⚠️ Limitación de datos a documentar (no esconder)
-La cobertura de liquidaciones **no es uniforme**: Binance y `allLiquidation` de Bybit dan el flujo completo;
+La cobertura de liquidaciones **no es uniforme**: solo `allLiquidation` de Bybit da el flujo completo; Binance (`forceOrder`),
 OKX y el Bybit deprecado dan a lo sumo 1/seg por símbolo. Esto sesga cualquier comparación cross-exchange
 de volumen de liquidaciones. Marcar el origen y la granularidad en cada registro; el Analista de
-Liquidaciones y el Evaluador deben saber que OKX subrepresenta.
+Liquidaciones y el Evaluador deben saber que Binance y OKX subrepresentan.
 
 ## Arquitectura de workers
 - **1 worker WS por exchange** (no por stream): cada conexión multiplexa liquidaciones + trades + ticker

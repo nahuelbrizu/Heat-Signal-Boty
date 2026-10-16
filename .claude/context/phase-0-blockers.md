@@ -19,7 +19,7 @@ públicos de mercado de los exchanges no tienen esa restricción.
 - [x] Decisión: **1 worker por exchange** (multiplexa canales), no 1 por stream.
 - [ ] Implementar reconexión/backoff+jitter, replay de suscripciones, heartbeat, checkpointing.
 - [ ] Implementar adaptadores de normalización por exchange (formatos distintos) a esquema común UTC.
-- ⚠️ Cobertura de liquidaciones no uniforme: Binance y `allLiquidation` de Bybit dan todo; OKX y el Bybit
+- ⚠️ Cobertura de liquidaciones no uniforme: solo `allLiquidation` de Bybit da todo; Binance (`forceOrder`), OKX y el Bybit
       viejo dan ≤1/seg por símbolo. Marcar granularidad/origen por registro.
 - Corre 24/7 desde el MVP.
 

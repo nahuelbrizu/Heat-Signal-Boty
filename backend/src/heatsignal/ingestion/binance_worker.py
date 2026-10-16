@@ -2,7 +2,7 @@
 Worker de ingesta de Binance USDⓈ-M Futures para HeatSignal.
 
 Un solo worker multiplexa tres tipos de stream por conexion:
-  - forceOrder  (liquidaciones)         -> LiquidationEvent  [coverage FULL]
+  - forceOrder  (liquidaciones)         -> LiquidationEvent  [coverage PARTIAL]
   - aggTrade    (trades del agresor)    -> TradeEvent
   - markPrice   (funding + mark price)  -> TickerEvent
 
@@ -11,7 +11,14 @@ Usa el conector OFICIAL de Binance: `binance-futures-connector`
     from binance.websocket.um_futures.websocket_client import UMFuturesWebsocketClient
 
 Notas de diseno (verificadas contra la doc de Binance, jul 2026):
-  - `forceOrder` empuja TODAS las liquidaciones -> coverage = FULL.
+  - `forceOrder` NO empuja todas: "for each symbol, only the latest one liquidation
+    order within 1000ms will be pushed" (docstring del conector oficial, oct 2026)
+    -> coverage = PARTIAL (<=1/seg por simbolo, igual que OKX).
+  - Rutas WS (verificado oct 2026): Binance separo los streams de Futures en
+    `/market` (aggTrade, markPrice, forceOrder) y `/public` (depth, bookTicker).
+    El path legacy `/ws` / `/stream` acepta el handshake pero NO manda datos.
+    Por eso `stream_url` apunta a `/market` (el conector le agrega `/stream`).
+    Referencia: hummingbot `data_feed/liquidations_feed/binance/constants.py`.
   - El conector responde el ping/pong del server automaticamente.
   - Una conexion admite hasta 1024 streams; multiplexar aca es correcto.
   - El callback del conector es SINCRONO y corre en su propio hilo. Para llegar al
@@ -49,6 +56,9 @@ from ..schema.events import (
 from ..schema.sink import EventSink
 
 log = logging.getLogger("heatsignal.ingestion.binance")
+
+# Ruta "market" de Binance USDⓈ-M Futures (aggTrade, markPrice, forceOrder).
+MARKET_STREAM_URL = "wss://fstream.binance.com/market"
 
 
 def _now_ms() -> int:
@@ -152,7 +162,7 @@ class BinanceWorker:
                     notional_usd=price * qty,
                     ts_event_ms=int(d.get("E", _now_ms())),
                     ts_ingest_ms=_now_ms(),
-                    coverage=Coverage.FULL,  # forceOrder empuja todas
+                    coverage=Coverage.PARTIAL,  # forceOrder: <=1 por simbolo cada 1000ms
                 )
             if etype == "aggTrade":
                 price = float(d["p"])
@@ -201,6 +211,7 @@ class BinanceWorker:
                 loop.call_soon_threadsafe(self._connection_dead.set)
 
         client = UMFuturesWebsocketClient(
+            stream_url=MARKET_STREAM_URL,
             on_message=self._on_message,
             on_close=_on_close,
             is_combined=True,
