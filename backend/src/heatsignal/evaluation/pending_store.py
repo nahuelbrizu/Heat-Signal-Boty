@@ -19,12 +19,21 @@ Rechaza hipotesis cuyo `strategy_id` no este pre-registrado en `StrategyRegistry
 (chequeo explicito via el registry inyectado: el registry puede vivir en otra base,
 asi que una FK de SQLite no alcanza).
 
+Idempotencia por corrida: si `run_id` no es None, `add(h)` es idempotente sobre
+(run_id, symbol, strategy_id). El Sintetizador del grafo puede re-ejecutarse al
+reanudar desde un checkpoint despues de haber llamado a `add()`, y emitiria la
+"misma" hipotesis con un `hypothesis_id` nuevo. Ese duplicado es un no-op logueado
+(no un error, no una segunda fila): contarla dos veces inflaria n y sesgaria el
+win-rate. Lo garantiza tambien un indice UNIQUE parcial a nivel de motor. Con
+`run_id=None` no hay clave de corrida y cada `add` es una hipotesis nueva.
+
 Todas las fechas deben ser timezone-aware; se persisten en UTC (ISO) y ademas como
 epoch en segundos para poder consultar "vencidas" con aritmetica simple.
 """
 
 from __future__ import annotations
 
+import logging
 import sqlite3
 import threading
 from datetime import datetime, timedelta, timezone
@@ -38,6 +47,8 @@ from pydantic import BaseModel
 from ..schema.hypotheses import HypothesisStatus, PendingHypothesis, Resolution
 from ..schema.signals import Direction
 from .strategy_registry import UnknownStrategyError
+
+logger = logging.getLogger(__name__)
 
 
 class StrategyLookup(Protocol):
@@ -156,6 +167,11 @@ class PendingHypothesisStore:
             CREATE INDEX IF NOT EXISTS idx_pending_hypotheses_due
                 ON pending_hypotheses (due_ts);
 
+            -- Idempotencia por corrida del grafo (ver docstring del modulo).
+            CREATE UNIQUE INDEX IF NOT EXISTS uq_pending_hypotheses_run_key
+                ON pending_hypotheses (run_id, symbol, strategy_id)
+                WHERE run_id IS NOT NULL;
+
             CREATE TRIGGER IF NOT EXISTS trg_pending_hypotheses_no_update
             BEFORE UPDATE ON pending_hypotheses
             BEGIN
@@ -209,7 +225,12 @@ class PendingHypothesisStore:
     # ------------------------------------------------------------------ escritura
 
     def add(self, h: PendingHypothesis) -> None:
-        """Agrega una hipotesis pendiente. Rechaza estrategias no pre-registradas."""
+        """Agrega una hipotesis pendiente. Rechaza estrategias no pre-registradas.
+
+        Idempotente sobre (run_id, symbol, strategy_id) si `run_id` no es None: un
+        duplicado de la misma corrida es un no-op logueado (WARNING). Un
+        `hypothesis_id` repetido sin esa clave sigue siendo `DuplicateHypothesisError`.
+        """
         if self._registry.get(h.strategy_id) is None:
             raise UnknownStrategyError(
                 f"strategy_id {h.strategy_id} no esta pre-registrado: el Estratega no inventa estrategias"
@@ -221,6 +242,8 @@ class PendingHypothesisStore:
             )
         due = created + timedelta(seconds=h.horizon_s)
         with self._lock:
+            if self._run_key_exists(h):
+                return
             try:
                 self._conn.execute(
                     f"INSERT INTO pending_hypotheses ({_HYP_COLUMNS}) "
@@ -245,9 +268,34 @@ class PendingHypothesisStore:
                 self._conn.commit()
             except sqlite3.IntegrityError as exc:
                 self._conn.rollback()
+                # Carrera con otro proceso que inserto la misma clave de corrida.
+                if self._run_key_exists(h):
+                    return
                 raise DuplicateHypothesisError(
                     f"hypothesis_id {h.hypothesis_id} ya existe"
                 ) from exc
+
+    def _run_key_exists(self, h: PendingHypothesis) -> bool:
+        """True (y loguea) si ya hay una hipotesis con la misma (run_id, symbol, strategy_id)."""
+        if h.run_id is None:
+            return False
+        row = self._conn.execute(
+            "SELECT hypothesis_id FROM pending_hypotheses "
+            "WHERE run_id = ? AND symbol = ? AND strategy_id = ?",
+            (h.run_id, h.symbol, str(h.strategy_id)),
+        ).fetchone()
+        if row is None:
+            return False
+        logger.warning(
+            "add() duplicado ignorado: run_id=%s symbol=%s strategy_id=%s ya registrado como "
+            "hypothesis_id=%s (descartado hypothesis_id=%s)",
+            h.run_id,
+            h.symbol,
+            h.strategy_id,
+            row[0],
+            h.hypothesis_id,
+        )
+        return True
 
     def resolve(self, resolution: Resolution, metrics: ResolutionMetrics | None = None) -> None:
         """Agrega la resolucion de una hipotesis. Como maximo una por hipotesis.

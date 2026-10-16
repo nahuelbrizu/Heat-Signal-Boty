@@ -285,3 +285,65 @@ def test_list_by_strategy_isolated_and_persistent(tmp_path: Path) -> None:
     ids = [r.hypothesis.hypothesis_id for r in reopened.list_by_strategy(s.strategy_id)]
     assert ids == [first.hypothesis_id, later.hypothesis_id]
     assert reopened.strategy_ids() == [s.strategy_id, other.strategy_id]
+
+
+# --------------------------------------------------------------------------- idempotencia por corrida
+
+
+def test_store_satisfies_agents_protocol(tmp_path: Path) -> None:
+    from heatsignal.agents.hypothesis_store import PendingHypothesisStore as AgentsStoreProtocol
+
+    _, store, _ = _setup(tmp_path)
+    assert isinstance(store, AgentsStoreProtocol)
+
+
+def test_add_idempotent_on_run_symbol_strategy(tmp_path: Path, caplog) -> None:
+    _, store, s = _setup(tmp_path)
+    first = _hyp(s.strategy_id, run_id="run-42")
+    # Re-ejecucion del Sintetizador al reanudar checkpoint: misma corrida, id nuevo.
+    replay = _hyp(s.strategy_id, run_id="run-42", confidence_score=0.9)
+    assert first.hypothesis_id != replay.hypothesis_id
+
+    store.add(first)
+    with caplog.at_level("WARNING", logger="heatsignal.evaluation.pending_store"):
+        store.add(replay)  # no-op, no error
+        store.add(first)  # reintento exacto: tambien no-op
+    records = store.list_by_strategy(s.strategy_id)
+    assert [r.hypothesis.hypothesis_id for r in records] == [first.hypothesis_id]
+    assert records[0].hypothesis.confidence_score == 0.7  # se conserva la original
+    assert store.pending_count() == 1
+    assert sum("duplicado ignorado" in m for m in caplog.messages) == 2
+    assert str(replay.hypothesis_id) in caplog.text
+
+
+def test_run_key_distinguishes_symbol_and_strategy(tmp_path: Path) -> None:
+    registry, store, s = _setup(tmp_path)
+    other = StrategyHypothesis(description="o", entry_conditions={}, exit_conditions={}, author="t")
+    registry.register(other)
+    store.add(_hyp(s.strategy_id, run_id="run-1"))
+    store.add(_hyp(s.strategy_id, run_id="run-1", symbol="ETH-USDT"))
+    store.add(_hyp(other.strategy_id, run_id="run-1"))
+    store.add(_hyp(s.strategy_id, run_id="run-2"))
+    assert store.pending_count() == 4
+
+
+def test_no_run_id_means_no_dedup(tmp_path: Path) -> None:
+    _, store, s = _setup(tmp_path)
+    store.add(_hyp(s.strategy_id, run_id=None))
+    store.add(_hyp(s.strategy_id, run_id=None))
+    assert store.pending_count() == 2
+
+
+def test_run_key_unique_at_engine_level(tmp_path: Path) -> None:
+    _, store, s = _setup(tmp_path)
+    h = _hyp(s.strategy_id, run_id="run-9")
+    store.add(h)
+    raw = sqlite3.connect(str(tmp_path / "eval.db"))
+    with pytest.raises(sqlite3.IntegrityError):
+        raw.execute(
+            "INSERT INTO pending_hypotheses SELECT ?, strategy_id, symbol, created_at, created_ts, due_ts, "
+            "direction, confidence_score, entry_reference_price, horizon_s, atr_normalized_trigger, "
+            "rationale, heatmap_model_id, run_id FROM pending_hypotheses WHERE hypothesis_id = ?",
+            (str(uuid4()), str(h.hypothesis_id)),
+        )
+    raw.close()
