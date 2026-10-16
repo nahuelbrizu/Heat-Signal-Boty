@@ -23,8 +23,12 @@
   Los 3 exchanges responden desde Tokio.
 - Decisión: datos de mercado solo en memoria (ver decisions.md). `MemoryWindowSink` +
   `HEATSIGNAL_STORAGE=memory` como default; unidad systemd en `deploy/`.
-- Pendiente: desplegar en la VM (swap + venv + systemd), cableado end-to-end memoria -> features ->
-  grafo -> pending_store, API key de Anthropic, estrategias pre-registradas por el usuario.
+- Desplegado en la VM: swap 2 GB, venv (Python 3.13), servicio systemd `heatsignal-ingestion`.
+- Cableado end-to-end: `pipeline/analysis.py` (AnalysisLoop) corre dentro del proceso de ingesta cada
+  15 min: memoria -> `build_feature_set` -> grafo -> `PendingHypothesisStore`. Estados explicitos
+  (`warmup`, `no_strategies`, `no_llm`, `ran`, `error`). Evaluacion por timer systemd cada 5 min.
+  CLI `python -m heatsignal.evaluation.register_strategy` para pre-registrar estrategias.
+- Pendiente: API key de Anthropic en el `.env` de la VM y estrategias pre-registradas por el usuario.
 
 ### 2026-10-17 — Worker de Bybit
 

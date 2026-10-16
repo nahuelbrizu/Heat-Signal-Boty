@@ -121,3 +121,39 @@ def test_strategy_status_events_table_rejects_update_at_db_level(tmp_path: Path)
             "UPDATE strategy_status_events SET status = 'evaluated' WHERE strategy_id = ?",
             (str(hypothesis.strategy_id),),
         )
+
+
+# ---- CLI de pre-registro ----------------------------------------------------------------------------
+
+
+def test_register_strategy_cli(tmp_path, capsys) -> None:
+    import json as _json
+
+    from heatsignal.evaluation.register_strategy import main
+
+    spec = tmp_path / "s.json"
+    spec.write_text(_json.dumps({
+        "description": "rebote", "entry_conditions": {"a": 1},
+        "exit_conditions": {"horizon_s": 3600}, "author": "tests",
+    }))
+    db = tmp_path / "eval.sqlite"
+    assert main([str(spec), "--db", str(db)]) == 0
+    assert main(["--list", "--db", str(db)]) == 0
+    out = capsys.readouterr().out
+    assert "registrada" in out and '"description": "rebote"' in out
+
+
+def test_register_strategy_cli_rejects_system_fields(tmp_path) -> None:
+    import json as _json
+
+    import pytest as _pytest
+
+    from heatsignal.evaluation.register_strategy import main
+
+    spec = tmp_path / "s.json"
+    spec.write_text(_json.dumps({
+        "strategy_id": "00000000-0000-0000-0000-000000000000", "description": "x",
+        "entry_conditions": {}, "exit_conditions": {}, "author": "t",
+    }))
+    with _pytest.raises(SystemExit):
+        main([str(spec), "--db", str(tmp_path / "e.sqlite")])

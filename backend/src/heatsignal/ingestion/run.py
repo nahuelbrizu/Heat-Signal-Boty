@@ -16,6 +16,11 @@ Configuracion por variables de entorno (ver `.env.example` en la raiz del repo):
   HEATSIGNAL_MEM_TRADES_S       1800   retencion en RAM por tipo (modo memory)
   HEATSIGNAL_MEM_TICKERS_S      7200
   HEATSIGNAL_MEM_LIQUIDATIONS_S 86400
+  HEATSIGNAL_ANALYSIS_INTERVAL_S 900   ciclo features -> grafo -> hipotesis (modo memory; 0 lo apaga)
+  HEATSIGNAL_ANALYSIS_WINDOW_S  1800   ventana de features (<= retencion de trades)
+  HEATSIGNAL_EVAL_DB            data/heatsignal_eval.sqlite   estrategias + hipotesis (lo unico persistido)
+  HEATSIGNAL_CHECKPOINT_DB      data/heatsignal_checkpoints.sqlite   checkpoints del grafo
+  ANTHROPIC_API_KEY             sin key el ciclo solo calcula features (avisa en cada ciclo)
   HEATSIGNAL_SYMBOLS            "BTCUSDT,SOLUSDT"   simbolos en formato del exchange (sin guion)
   HEATSIGNAL_EXCHANGES          "binance,bybit,okx" exchanges a habilitar (okx solo si el modulo existe)
   REDIS_URL                     p.ej. redis://localhost:6379/0     (opcional)
@@ -41,6 +46,7 @@ import os
 import signal
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from ..schema.sink import ConsoleSink, EventSink, RedisStreamSink
@@ -48,7 +54,7 @@ from ..storage.fanout import FanoutSink
 from ..storage.memory import MemoryWindowSink
 from ..storage.throttle import ThrottledSink
 from ..storage.timescale import TimescaleSink, _redact
-from .binance_worker import BinanceWorker
+from .binance_worker import BinanceWorker, _norm_symbol
 from .bybit_worker import BybitWorker
 from .health import CountingSink, HealthRegistry, ReconnectLogHandler
 
@@ -87,6 +93,10 @@ class RunConfig:
     mem_trades_s: float = 1800.0
     mem_tickers_s: float = 7200.0
     mem_liquidations_s: float = 86400.0
+    analysis_interval_s: float = 900.0
+    analysis_window_s: int = 1800
+    eval_db: str = "data/heatsignal_eval.sqlite"
+    checkpoint_db: str = "data/heatsignal_checkpoints.sqlite"
     ticker_interval_s: float = 1.0
     db_batch_size: int = 500
     db_flush_s: float = 1.0
@@ -156,6 +166,10 @@ class RunConfig:
             mem_trades_s=_float("HEATSIGNAL_MEM_TRADES_S", 1800.0),
             mem_tickers_s=_float("HEATSIGNAL_MEM_TICKERS_S", 7200.0),
             mem_liquidations_s=_float("HEATSIGNAL_MEM_LIQUIDATIONS_S", 86400.0),
+            analysis_interval_s=_float("HEATSIGNAL_ANALYSIS_INTERVAL_S", 900.0),
+            analysis_window_s=int(_float("HEATSIGNAL_ANALYSIS_WINDOW_S", 1800)),
+            eval_db=_opt("HEATSIGNAL_EVAL_DB") or "data/heatsignal_eval.sqlite",
+            checkpoint_db=_opt("HEATSIGNAL_CHECKPOINT_DB") or "data/heatsignal_checkpoints.sqlite",
             ticker_interval_s=_float("HEATSIGNAL_TICKER_INTERVAL_S", 1.0),
             db_batch_size=int(_float("HEATSIGNAL_DB_BATCH_SIZE", 500)),
             db_flush_s=_float("HEATSIGNAL_DB_FLUSH_S", 1.0),
@@ -244,6 +258,59 @@ async def build_sinks(cfg: RunConfig) -> tuple[ThrottledSink, list[EventSink]]:
     return _throttled(cfg, real), real
 
 
+# ---- analisis (features -> grafo -> hipotesis) -----------------------------------------------------
+
+async def start_analysis(
+    cfg: RunConfig, sinks: list[EventSink], stop: asyncio.Event, stack: contextlib.AsyncExitStack
+) -> asyncio.Task | None:
+    """Arranca el ciclo de analisis si corresponde. Todo lo que abre queda en `stack`."""
+    if cfg.analysis_interval_s <= 0:
+        log.info("analisis apagado (HEATSIGNAL_ANALYSIS_INTERVAL_S=0)")
+        return None
+    memory = next((s for s in sinks if isinstance(s, MemoryWindowSink)), None)
+    if memory is None:
+        log.warning("analisis en proceso solo disponible con HEATSIGNAL_STORAGE=memory - no se arranca")
+        return None
+    if cfg.analysis_window_s > cfg.mem_trades_s:
+        log.warning(
+            "HEATSIGNAL_ANALYSIS_WINDOW_S=%d > retencion de trades %.0fs: el order flow quedara corto "
+            "(se declara en data_gaps)", cfg.analysis_window_s, cfg.mem_trades_s,
+        )
+
+    from ..agents.checkpoint import make_run_config, sqlite_checkpointer
+    from ..agents.graph import build_graph
+    from ..agents.llm_factory import MissingApiKeyError, make_llms
+    from ..evaluation.pending_store import PendingHypothesisStore
+    from ..evaluation.strategy_registry import StrategyRegistry
+    from ..pipeline.analysis import AnalysisLoop
+
+    Path(cfg.eval_db).parent.mkdir(parents=True, exist_ok=True)
+    registry = StrategyRegistry(cfg.eval_db)
+    stack.callback(registry.close)
+    store = PendingHypothesisStore(cfg.eval_db, registry)
+    stack.callback(store.close)
+
+    symbols = [_norm_symbol(s) for s in cfg.symbols]
+    runner = None
+    try:
+        llms = make_llms()
+    except MissingApiKeyError:
+        log.warning("!!! falta ANTHROPIC_API_KEY - el ciclo de analisis solo calcula features !!!")
+    else:
+        Path(cfg.checkpoint_db).parent.mkdir(parents=True, exist_ok=True)
+        checkpointer = await stack.enter_async_context(sqlite_checkpointer(cfg.checkpoint_db))
+        graph = build_graph(llms.cheap, llms.strong, checkpointer=checkpointer, hypothesis_store=store)
+
+        async def runner(state: dict[str, Any], run_id: str) -> dict[str, Any]:
+            return await graph.ainvoke(state, make_run_config(symbols, run_id))
+
+    loop = AnalysisLoop(
+        memory, symbols, registry, graph_runner=runner,
+        interval_s=cfg.analysis_interval_s, window_s=cfg.analysis_window_s,
+    )
+    return asyncio.create_task(loop.run_forever(stop), name="analysis")
+
+
 # ---- ciclo de vida --------------------------------------------------------------------------------
 
 async def _supervise(name: str, worker: Any) -> None:
@@ -296,8 +363,14 @@ async def run(cfg: RunConfig, *, stop_event: asyncio.Event | None = None) -> Non
     sampler = asyncio.create_task(
         health.run_sampler(sample_s=min(5.0, cfg.health_log_s), log_every_s=cfg.health_log_s)
     )
+    analysis_stack = contextlib.AsyncExitStack()
+    analysis: asyncio.Task | None = None
 
     try:
+        try:
+            analysis = await start_analysis(cfg, sinks, stop, analysis_stack)
+        except Exception:  # noqa: BLE001 - la ingesta sigue aunque el analisis no arranque
+            log.exception("no se pudo arrancar el ciclo de analisis - la ingesta sigue sin el")
         if cfg.run_seconds:
             with contextlib.suppress(asyncio.TimeoutError):
                 await asyncio.wait_for(stop.wait(), timeout=cfg.run_seconds)
@@ -306,6 +379,7 @@ async def run(cfg: RunConfig, *, stop_event: asyncio.Event | None = None) -> Non
             await stop.wait()
             log.info("senal de parada recibida - cerrando")
     finally:
+        stop.set()  # tambien corta el ciclo de analisis cuando termina por HEATSIGNAL_RUN_SECONDS
         # stop() de todos en paralelo y acotado: el cierre WS de algunos exchanges espera el close
         # handshake del server (Bybit puede tardar ~10s); si no llega, se cancela la tarea del worker.
         async def _stop(n: str, w: Any) -> None:
@@ -324,6 +398,12 @@ async def run(cfg: RunConfig, *, stop_event: asyncio.Event | None = None) -> Non
         await asyncio.gather(*tasks.values(), return_exceptions=True)
         sampler.cancel()
         await asyncio.gather(sampler, return_exceptions=True)
+        if analysis is not None:
+            with contextlib.suppress(asyncio.TimeoutError):
+                await asyncio.wait_for(asyncio.shield(analysis), timeout=SHUTDOWN_TIMEOUT_S)
+            analysis.cancel()
+            await asyncio.gather(analysis, return_exceptions=True)
+        await analysis_stack.aclose()
         await throttled.close()  # flush de tickers pendientes + cierre de fanout/sinks
         _log_final_stats(throttled, sinks, health)
         ingestion_logger.removeHandler(reconnect_handler)

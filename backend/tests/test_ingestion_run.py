@@ -107,7 +107,7 @@ async def test_build_sinks_unreachable_backends_do_not_crash() -> None:
     await throttled.close()
 
 
-async def test_run_wires_workers_and_shuts_down_cleanly(monkeypatch) -> None:
+async def test_run_wires_workers_and_shuts_down_cleanly(monkeypatch, tmp_path) -> None:
     created: list[FakeWorker] = []
 
     class FakeWorker:
@@ -129,8 +129,13 @@ async def test_run_wires_workers_and_shuts_down_cleanly(monkeypatch) -> None:
             self._stop.set()
 
     monkeypatch.setattr(run_mod, "WORKER_FACTORIES", {"bybit": FakeWorker})
-    cfg = RunConfig.from_env({"HEATSIGNAL_EXCHANGES": "bybit", "HEATSIGNAL_RUN_SECONDS": "0.2"})
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    cfg = RunConfig.from_env({
+        "HEATSIGNAL_EXCHANGES": "bybit", "HEATSIGNAL_RUN_SECONDS": "0.2",
+        "HEATSIGNAL_EVAL_DB": str(tmp_path / "eval.sqlite"),
+    })
     await run_mod.run(cfg)
+    assert (tmp_path / "eval.sqlite").exists()  # el ciclo de analisis arranco (sin key: solo features)
     assert len(created) == 1 and created[0].stopped
     assert created[0].symbols == ["BTCUSDT", "SOLUSDT"]
     assert isinstance(created[0].sink, CountingSink)

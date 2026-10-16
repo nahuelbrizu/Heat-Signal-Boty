@@ -3,7 +3,7 @@
 #           sudo systemctl daemon-reload && sudo systemctl enable --now heatsignal-ingestion
 # Logs:     journalctl -u heatsignal-ingestion -f
 [Unit]
-Description=HeatSignal ingestion (memory mode)
+Description=HeatSignal ingestion + analysis (memory mode)
 After=network-online.target
 Wants=network-online.target
 
@@ -13,12 +13,15 @@ WorkingDirectory=/home/nahue/heatsignal/backend
 EnvironmentFile=-/home/nahue/heatsignal/.env
 Environment=HEATSIGNAL_STORAGE=memory
 Environment=PYTHONPATH=/home/nahue/heatsignal/backend/src
+# Lo unico que se persiste: estrategias + hipotesis (y checkpoints del grafo). Datos de mercado: solo RAM.
+Environment=HEATSIGNAL_EVAL_DB=/home/nahue/heatsignal/data/heatsignal_eval.sqlite
+Environment=HEATSIGNAL_CHECKPOINT_DB=/home/nahue/heatsignal/data/heatsignal_checkpoints.sqlite
 ExecStart=/home/nahue/heatsignal/backend/.venv/bin/python -m heatsignal.ingestion.run
 Restart=always
 RestartSec=5
 # Tope de RAM para no tumbar la VM de 2 GB (la ventana de trades de 30 min ronda 160-250 MB).
 MemoryMax=700M
-# Sin escritura a disco salvo el home (para las hipotesis, cuando se cableen).
+# Sin escritura a disco salvo el directorio del proyecto (base de hipotesis en data/).
 ProtectSystem=strict
 ReadWritePaths=/home/nahue/heatsignal
 PrivateTmp=true
