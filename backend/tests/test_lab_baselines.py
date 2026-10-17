@@ -118,3 +118,34 @@ def test_random_entries_null_and_pvalue():
     assert null.shape == (30,) and np.isfinite(null).all()
     assert empirical_pvalue(np.inf, null) == pytest.approx(1 / 31)
     assert empirical_pvalue(-np.inf, null) == pytest.approx(1.0)
+
+
+def test_random_shift_joint_keeps_hedge_and_durations_between_legs() -> None:
+    from heatsignal.lab.baselines import random_shift_joint
+
+    idx = pd.date_range("2024-01-01", periods=200, freq="1h", tz="UTC")
+    eth = pd.Series(0.0, index=idx)
+    eth.iloc[20:50] = 1.0
+    eth.iloc[120:130] = -1.0
+    btc = -0.8 * eth  # pata de cobertura
+    sigs = {"ETHUSDT": eth[eth.diff().fillna(1) != 0], "BTCUSDT": btc[btc.diff().fillna(1) != 0]}
+    perms = list(random_shift_joint(sigs, 50, seed=1, start=idx[0], end=idx[-1]))
+    assert len(perms) == 50
+    shifted_any = False
+    for p in perms:
+        e = p["ETHUSDT"].reindex(idx, method="ffill").fillna(0.0)
+        b = p["BTCUSDT"].reindex(idx, method="ffill").fillna(0.0)
+        assert np.allclose(b, -0.8 * e)  # en cada instante la cobertura sigue igual
+        assert sorted(e.to_numpy()) == sorted(eth.to_numpy())  # mismo tiempo en cada posicion
+        shifted_any |= not np.allclose(e, eth)
+    assert shifted_any
+
+
+def test_null_kind_is_joint_only_for_neutral_specs() -> None:
+    from heatsignal.lab.run import null_kind
+    from heatsignal.lab.strategies import CATALOG
+
+    assert null_kind(CATALOG["pares-eth-btc-v1"][0]) == "joint_shift"
+    assert null_kind(CATALOG["reversion-xs-1h-v1"][0]) == "joint_shift"
+    assert null_kind(CATALOG["donchian-ensemble-v1"][0]) == "per_symbol"
+    assert null_kind(CATALOG["tsmom-diario-v1"][0]) == "per_symbol"

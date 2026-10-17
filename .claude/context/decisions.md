@@ -183,6 +183,20 @@
   (columna «DSR prog.», listón y tabla del benchmark en Laboratorio).
   Lote 3 (6 specs, `estrategias-lote3.md`): programado y con tests, PROPUESTO, sin aprobar; K pasaría a 44.
 
+- **Lote 3 aprobado por el usuario (2026-10-18), ANTES de ver resultados** ("corré estas estrategias en el bot
+  y paper trading"). Hashes congelados: `tsmom-diario-v1` 7515d798e5d66a55; `low-vol-xs-v1` 307d3572e576e4c2;
+  `pares-eth-btc-v1` c9c2243ebcef9393; `rango-reversion-v1` a03dba31be20137f; `reversion-xs-1h-v1` e2a331826092f698;
+  `funding-prepago-v1` 3fc248f8641d0402. K del programa = 44. `pares` corre con ETH+BTC, `rango` con BNB+TRX+XLM,
+  el resto con los 7.
+  **Nulo de azar conjunto para las neutrales:** `lab.baselines.random_shift_joint` desplaza en círculo todas las
+  patas el mismo número de pasos al azar (conserva cobertura y duraciones; solo rompe la sincronía con el precio).
+  `run.null_kind`: `joint_shift` si `direction == "neutral"`, `per_symbol` si no; queda en cada reporte
+  (`baselines.random_entries.kind`). Las neutrales del lote 2 (`carry-xs-funding`, `funding-crowding-xs`) se
+  corrieron con el nulo por símbolo y no se re-corren (re-correr sería un intento más).
+  **Paper trading en paralelo al backtest:** por pedido del usuario el lote 3 entra a paper trading (simulado,
+  sin plata) antes de tener el veredicto del laboratorio. Es evidencia hacia adelante, limpia; no cambia la regla:
+  nada pasa a plata real sin pasar el laboratorio, el holdout y la comparación paper vs backtest.
+
 ## Abiertas
 - ~~Plan de CoinGlass a contratar.~~ **Ya no aplica al core** — la fuente primaria pasó a WS nativos.
   Solo se retomaría si se implementa la fuente BYOK opcional (y ahí el plan lo elige el usuario).

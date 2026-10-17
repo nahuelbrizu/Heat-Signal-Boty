@@ -37,7 +37,7 @@ import numpy as np
 import pandas as pd
 
 from . import stats
-from .baselines import buy_and_hold, equal_weight_basket, random_entries
+from .baselines import buy_and_hold, equal_weight_basket, random_entries, random_shift_joint
 from .sim import Costs, simulate
 from .store import load_funding, load_klines, load_metrics
 from .strategies import CATALOG, SEVEN, MarketData
@@ -63,6 +63,27 @@ class RunConfig:
     n_perm: int = 100
     seed: int = 7
     costs: Costs = field(default_factory=Costs)
+
+
+def null_kind(spec) -> str:
+    """Nulo de "entradas al azar": conjunto para las neutrales (varias patas que se cubren entre si), por simbolo
+    para el resto. Las neutrales corridas antes del 2026-10-18 (carry-xs-funding, funding-crowding-xs) usaron el
+    nulo por simbolo; queda registrado en cada reporte (`baselines.random_entries.kind`)."""
+    return "joint_shift" if spec.direction == "neutral" else "per_symbol"
+
+
+def _null_signals(spec, stitched: dict[str, pd.Series], cfg, start, end) -> Iterable[dict[str, pd.Series]]:
+    if cfg.n_perm <= 0:
+        return
+    if null_kind(spec) == "joint_shift":
+        yield from random_shift_joint(stitched, cfg.n_perm, cfg.seed, start=start, end=end)
+        return
+    gens = {s: random_entries(v, cfg.n_perm, cfg.seed + i, start=start, end=end)
+            for i, (s, v) in enumerate(stitched.items()) if len(v)}
+    if not gens:
+        return
+    for _ in range(cfg.n_perm):
+        yield {s: next(g) for s, g in gens.items()}
 
 
 def grid_combos(spec) -> list[dict[str, Any]]:
@@ -190,16 +211,10 @@ def evaluate(cfg: RunConfig, registry: TrialRegistry | None = None, data: dict[s
     bh = buy_and_hold(oos_prices, oos_funding, cfg.costs)
     basket = equal_weight_basket(oos_prices, oos_funding, cfg.costs)
 
-    # nulo de entradas al azar: mismas operaciones por simbolo, en posiciones al azar dentro del OOS
+    # nulo de entradas al azar: por simbolo, o desplazamiento conjunto de todas las patas si es neutral (null_kind)
     null = []
     if cfg.n_perm > 0:
-        sig_oos = stitched
-        gens = {s: random_entries(v, cfg.n_perm, cfg.seed + i, start=oos_start, end=oos_end)
-                for i, (s, v) in enumerate(sig_oos.items()) if len(v)}
-        for _ in range(cfg.n_perm):
-            sig = {s: next(g) for s, g in gens.items()}
-            if not sig:
-                break
+        for sig in _null_signals(spec, stitched, cfg, oos_start, oos_end):
             null.append(stats.sharpe_ratio(simulate(oos_prices, sig, oos_funding, cfg.costs).daily_returns))
     sharpe_oos = stats.sharpe_ratio(oos) if float(np.nanstd(oos)) > 0 else float("nan")
     p_random = stats_pvalue(sharpe_oos, null)
@@ -227,7 +242,7 @@ def evaluate(cfg: RunConfig, registry: TrialRegistry | None = None, data: dict[s
             "buy_and_hold_sharpe": {s: stats.sharpe_ratio(r.daily_returns) for s, r in bh.items()},
             "basket_sharpe": stats.sharpe_ratio(basket.daily_returns),
             "random_entries": {"n": len(null), "median_sharpe": float(np.median(null)) if null else None,
-                               "p_value": p_random},
+                               "p_value": p_random, "kind": null_kind(spec)},
         },
     }
     # Curvas de capital diarias (solo presentacion para el panel; no entran en ninguna metrica ni criterio).
@@ -289,10 +304,8 @@ def open_holdout(cfg: RunConfig, registry: TrialRegistry, data: dict[str, Market
     basket = equal_weight_basket(prices, funding, cfg.costs)
     bh = buy_and_hold(prices, funding, cfg.costs)
     null = []
-    gens = {s: random_entries(v, cfg.n_perm, cfg.seed + i, start=holdout_start, end=last)
-            for i, (s, v) in enumerate(stitched.items()) if len(v)}
-    for _ in range(cfg.n_perm if gens else 0):
-        null.append(stats.sharpe_ratio(simulate(prices, {s: next(g) for s, g in gens.items()}, funding, cfg.costs).daily_returns))
+    for sig in _null_signals(spec, stitched, cfg, holdout_start, last):
+        null.append(stats.sharpe_ratio(simulate(prices, sig, funding, cfg.costs).daily_returns))
     p_random = stats_pvalue(sharpe, null) if math.isfinite(sharpe) else None
     basket_sharpe = stats.sharpe_ratio(basket.daily_returns)
     hr = stats.hit_rate(res.trades["pnl_net"]) if len(res.trades) else {}
@@ -315,7 +328,7 @@ def open_holdout(cfg: RunConfig, registry: TrialRegistry, data: dict[str, Market
             "basket_sharpe": basket_sharpe, "basket_return": float(basket.daily_returns.sum()),
             "buy_and_hold_sharpe": {s: stats.sharpe_ratio(x.daily_returns) for s, x in bh.items()},
             "random_entries": {"n": len(null), "median_sharpe": float(np.median(null)) if null else None,
-                               "p_value": p_random},
+                               "p_value": p_random, "kind": null_kind(spec)},
             "equity_daily": {"basket": equity_daily(basket.daily_returns)},
         },
         "verdict": {"confirma": all(checks.values()), "checks": checks, "criterios": HOLDOUT_CRITERIA},

@@ -173,6 +173,45 @@ def random_entries(
         yield pd.Series(vals[change], index=tr.grid[change])
 
 
+def random_shift_joint(
+    signals: dict[str, pd.Series],
+    n_perm: int = 1000,
+    seed: int | None = None,
+    *,
+    start: pd.Timestamp,
+    end: pd.Timestamp,
+) -> Iterator[dict[str, pd.Series]]:
+    """Nulo CONJUNTO para estrategias de varias patas (pares, cobertura con BTC, long/short cross-sectional).
+
+    `random_entries` baraja cada simbolo por separado y rompe la cobertura: el azar queda direccional. Aca
+    todas las patas se corren juntas, en circulo, el mismo desplazamiento al azar sobre una grilla comun:
+    se conservan las duraciones, el tamano de cada pata y la relacion entre patas en cada instante; solo se
+    pierde la sincronia con los precios. Desplazamiento en [1, n-1] pasos (nunca la senal original).
+    """
+    sigs = {s: v.dropna().sort_index() for s, v in signals.items() if len(v)}
+    if not sigs:
+        return
+    start, end = pd.Timestamp(start), pd.Timestamp(end)
+    idx = pd.DatetimeIndex(sorted(set().union(*(v.index[(v.index >= start) & (v.index <= end)] for v in sigs.values()))))
+    step = _infer_step(idx.append(pd.DatetimeIndex([start])).unique().sort_values())
+    grid = pd.date_range(start, end, freq=step)
+    vals = {s: v.reindex(grid.union(v.index)).ffill().reindex(grid).fillna(0.0).to_numpy(dtype=np.float64)
+            for s, v in sigs.items()}
+    n = len(grid)
+    if n < 2:
+        return
+    rng = np.random.default_rng(seed)
+    for _ in range(n_perm):
+        k = int(rng.integers(1, n))
+        out = {}
+        for s, a in vals.items():
+            r = np.roll(a, k)
+            prev = np.r_[np.nan, r[:-1]]
+            change = r != prev
+            out[s] = pd.Series(r[change], index=grid[change])
+        yield out
+
+
 def random_entries_null(
     prices: pd.DataFrame,
     signal: pd.Series,
