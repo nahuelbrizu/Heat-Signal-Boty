@@ -13,7 +13,10 @@ Cada ciclo termina con un estado explicito (sin fallos silenciosos):
                      features incompletos.
   - `no_strategies`  no hay estrategias pre-registradas activas: el grafo no tiene que instanciar nada.
   - `no_llm`         falta el runner del grafo (sin ANTHROPIC_API_KEY): solo se calculan features.
-  - `ran`            el grafo corrio; se informa cuantas hipotesis quedaron registradas.
+  - `ran`            el grafo corrio; se informa cuantas hipotesis quedaron registradas. Las estrategias
+                     que el grafo tuvo a la vista por primera vez pasan de `pending` a `running`
+                     (estado de la estrategia: pending = registrada sin evaluar todavia, running = el
+                     ciclo la considera; evaluated = cerrada a mano, ya no entra al grafo).
   - `error`          fallo el grafo o el armado de features; se loguea con traceback.
 """
 
@@ -59,6 +62,7 @@ class CycleResult:
     features: dict[str, FeatureSet] = field(default_factory=dict)
     n_hypotheses: int = 0
     detail: str = ""
+    decisions: list[dict[str, Any]] = field(default_factory=list)  # por simbolo: outcome + motivo
 
 
 def active_strategies(registry: StrategySource) -> list[StrategyHypothesis]:
@@ -168,10 +172,26 @@ class AnalysisLoop:
             log.exception("%s: el grafo fallo", run_id)
             return self._finish(CycleResult(run_id, "error", features, detail=f"grafo: {exc!r}"))
 
+        self._mark_running(strategies)
         hypotheses = final.get("pending_hypotheses") or []
         decisions = final.get("synthesis_decisions") or []
         detail = "; ".join(f"{d.symbol}={d.outcome}" for d in decisions)
-        return self._finish(CycleResult(run_id, "ran", features, n_hypotheses=len(hypotheses), detail=detail))
+        views = [{"symbol": d.symbol, "outcome": d.outcome, "reason": d.reason, "strategy_id": d.strategy_id}
+                 for d in decisions]
+        return self._finish(CycleResult(run_id, "ran", features, n_hypotheses=len(hypotheses), detail=detail,
+                                        decisions=views))
+
+    def _mark_running(self, strategies: list[StrategyHypothesis]) -> None:
+        set_status = getattr(self._registry, "set_status", None)
+        if not callable(set_status):
+            return
+        for s in strategies:
+            if s.status == StrategyStatus.PENDING:
+                try:
+                    set_status(s.strategy_id, StrategyStatus.RUNNING)
+                    log.info("estrategia %s: pending -> running (primer ciclo del grafo)", s.strategy_id)
+                except Exception:  # noqa: BLE001 - no tumbar el ciclo por un evento de estado
+                    log.exception("no se pudo marcar running la estrategia %s", s.strategy_id)
 
     def _finish(self, result: CycleResult) -> CycleResult:
         level = logging.ERROR if result.status == "error" else logging.INFO

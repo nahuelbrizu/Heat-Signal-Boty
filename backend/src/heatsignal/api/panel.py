@@ -64,6 +64,7 @@ def _cycle_view(analysis: AnalysisLoop | None) -> dict[str, Any] | None:
         "status": r.status,
         "n_hypotheses": r.n_hypotheses,
         "detail": r.detail,
+        "decisions": r.decisions,
         "features": {s: fs.model_dump(mode="json") for s, fs in r.features.items()},
     }
 
@@ -71,6 +72,14 @@ def _cycle_view(analysis: AnalysisLoop | None) -> dict[str, Any] | None:
 def _hypotheses_view(ctx: PanelContext) -> dict[str, Any]:
     if ctx.registry is None or ctx.store is None:
         return {"available": False, "strategies": [], "hypotheses": [], "pending_count": None}
+    counts: dict[str, dict[str, int]] = {}
+    for sid in ctx.store.strategy_ids():
+        recs = ctx.store.list_by_strategy(sid)
+        counts[str(sid)] = {
+            "total": len(recs),
+            "pending": sum(1 for r in recs if r.status.value == "pending"),
+            "wins": sum(1 for r in recs if r.resolution is not None and r.resolution.win),
+        }
     strategies = [
         {
             "strategy_id": str(s.strategy_id),
@@ -78,7 +87,9 @@ def _hypotheses_view(ctx: PanelContext) -> dict[str, Any]:
             "status": s.status.value,
             "registered_at": s.registered_at.isoformat(),
             "author": s.author,
+            "symbol": s.entry_conditions.get("symbol"),
             "horizon_s": s.exit_conditions.get("horizon_s"),
+            "hypotheses": counts.get(str(s.strategy_id), {"total": 0, "pending": 0, "wins": 0}),
         }
         for s in ctx.registry.get_all()
     ]

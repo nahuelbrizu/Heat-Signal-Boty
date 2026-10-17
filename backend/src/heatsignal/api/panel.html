@@ -164,6 +164,7 @@
 "use strict";
 const $ = (id) => document.getElementById(id);
 const live = { build: null, lastOk: 0 };
+let lastCycle = null;
 
 function el(tag, attrs, ...children) {
   const node = document.createElement(tag);
@@ -217,8 +218,15 @@ const STATUS_CHIP = {
   ran: ["ok", "corrió"], warmup: ["info", "calentando"], no_strategies: ["warn", "sin estrategias"],
   no_llm: ["warn", "sin LLM"], error: ["bad", "error"],
   pending: ["info", "pendiente"], resolved: ["ok", "resuelta"], expired_no_data: ["warn", "sin datos"],
-  running: ["ok", "activa"], evaluated: ["info", "evaluada"],
 };
+// Estado de una ESTRATEGIA (distinto del de una hipótesis, que también usa "pending").
+const STRATEGY_CHIP = {
+  pending: ["info", "registrada · esperando su primer ciclo"], running: ["ok", "activa"], evaluated: ["", "cerrada"],
+};
+function strategyChip(status) {
+  const [cls, label] = STRATEGY_CHIP[status] || ["", status];
+  return el("span", { class: "chip " + cls }, label);
+}
 function chip(status) {
   const [cls, label] = STATUS_CHIP[status] || ["", status];
   return el("span", { class: "chip " + cls }, label);
@@ -304,9 +312,21 @@ function renderStrategies(evaln) {
     $("hyp-count").textContent = "";
     return;
   }
-  table($("strategies"), [["Descripción"], ["Estado"], ["Horizonte", "num"], ["Autor"], ["Registrada"], ["ID"]],
-    evaln.strategies.map((s) => [[s.description], [chip(s.status)], [dur(s.horizon_s), "num"], [s.author],
-      [new Date(s.registered_at).toLocaleString("es-AR")], [el("span", { class: "mono muted" }, s.strategy_id.slice(0, 8))]]),
+  const decisions = (lastCycle && lastCycle.decisions) || [];
+  table($("strategies"), [["Descripción"], ["Estado"], ["Hipótesis", "num"], ["Último ciclo"], ["Horizonte", "num"],
+    ["Registrada"], ["ID"]],
+    evaln.strategies.map((s) => {
+      const h = s.hypotheses || { total: 0, pending: 0, wins: 0 };
+      const d = decisions.find((x) => x.strategy_id === s.strategy_id) ||
+                decisions.find((x) => s.symbol && norm(x.symbol) === norm(s.symbol));
+      const last = d ? el("span", {}, el("b", {}, d.outcome === "hypothesis" ? "abrió hipótesis" :
+                         d.outcome === "rejected" ? "rechazada" : "no entró"), " · ",
+                         el("span", { class: "muted" }, d.reason.length > 260 ? d.reason.slice(0, 259) + "…" : d.reason))
+                     : el("span", { class: "muted" }, "—");
+      return [[s.description], [strategyChip(s.status)],
+        [h.total + (h.pending ? " (" + h.pending + " abiertas)" : ""), "num"], [last], [dur(s.horizon_s), "num"],
+        [new Date(s.registered_at).toLocaleString("es-AR")], [el("span", { class: "mono muted" }, s.strategy_id.slice(0, 8))]];
+    }),
     "Ninguna todavía. Registrala con: python -m heatsignal.evaluation.register_strategy archivo.json");
   $("hyp-count").textContent = "· " + evaln.total_hypotheses + " en total, " + evaln.pending_count + " pendientes";
   table($("hypotheses"), [["Creada"], ["Símbolo"], ["Dir."], ["Conf.", "num"], ["Entrada", "num"],
@@ -334,6 +354,7 @@ async function refreshStatus() {
     renderWorkers(s.workers, s.now_ms);
     renderMarket(s.memory, s.now_ms);
     renderCycle(s.analysis);
+    lastCycle = s.analysis && s.analysis.last_cycle;
     renderStrategies(s.evaluation);
     chartState.symbols = s.config.symbols || [];
     chartState.hypotheses = (s.evaluation && s.evaluation.hypotheses) || [];

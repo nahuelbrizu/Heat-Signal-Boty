@@ -111,6 +111,11 @@ async def test_end_to_end_persists_hypotheses(tmp_path) -> None:
     assert float(h.entry_reference_price) == result.features[SYM].context.mark_price
     assert h.horizon_s == 3600
     assert store.pending_count() == 1
+    # la estrategia paso a running y el ciclo expone la decision por simbolo (panel)
+    assert registry.get(strategy.strategy_id).status == StrategyStatus.RUNNING
+    assert result.decisions == [{"symbol": SYM, "outcome": "hypothesis", "reason": h.rationale,
+                                 "strategy_id": str(strategy.strategy_id)}]
+    await loop.run_cycle()  # ya running: no se agrega otro evento de estado
 
 
 async def test_graph_error_is_reported_not_raised(tmp_path) -> None:
@@ -123,6 +128,7 @@ async def test_graph_error_is_reported_not_raised(tmp_path) -> None:
     loop = AnalysisLoop(memory, [SYM], _registry(tmp_path, _strategy()), graph_runner=runner, clock_ms=clock)
     result = await loop.run_cycle()
     assert result.status == "error" and "api caida" in result.detail
+    assert all(st.status == StrategyStatus.PENDING for st in loop._registry.get_all())  # sin ciclo exitoso
 
 
 def test_evaluated_strategies_are_not_offered(tmp_path) -> None:

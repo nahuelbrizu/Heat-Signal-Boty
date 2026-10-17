@@ -56,6 +56,7 @@ async def test_status_reports_workers_memory_and_strategies(tmp_path) -> None:
     ev = body["evaluation"]
     assert ev["available"] and len(ev["strategies"]) == 1 and ev["strategies"][0]["horizon_s"] == 3600
     assert ev["hypotheses"] == [] and ev["pending_count"] == 0
+    assert ev["strategies"][0]["hypotheses"] == {"total": 0, "pending": 0, "wins": 0}
 
 
 async def test_live_features(tmp_path) -> None:
