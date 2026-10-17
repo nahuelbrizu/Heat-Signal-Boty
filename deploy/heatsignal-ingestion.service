@@ -16,6 +16,7 @@ Environment=PYTHONPATH=/home/nahue/heatsignal/backend/src
 # Lo unico que se persiste: estrategias + hipotesis (y checkpoints del grafo). Datos de mercado: solo RAM.
 Environment=HEATSIGNAL_EVAL_DB=/home/nahue/heatsignal/data/heatsignal_eval.sqlite
 Environment=HEATSIGNAL_CHECKPOINT_DB=/home/nahue/heatsignal/data/heatsignal_checkpoints.sqlite
+Environment=HEATSIGNAL_HISTORY_DB=/home/nahue/heatsignal/data/heatsignal_history.sqlite
 ExecStart=/home/nahue/heatsignal/backend/.venv/bin/python -m heatsignal.ingestion.run
 Restart=always
 RestartSec=5
