@@ -154,6 +154,13 @@
   (`hs-ft`, `hs-ft-open`, `hs-ft-pass`); las credenciales se generan en la VM (`freqtrade/config.secrets.json`,
   fuera de git). Próximo: comparar semana a semana el dry-run contra el backtest de las mismas velas.
 
+- **Lote 2 del laboratorio: aprobado por el usuario (2026-10-18), ANTES de ver resultados.** Specs en
+  `estrategias-lote2.md`, congeladas por hash: `compresion-breakout-v1` a25d6babd6964b30; `momentum-intradia-v1` 4776269a35a6edde; `oi-precio-continuacion-v1` df0fd44676eb37c7; `carry-xs-funding-v1` 118bdbb71f36906a; `lunes-asia-v1` 73cb513730c5c018. Mismos criterios que el lote 1 (`lab/run.py::CRITERIA`).
+  `momentum-intradia-v1` corre con BTC y ETH; `lunes-asia-v1` con BTC y en modo observación (sin capital aunque
+  pase). El programa pasa de 20 a 29 variantes: el DSR del programa se calcula con K = 29.
+  Benchmark de TA común: las 7 estrategias de futuros de freqtrade-strategies sin modificar
+  (`lab/ft_benchmark.py`) en la misma ventana OOS 2021-03-13 → 2026-07-15.
+
 ## Abiertas
 - ~~Plan de CoinGlass a contratar.~~ **Ya no aplica al core** — la fuente primaria pasó a WS nativos.
   Solo se retomaría si se implementa la fuente BYOK opcional (y ahí el plan lo elige el usuario).
