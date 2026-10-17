@@ -3,6 +3,21 @@
 > Foto del proyecto **hoy**. Se reescribe (no se acumula) cada vez que cambia el estado: lo histórico va a
 > `historial.md`, las decisiones a `decisions.md`. Última actualización: **2026-10-17**.
 
+## Novedades 2026-10-17 (tarde)
+
+- **Panel = SPA** (`api/static/app/`, vanilla, sin build ni CDN; `panel.html` es solo el cascarón). Vistas:
+  resumen, moneda (todo filtrado por una cripto + "Analizar ahora" y "Mandar al laboratorio"), mercado,
+  análisis, ciclos, estrategias, hipótesis (acertó/falló contra la realidad), laboratorio (ficha, holdout,
+  pedidos), noticias, datos guardados, sistema. API documentada en `api/API.md`.
+- **Cola del laboratorio:** los pedidos se guardan en la VM (`lab_requests`, append-only); el worker de la PC
+  (`systemctl --user heatsignal-lab-worker.timer`, cada 5 min) los toma por SSH, corre el backtest (cada corrida
+  cuenta como intentos; el holdout nunca se abre desde la cola) y sube el resultado. Con la PC apagada,
+  los pedidos esperan. Si un pedido queda colgado en `running`, liberarlo con `python -m heatsignal.evaluation.lab_requests fail ID`.
+- **Paper trading:** `heatsignal-freqtrade.service` en la VM (dry-run de donchian-ensemble-v1). FreqUI con `hs-ft`,
+  `hs-ft-open` y `hs-ft-pass`.
+- **LLM:** Anthropic (sin crédito) → gemini-3.5 → gemini-3.8-flash / 3.1-flash-lite. Rotar ambas keys (quedaron en el chat).
+- **Laboratorio:** resultados del lote 1 y holdout en `decisions.md`.
+
 ## Estado por fase
 
 | Fase | Estado | Dónde |
