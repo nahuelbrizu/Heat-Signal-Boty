@@ -65,3 +65,23 @@ def oi_change_contracts(oi_contracts: pd.Series, periods: int) -> pd.Series:
 def funding_zscore(rates: pd.Series, window: int = 42) -> pd.Series:
     """z-score del funding liquidado contra sus ultimas `window` liquidaciones (42 = 14 dias de 8 h)."""
     return zscore(rates, window)
+
+
+def adx(bars: pd.DataFrame, n: int = 14) -> pd.Series:
+    """ADX de Wilder (suavizado exponencial alpha = 1/n, trailing). Valor en t usa solo velas <= t."""
+    high, low = bars["high"], bars["low"]
+    up = high.diff()
+    down = -low.diff()
+    plus_dm = up.where((up > down) & (up > 0), 0.0)
+    minus_dm = down.where((down > up) & (down > 0), 0.0)
+    prev = bars["close"].shift(1)
+    tr = pd.concat([high - low, (high - prev).abs(), (low - prev).abs()], axis=1).max(axis=1)
+
+    def smooth(x: pd.Series) -> pd.Series:
+        return x.ewm(alpha=1 / n, adjust=False, min_periods=n).mean()
+
+    atr_w = smooth(tr)
+    pdi = 100 * smooth(plus_dm) / atr_w.where(atr_w > 0)
+    mdi = 100 * smooth(minus_dm) / atr_w.where(atr_w > 0)
+    dx = 100 * (pdi - mdi).abs() / (pdi + mdi).where((pdi + mdi) > 0)
+    return dx.ewm(alpha=1 / n, adjust=False, min_periods=n).mean()

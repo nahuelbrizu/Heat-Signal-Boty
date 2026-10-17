@@ -591,3 +591,372 @@ CATALOG.update({
                "(calendario). Efectos de calendario: debiles o desaparecidos tras costos"), lunes_asia),
 })
 LOTE2 = tuple(k for k in CATALOG if k not in LOTE1)
+
+
+# =========================================================================================================
+# LOTE 3 (PROPUESTA: pendiente de aprobacion antes de correr). Las reglas de los lotes 1 y 2 NO cambian.
+#
+# Convencion de pesos (vale para todo el lote, y en especial para las de 2 patas): el valor de la senal es la
+# fraccion del capital ASIGNADO AL SIMBOLO (`lab/sim.py`, allocation="equal": capital / n_simbolos). Como
+# todos los simbolos reciben la misma asignacion, la relacion entre patas se conserva con cualquier universo:
+# una pata Y con peso -w y una pata X con peso +beta*w tienen nocionales en relacion 1 : beta (beta-neutral).
+# Con mas simbolos en --symbols el retorno se diluye (el Sharpe no cambia).
+# =========================================================================================================
+
+
+def _hourly_close(k: pd.DataFrame) -> pd.Series:
+    """Close de velas 1h (indice = cierre) en una grilla horaria COMPLETA: hora sin vela completa = NaN.
+    Asi un `shift(n)` es exactamente n horas y un hueco no se salta en silencio."""
+    bars = resample_bars(k, "1h")
+    if bars.empty:
+        return pd.Series(dtype=float)
+    idx = pd.date_range(bars.index[0], bars.index[-1], freq="1h")
+    return bars["close"].reindex(idx)
+
+
+def _xs_changes(targets: dict[pd.Timestamp, dict[str, float]], syms: list[str]) -> dict[str, dict[pd.Timestamp, float]]:
+    """Objetivos por instante -> cambios por simbolo (solo se emite cuando cambia el objetivo)."""
+    pos = {s: 0.0 for s in syms}
+    rows: dict[str, dict[pd.Timestamp, float]] = {s: {} for s in syms}
+    for t in sorted(targets):
+        for s in syms:
+            v = targets[t].get(s, 0.0)
+            if v != pos[s]:
+                rows[s][t] = v
+                pos[s] = v
+    return rows
+
+
+# ---- 3.1 tsmom-diario-v1 (ML4T H7) ---------------------------------------------------------------------
+
+
+def tsmom_diario(data: dict[str, MarketData], p: dict[str, Any]) -> Signals:
+    """Decision diaria a las 00:00 UTC (cierre de la vela 1h 23:00-00:00). mom = log(close[t - skip] /
+    close[t - skip - lookback]) con velas 1h; vol = desvio de los retornos 1h de las ultimas `vol_window_hours`
+    velas (hasta t) anualizado con sqrt(24*365). Peso = sign(mom) * min(target_vol / vol, max_leverage).
+    Rebalanceo solo si cambia el signo, si se parte de 0 o si |w_nuevo - w_actual| > `rebalance_threshold` *
+    |w_actual| (cambio RELATIVO). Si falta el dato del dia (hueco, vol no definida) se mantiene la posicion.
+    """
+    out: Signals = {}
+    ann = np.sqrt(24 * 365)
+    for sym, md in data.items():
+        c = _hourly_close(md.klines) if sym in p["symbols"] else pd.Series(dtype=float)
+        if c.empty:
+            out[sym] = _changes({})
+            continue
+        lr = np.log(c).diff()
+        vw = p["vol_window_hours"]
+        vol = lr.rolling(vw, min_periods=int(vw * p["vol_min_frac"])).std() * ann
+        ref = c.shift(p["skip_hours"])
+        mom = np.log(ref / ref.shift(p["lookback_hours"]))
+        rows: dict[pd.Timestamp, float] = {}
+        pos = 0.0
+        for t in c.index[(c.index.hour == 0) & (c.index.minute == 0)]:
+            m, v = mom[t], vol[t]
+            if not (np.isfinite(m) and np.isfinite(v)) or v <= 0 or m == 0:
+                continue
+            w = float(np.sign(m) * min(p["target_vol"] / v, p["max_leverage"]))
+            if pos == 0 or np.sign(w) != np.sign(pos) or abs(w - pos) > p["rebalance_threshold"] * abs(pos):
+                rows[t] = w
+                pos = w
+        out[sym] = _changes(rows)
+    return out
+
+
+# ---- 3.2 low-vol-xs-v1 (ML4T H2) -----------------------------------------------------------------------
+
+
+def low_vol_xs(data: dict[str, MarketData], p: dict[str, Any]) -> Signals:
+    """Diario a las 00:00 UTC: RV = desvio de los retornos 1h de las ultimas `rv_hours` velas (hasta t). Long
+    las `n_side` de menor RV y short las `n_side` de mayor, peso +-1 (dolar-neutral). Tenencia 24 h: se re-arma
+    cada dia y solo se opera lo que cambia. Con menos de `min_symbols` simbolos con RV ese dia -> todo plano.
+    Empates: orden alfabetico (determinista)."""
+    syms = sorted(data)
+    n = p["rv_hours"]
+    rv = {}
+    for s in syms:
+        c = _hourly_close(data[s].klines)
+        if not c.empty:
+            rv[s] = np.log(c).diff().rolling(n, min_periods=int(n * p["rv_min_frac"])).std()
+    out: Signals = {s: _changes({}) for s in syms}
+    if not rv:
+        return out
+    frame = pd.DataFrame(rv)
+    k = p["n_side"]
+    targets: dict[pd.Timestamp, dict[str, float]] = {}
+    for t in frame.index[(frame.index.hour == 0) & (frame.index.minute == 0)]:
+        row = frame.loc[t].dropna()
+        target: dict[str, float] = {}
+        if len(row) >= max(p["min_symbols"], 2 * k):
+            ranked = sorted(row.index, key=lambda s: (row[s], s))
+            target.update({s: 1.0 for s in ranked[:k]})
+            target.update({s: -1.0 for s in ranked[-k:]})
+        targets[t] = target
+    for s, r in _xs_changes(targets, syms).items():
+        out[s] = _changes(r)
+    return out
+
+
+# ---- 3.3 pares-eth-btc-v1 ------------------------------------------------------------------------------
+
+
+def pair_zscore(y: pd.Series, x: pd.Series, window: int) -> pd.DataFrame:
+    """Spread y - beta*x con beta OLS (con intercepto) de las `window` velas ANTERIORES a t (no incluye t).
+    z_t = (y_t - beta*x_t - media del spread en la ventana) / desvio del residuo en la ventana, todo con la
+    misma beta. Solo filas con ambos datos. Devuelve columnas beta, z."""
+    df = pd.concat({"y": y, "x": x}, axis=1).dropna()
+    roll_y, roll_x = df["y"].rolling(window, min_periods=window), df["x"].rolling(window, min_periods=window)
+    m_y, m_x = roll_y.mean().shift(1), roll_x.mean().shift(1)
+    v_y, v_x = roll_y.var().shift(1), roll_x.var().shift(1)
+    c_yx = roll_y.cov(df["x"]).shift(1)
+    beta = c_yx / v_x.where(v_x > 0)
+    resid_var = v_y - beta * c_yx
+    z = (df["y"] - beta * df["x"] - (m_y - beta * m_x)) / np.sqrt(resid_var.where(resid_var > 0))
+    return pd.DataFrame({"beta": beta, "z": z})
+
+
+def pares_eth_btc(data: dict[str, MarketData], p: dict[str, Any]) -> Signals:
+    """Velas 1h. spread = log(Y) - beta*log(X) (Y = ETH, X = BTC), beta y z-score trailing de `window_hours`
+    velas (`pair_zscore`). z > +entry_z -> short spread: Y -w, X +beta*w; z < -entry_z -> long spread: Y +w,
+    X -beta*w; w = 1/max(1, beta) (ninguna pata pasa de 1). beta se fija al entrar (sin rebalanceo) y tiene
+    que ser > 0. Salida: |z| < exit_z, stop |z| > stop_z, o a las `max_hold_hours` (exacto). No se entra con
+    |z| > stop_z. Despues de un stop o de una salida por tiempo no se re-entra hasta que |z| < entry_z
+    (re-armado). Los demas simbolos quedan sin senal."""
+    ys, xs = p["leg_y"], p["leg_x"]
+    out: Signals = {s: _changes({}) for s in data}
+    if ys not in data or xs not in data:
+        return out
+    cy, cx = _hourly_close(data[ys].klines), _hourly_close(data[xs].klines)
+    if cy.empty or cx.empty:
+        return out
+    zb = pair_zscore(np.log(cy), np.log(cx), p["window_hours"])
+    max_hold = pd.Timedelta(hours=p["max_hold_hours"])
+    ry: dict[pd.Timestamp, float] = {}
+    rx: dict[pd.Timestamp, float] = {}
+    pos, t_in, armed = 0, None, True
+    for t, beta, z in zip(zb.index, zb["beta"].to_numpy(), zb["z"].to_numpy()):
+        if pos != 0 and t >= t_in + max_hold:
+            t_out = t_in + max_hold
+            ry[t_out], rx[t_out] = 0.0, 0.0
+            pos, armed = 0, False
+        if pos != 0:  # todavia dentro del horizonte
+            if np.isfinite(z) and abs(z) < p["exit_z"]:
+                ry[t], rx[t] = 0.0, 0.0
+                pos, armed = 0, True
+            elif np.isfinite(z) and abs(z) > p["stop_z"]:
+                ry[t], rx[t] = 0.0, 0.0
+                pos, armed = 0, False
+            continue  # una salida en t no re-entra en la misma vela
+        if not np.isfinite(z):
+            continue
+        if not armed:
+            armed = abs(z) < p["entry_z"]
+            continue
+        if p["entry_z"] < abs(z) <= p["stop_z"] and np.isfinite(beta) and beta > 0:
+            d = -1 if z > 0 else 1  # +1 = long spread (long Y, short X)
+            w = 1.0 / max(1.0, float(beta))
+            ry[t], rx[t] = d * w, -d * float(beta) * w
+            pos, t_in = d, t
+    out[ys], out[xs] = _changes(ry), _changes(rx)
+    return out
+
+
+# ---- 3.4 rango-reversion-v1 ----------------------------------------------------------------------------
+
+
+def rango_reversion(data: dict[str, MarketData], p: dict[str, Any]) -> Signals:
+    """Velas 1h, solo `symbols`. Regimen "rango" = ADX(adx_n) < adx_max (ADX de Wilder, `features.adx`).
+    En rango: close < SMA(bb_n) - bb_k*sd -> long; close > SMA + bb_k*sd -> short. Salida: take profit en la
+    EMA(ema_n) del momento de la entrada (nivel fijo; la entrada exige que la EMA este del lado del objetivo),
+    stop a sl_atr * ATR(atr_n) del close de entrada, o a las `hold_hours`. TP/SL evaluados en velas 1m
+    (`exits_with_levels`: empate -> stop)."""
+    out: Signals = {}
+    for sym, md in data.items():
+        bars = resample_bars(md.klines, "1h") if sym in p["symbols"] else pd.DataFrame()
+        if bars.empty:
+            out[sym] = _changes({})
+            continue
+        close = bars["close"]
+        mid = close.rolling(p["bb_n"], min_periods=p["bb_n"]).mean()
+        sd = close.rolling(p["bb_n"], min_periods=p["bb_n"]).std()
+        ema = close.ewm(span=p["ema_n"], adjust=False, min_periods=p["ema_n"]).mean()
+        rango = F.adx(bars, p["adx_n"]) < p["adx_max"]
+        atr = F.atr(bars, p["atr_n"])
+        entries = pd.Series(0.0, index=bars.index)
+        entries[rango & (close < mid - p["bb_k"] * sd) & (ema > close)] = 1.0
+        entries[rango & (close > mid + p["bb_k"] * sd) & (ema < close)] = -1.0
+        sl = close - entries * p["sl_atr"] * atr
+        out[sym] = exits_with_levels(entries, md.klines, pd.Timedelta(hours=p["hold_hours"]), tp=ema, sl=sl)
+    return out
+
+
+# ---- 3.5 reversion-xs-1h-v1 (catalogo 1.2) ---------------------------------------------------------------
+
+
+def reversion_xs_1h(data: dict[str, MarketData], p: dict[str, Any]) -> Signals:
+    """Velas 1h. Para cada alt: r = retorno log 1h; beta = cov(r_alt, r_btc)/var(r_btc) de las `window_hours`
+    velas ANTERIORES (con ambos datos); e_t = r_alt,t - beta * r_btc,t; sigma = desvio de e de las
+    `window_hours` velas anteriores. e < -k*sigma -> long alt (w = 1/max(1, beta)) y short BTC beta*w;
+    e > +k*sigma -> al reves. beta > 0. Salida a las `hold_hours`; una posicion por alt a la vez. La pata BTC
+    es la SUMA de las coberturas abiertas de todas las alts (puede pasar de 1: hasta ~6 con las 6 alts)."""
+    btc = p["btc"]
+    out: Signals = {s: _changes({}) for s in data}
+    if btc not in data:
+        return out
+    cb = _hourly_close(data[btc].klines)
+    if cb.empty:
+        return out
+    rb = np.log(cb).diff()
+    w_n, k = p["window_hours"], p["k_sigma"]
+    hold = pd.Timedelta(hours=p["hold_hours"])
+    hedge: dict[pd.Timestamp, float] = {}
+    for alt in p["symbols"]:
+        if alt not in data or alt == btc:
+            continue
+        ca = _hourly_close(data[alt].klines)
+        if ca.empty:
+            continue
+        df = pd.concat({"a": np.log(ca).diff(), "b": rb}, axis=1).dropna()
+        beta = (df["a"].rolling(w_n, min_periods=w_n).cov(df["b"]) /
+                df["b"].rolling(w_n, min_periods=w_n).var()).shift(1)
+        e = df["a"] - beta * df["b"]
+        sigma = e.shift(1).rolling(w_n, min_periods=w_n).std()
+        rows: dict[pd.Timestamp, float] = {}
+        busy_until = pd.Timestamp.min.tz_localize("UTC")
+        for t, et, st, bt in zip(df.index, e.to_numpy(), sigma.to_numpy(), beta.to_numpy()):
+            if t < busy_until or not (np.isfinite(et) and np.isfinite(st) and np.isfinite(bt)) or bt <= 0 or st <= 0:
+                continue
+            if et < -k * st:
+                d = 1.0
+            elif et > k * st:
+                d = -1.0
+            else:
+                continue
+            w = 1.0 / max(1.0, float(bt))
+            rows[t], rows[t + hold] = d * w, 0.0
+            hedge[t] = hedge.get(t, 0.0) - d * float(bt) * w
+            hedge[t + hold] = hedge.get(t + hold, 0.0) + d * float(bt) * w
+            busy_until = t + hold
+        out[alt] = _changes(rows)
+    b_rows: dict[pd.Timestamp, float] = {}
+    level, last = 0.0, 0.0
+    for t in sorted(hedge):
+        level += hedge[t]
+        v = round(level, 12) + 0.0  # sin ruido de coma flotante (y sin -0.0)
+        if v != last:
+            b_rows[t] = v
+            last = v
+    out[btc] = _changes(b_rows)
+    return out
+
+
+# ---- 3.6 funding-prepago-v1 (catalogo 3.3) -------------------------------------------------------------
+
+
+def funding_prepago(data: dict[str, MarketData], p: dict[str, Any]) -> Signals:
+    """Alrededor de cada liquidacion T (00/08/16 UTC). En la decision d = T - `pre_minutes` se usa la ULTIMA
+    tasa YA LIQUIDADA conocida en d (normalmente la de T - 8 h; la de T todavia no existe: usarla seria
+    look-ahead). Si esa tasa > percentil `pct_hi` de las `pct_window` liquidaciones anteriores (trailing, sin
+    incluirla) -> short de d a T y long de T a T + `post_minutes`; si < percentil `pct_lo` -> al reves. Una tasa
+    mas vieja que `max_age_hours` = hueco (sin senal). Solo decisiones dentro del rango de velas disponible."""
+    out: Signals = {}
+    pre, post = pd.Timedelta(minutes=p["pre_minutes"]), pd.Timedelta(minutes=p["post_minutes"])
+    for sym, md in data.items():
+        k = md.klines
+        if sym not in p["symbols"] or md.funding is None or not len(md.funding) or not len(k):
+            out[sym] = _changes({})
+            continue
+        f = md.funding.sort_index()
+        hi_thr = F.rolling_percentile(f, p["pct_window"], p["pct_hi"])
+        lo_thr = F.rolling_percentile(f, p["pct_window"], p["pct_lo"])
+        state = pd.Series(0.0, index=f.index)
+        state[f > hi_thr] = 1.0
+        state[f < lo_thr] = -1.0
+        lo, hi = k.index[0], k.index[-1] + MIN
+        ts = pd.date_range(lo.floor("1D"), hi.floor("1D") + DAY, freq="1D")
+        settle = [d + pd.Timedelta(hours=h) for d in ts for h in p["settle_hours"]]
+        decisions = [T - pre for T in settle if lo <= T - pre <= hi]
+        rows: dict[pd.Timestamp, float] = {}
+        if decisions:
+            idx = pd.DatetimeIndex(decisions)
+            known = asof(idx, state.rename("s"), tolerance=pd.Timedelta(hours=p["max_age_hours"]))
+            for d, s in zip(idx, known.to_numpy()):
+                if not np.isfinite(s) or s == 0:
+                    continue
+                T = d + pre
+                rows[d], rows[T], rows[T + post] = -s, s, 0.0
+        out[sym] = _changes(rows)
+    return out
+
+
+ALTS = [s for s in SEVEN if s != "BTCUSDT"]
+
+CATALOG.update({
+    "tsmom-diario-v1": (Spec(
+        "tsmom-diario-v1", "continuacion",
+        "Momentum de serie de tiempo. Decision diaria a las 00:00 UTC con velas 1h: posicion = signo del "
+        "retorno de 7 dias (de t-169h a t-1h: se salta la ultima hora) * (vol objetivo / vol realizada de 30 "
+        "dias con retornos 1h, anualizada), tope 1x. Solo se rebalancea si cambia el signo o si el peso cambia "
+        "mas de 20% relativo al actual. Long y short, los 7 simbolos.",
+        "1h", "both", "dias",
+        {"symbols": list(SEVEN), "lookback_hours": 168, "skip_hours": 1, "vol_window_hours": 720,
+         "vol_min_frac": 0.9, "target_vol": 0.15, "max_leverage": 1.0, "rebalance_threshold": 0.20},
+        grid={"target_vol": [0.15, 0.25]},
+        source="ML4T H7 (research/ml4t-metodologia.md: signo del retorno 7d x sigma objetivo / RV 30d, diario; "
+               "riesgo MEDIO); Moskowitz, Ooi & Pedersen 2012 (JFE, Time series momentum); "
+               "catalogo-hipotesis.md: momentum de serie temporal con respaldo academico"), tsmom_diario),
+    "low-vol-xs-v1": (Spec(
+        "low-vol-xs-v1", "cross-sectional",
+        "Diario a las 00:00 UTC: volatilidad realizada de 7 dias (retornos 1h) de cada simbolo; long las 2 de "
+        "menor volatilidad y short las 2 de mayor, mismo nocional (dolar-neutral, NO beta-neutral). Tenencia "
+        "24 h: se re-arma cada dia y solo se opera lo que cambia. Minimo 5 simbolos con dato; si no, plano.",
+        "1h", "neutral", "24h",
+        {"rv_hours": 168, "rv_min_frac": 0.9, "n_side": 2, "min_symbols": 5},
+        source="ML4T H2 (research/ml4t-metodologia.md: long las 2 de menor RV 7d, short las 2 de mayor, 24 h; "
+               "riesgo MEDIO-ALTO, puede ser beta disfrazada); anomalia de baja volatilidad: Ang, Hodrick, Xing & "
+               "Zhang 2006 (JF, acciones)"), low_vol_xs),
+    "pares-eth-btc-v1": (Spec(
+        "pares-eth-btc-v1", "reversion",
+        "Pares ETH/BTC con velas 1h: spread = log(ETH) - beta*log(BTC), beta por OLS de las 720 velas anteriores "
+        "(30 dias), z-score del spread con la misma ventana. z > +2 -> short ETH / long BTC por beta; z < -2 "
+        "-> long ETH / short BTC; beta fija al entrar, ninguna pata > 1x. Salida con |z| < 0.5, stop con |z| > "
+        "4 o a las 72 h. Tras stop o salida por tiempo, no re-entra hasta |z| < umbral. Solo ETH y BTC.",
+        "1h", "neutral", "<=72h",
+        {"leg_y": "ETHUSDT", "leg_x": "BTCUSDT", "window_hours": 720, "entry_z": 2.0, "exit_z": 0.5,
+         "stop_z": 4.0, "max_hold_hours": 72},
+        grid={"entry_z": [2.0, 2.5]},
+        source="propuesta del usuario (lote 3), no esta en catalogo-hipotesis.md; pairs trading: Gatev, "
+               "Goetzmann & Rouwenhorst 2006 (RFS); version con hedge OLS rolling y z-score del residuo"),
+        pares_eth_btc),
+    "rango-reversion-v1": (Spec(
+        "rango-reversion-v1", "reversion",
+        "Velas 1h, solo BNB, TRX y XLM. Regimen rango = ADX(14) < 20. En rango: close bajo la banda inferior "
+        "de Bollinger(20, 2) -> long; sobre la superior -> short. Take profit en la EMA20 del momento de "
+        "entrada (nivel fijo), stop a 1.5 ATR(14) del close de entrada, salida a las 12 h.",
+        "1h", "both", "<=12h",
+        {"symbols": ["BNBUSDT", "TRXUSDT", "XLMUSDT"], "adx_n": 14, "adx_max": 20.0, "bb_n": 20, "bb_k": 2.0,
+         "ema_n": 20, "atr_n": 14, "sl_atr": 1.5, "hold_hours": 12},
+        source="propuesta del usuario (lote 3), no esta en catalogo-hipotesis.md; Bollinger (bandas 20, 2) y "
+               "Wilder 1978 (ADX, ATR); sin paper academico"), rango_reversion),
+    "reversion-xs-1h-v1": (Spec(
+        "reversion-xs-1h-v1", "reversion",
+        "Velas 1h, las 6 alts contra BTC. Residual e = ret_1h(alt) - beta*ret_1h(BTC), beta rolling de las 720 "
+        "velas anteriores (30 dias). Si e < -2 sigma(e) (sigma trailing 30 dias) -> long alt y short BTC por "
+        "beta; si e > +2 sigma -> al reves. Salida a las 4 h. La pata BTC suma las coberturas abiertas.",
+        "1h", "neutral", "4h",
+        {"symbols": list(ALTS), "btc": "BTCUSDT", "window_hours": 720, "k_sigma": 2.0, "hold_hours": 4},
+        source="catalogo-hipotesis.md 1.2 (reversion-xs-1h-v1: residual de la alt contra BTC > 2 sigma -> "
+               "revierte en 4 h; riesgo ALTO, la evidencia en monedas grandes va en contra)"), reversion_xs_1h),
+    "funding-prepago-v1": (Spec(
+        "funding-prepago-v1", "carry",
+        "Alrededor de cada liquidacion T = 00/08/16 UTC. En T-60 min se mira la ultima tasa YA liquidada "
+        "(la de T-8 h; la de T todavia no se conoce). Si > p90 de las 270 liquidaciones anteriores (90 dias): "
+        "short de T-60 a T y long de T a T+60. Si < p10: long de T-60 a T y short de T a T+60. Los 7 simbolos.",
+        "5min", "both", "2h",
+        {"symbols": list(SEVEN), "settle_hours": [0, 8, 16], "pre_minutes": 60, "post_minutes": 60,
+         "pct_hi": 0.90, "pct_lo": 0.10, "pct_window": 270, "max_age_hours": 9},
+        needs=("klines", "funding"),
+        source="catalogo-hipotesis.md 3.3 (funding-prepago-v1: posicionarse alrededor de la hora de "
+               "liquidacion del funding; riesgo ALTO, especulativa); sin paper academico"), funding_prepago),
+})
+LOTE3 = tuple(k for k in CATALOG if k not in LOTE1 and k not in LOTE2)
