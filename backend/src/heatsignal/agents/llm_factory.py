@@ -45,6 +45,8 @@ DEFAULT_GEMINI_STRONG = "gemini-3.5-flash"
 # respaldos verificados: gemini-3.1-flash-lite y gemini-3.8-flash.
 DEFAULT_GEMINI_CHEAP_BACKUP = "gemini-3.1-flash-lite"
 DEFAULT_GEMINI_STRONG_BACKUP = "gemini-3.8-flash"
+# Ultimo recurso (otro modelo, otra cola de demanda): flash-lite para todos los roles.
+DEFAULT_GEMINI_LAST_RESORT = "gemini-3.1-flash-lite"
 
 
 class MissingApiKeyError(RuntimeError):
@@ -70,21 +72,45 @@ def _model_name(m: Any) -> str:
     return str(getattr(m, "model", None) or getattr(m, "model_name", None) or type(m).__name__)
 
 
+# Errores transitorios (saturacion, rate limit): se reintenta el MISMO modelo con espera antes de pasar al
+# siguiente. El 2026-10-17 los dos Flash de Gemini dieron 503 "high demand" a la vez y el ciclo se perdio.
+# Los definitivos (sin credito, modelo inexistente, request invalido) pasan al siguiente sin esperar.
+TRANSIENT_MARKERS = ("503", "429", "UNAVAILABLE", "RESOURCE_EXHAUSTED", "overloaded", "Overloaded", "high demand",
+                     "timeout", "Timeout", "temporarily")
+RETRY_DELAYS_S = (10.0, 30.0)
+
+
+def is_transient(exc: BaseException) -> bool:
+    text = f"{type(exc).__name__} {exc}"
+    return any(m in text for m in TRANSIENT_MARKERS)
+
+
 class _FallbackStructured:
-    def __init__(self, pairs: list[tuple[str, Any]]) -> None:
+    def __init__(self, pairs: list[tuple[str, Any]], retry_delays: tuple[float, ...] = RETRY_DELAYS_S) -> None:
         self.pairs = pairs
+        self.retry_delays = retry_delays
 
     async def ainvoke(self, messages: Any, config: Any = None, **kwargs: Any) -> Any:
+        import asyncio
+
         errors: list[str] = []
         for i, (name, runnable) in enumerate(self.pairs):
-            try:
-                out = await runnable.ainvoke(messages, config, **kwargs)
-                if i > 0:
-                    logger.warning("LLM: respondio el fallback %s (fallaron antes: %s)", name, "; ".join(errors))
-                return out
-            except Exception as exc:  # noqa: BLE001 - cualquier falla pasa al siguiente proveedor
-                errors.append(f"{name}: {type(exc).__name__}: {str(exc)[:200]}")
-                logger.warning("LLM: fallo %s (%s); paso al siguiente", name, type(exc).__name__)
+            for attempt in range(len(self.retry_delays) + 1):
+                try:
+                    out = await runnable.ainvoke(messages, config, **kwargs)
+                    if i > 0 or attempt > 0:
+                        logger.warning("LLM: respondio %s (intento %d; antes: %s)", name, attempt + 1,
+                                       "; ".join(errors) or "-")
+                    return out
+                except Exception as exc:  # noqa: BLE001 - cualquier falla pasa al siguiente proveedor
+                    errors.append(f"{name}#{attempt + 1}: {type(exc).__name__}: {str(exc)[:160]}")
+                    if is_transient(exc) and attempt < len(self.retry_delays):
+                        delay = self.retry_delays[attempt]
+                        logger.warning("LLM: %s saturado (%s); reintento en %.0fs", name, type(exc).__name__, delay)
+                        await asyncio.sleep(delay)
+                        continue
+                    logger.warning("LLM: fallo %s (%s); paso al siguiente", name, type(exc).__name__)
+                    break
         raise AllProvidersFailedError("fallaron todos los modelos -> " + " | ".join(errors))
 
 
@@ -161,6 +187,10 @@ def make_llms(
             chains.append(("gemini-backup",
                            g_cls(model=b_cheap, google_api_key=g_key, max_output_tokens=max_tokens, max_retries=max_retries),
                            g_cls(model=b_strong, google_api_key=g_key, max_output_tokens=max_tokens, max_retries=max_retries)))
+        last = os.environ.get("HEATSIGNAL_GEMINI_LAST_RESORT", DEFAULT_GEMINI_LAST_RESORT)
+        if last:
+            m = g_cls(model=last, google_api_key=g_key, max_output_tokens=max_tokens, max_retries=max_retries)
+            chains.append(("gemini-last", m, m))
     if not chains:
         raise MissingApiKeyError("falta ANTHROPIC_API_KEY o GOOGLE_API_KEY (variable de entorno o argumento api_key)")
     names = tuple(c[0] for c in chains)

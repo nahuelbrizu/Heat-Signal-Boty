@@ -105,13 +105,13 @@ def test_gemini_only_and_fallback_routing(monkeypatch) -> None:
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     monkeypatch.setenv("GOOGLE_API_KEY", "g-test-no-real")
     solo = make_llms()
-    assert solo.providers == ("gemini", "gemini-backup")
+    assert solo.providers == ("gemini", "gemini-backup", "gemini-last")
     assert solo.cheap.models[0].model.endswith("gemini-3.5-flash-lite") and solo.strong.models[0].model.endswith("gemini-3.5-flash")
     assert solo.strong.models[1].model.endswith("gemini-3.8-flash") and solo.cheap.models[1].model.endswith("gemini-3.1-flash-lite")
 
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test-no-real")
     both = make_llms()
-    assert both.providers == ("anthropic", "gemini", "gemini-backup")
+    assert both.providers == ("anthropic", "gemini", "gemini-backup", "gemini-last")
     assert isinstance(both.strong, FallbackChatModel)
     assert both.strong.models[0].model == "claude-sonnet-5-5" and both.strong.models[1].model.endswith("gemini-3.5-flash")
 
@@ -147,4 +147,35 @@ async def test_fallback_uses_second_model_when_first_fails() -> None:
     with pytest.raises(AllProvidersFailedError) as err:
         await FallbackChatModel(Fake("a", True), Fake("b", True)).with_structured_output(SymbolArgument).ainvoke(["x"])
     assert calls == ["a", "b"]  # si fallan todos, el error se propaga (ciclo = error, no silencio)
-    assert "a: RuntimeError" in str(err.value) and "b: RuntimeError" in str(err.value)  # el de CADA proveedor
+    assert "a#1: RuntimeError" in str(err.value) and "b#1: RuntimeError" in str(err.value)  # el de CADA proveedor
+
+
+
+async def test_transient_errors_retry_same_model_definitive_errors_skip() -> None:
+    from langchain_core.runnables import RunnableLambda
+
+    from heatsignal.agents.debate import SymbolArgument
+    from heatsignal.agents.llm_factory import FallbackChatModel, is_transient
+
+    calls: list[str] = []
+
+    class Flaky:
+        def __init__(self, name, errors):
+            self.model, self.errors = name, list(errors)
+
+        def with_structured_output(self, schema, **kw):
+            def run(msgs):
+                calls.append(self.model)
+                if self.errors:
+                    raise self.errors.pop(0)
+                return schema(symbol="XRP-USDT", argument="ok", strength=0.5)
+            return RunnableLambda(run)
+
+    assert is_transient(RuntimeError("503 UNAVAILABLE high demand")) and not is_transient(RuntimeError("credit balance is too low"))
+    fm = FallbackChatModel(Flaky("claude", [RuntimeError("credit balance is too low")]),
+                           Flaky("gemini", [RuntimeError("503 UNAVAILABLE"), RuntimeError("503 UNAVAILABLE")]))
+    structured = fm.with_structured_output(SymbolArgument)
+    structured.retry_delays = (0.0, 0.0)
+    out = await structured.ainvoke(["x"])
+    # claude: definitivo -> 1 intento; gemini: 2 transitorios y responde al 3er intento
+    assert out.symbol == "XRP-USDT" and calls == ["claude", "gemini", "gemini", "gemini"]
