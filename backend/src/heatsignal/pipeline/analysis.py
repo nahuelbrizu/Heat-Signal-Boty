@@ -151,6 +151,7 @@ class AnalysisLoop:
         skip_during_warmup: bool = True,
         clock_ms: Callable[[], int] = lambda: int(time.time() * 1000),
         news: NewsWindow | None = None,
+        cycle_log: Any = None,  # pipeline.cycle_log.CycleLog: historial persistente (sobrevive reinicios)
     ) -> None:
         if interval_s <= 0 or window_s <= 0:
             raise ValueError("interval_s y window_s deben ser > 0")
@@ -165,6 +166,16 @@ class AnalysisLoop:
         self._news = news
         self.last_result: CycleResult | None = None
         self.last_ran: CycleResult | None = None  # ultimo ciclo en que corrio el grafo (sobrevive a warmups)
+        self._cycle_log = cycle_log
+        if cycle_log is not None:
+            try:
+                prev = cycle_log.latest_ran()
+            except Exception:  # noqa: BLE001
+                log.exception("no se pudo leer el historial de ciclos")
+                prev = None
+            if prev is not None:
+                self.last_ran = CycleResult(prev["run_id"], "ran", {}, prev["n_hypotheses"], prev["detail"],
+                                            prev["decisions"], prev["report"])
 
     @property
     def graph_enabled(self) -> bool:
@@ -281,6 +292,12 @@ class AnalysisLoop:
         self.last_result = result
         if result.status == "ran":
             self.last_ran = result
+        if self._cycle_log is not None:
+            try:
+                self._cycle_log.append(result.run_id, result.status, result.n_hypotheses, result.detail,
+                                       result.decisions, result.report)
+            except Exception:  # noqa: BLE001 - el historial no frena el ciclo
+                log.exception("%s: no se pudo guardar en el historial de ciclos", result.run_id)
         return result
 
     async def run_forever(self, stop: asyncio.Event) -> None:

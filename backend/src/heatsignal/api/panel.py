@@ -54,6 +54,7 @@ class PanelContext:
     http_get: HttpGet | None = None  # inyectable en tests (sin red)
     news: Any = None  # news.window.NewsWindow
     history: Any = None  # history.recorder.MinuteRecorder
+    cycle_log: Any = None  # pipeline.cycle_log.CycleLog
 
 
 def _cycle_view(analysis: AnalysisLoop | None, *, ran: bool = False) -> dict[str, Any] | None:
@@ -185,6 +186,8 @@ def create_panel_app(ctx: PanelContext) -> FastAPI:
                 "graph_enabled": ctx.analysis is not None and ctx.analysis.graph_enabled,
                 "last_cycle": _cycle_view(ctx.analysis),
                 "last_ran": _cycle_view(ctx.analysis, ran=True),
+                "history": [] if ctx.cycle_log is None else ctx.cycle_log.latest(30),
+                "history_counts": {} if ctx.cycle_log is None else ctx.cycle_log.counts(),
             },
             "evaluation": _hypotheses_view(ctx),
             "news": None if ctx.news is None else ctx.news.summary(),

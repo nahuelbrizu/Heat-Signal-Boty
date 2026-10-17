@@ -296,6 +296,7 @@ class AnalysisHandles:
     store: Any  # evaluation.pending_store.PendingHypothesisStore
     news: Any = None  # news.window.NewsWindow
     news_task: asyncio.Task | None = None
+    cycle_log: Any = None  # pipeline.cycle_log.CycleLog
 
 
 def _memory_sink(sinks: list[EventSink]) -> MemoryWindowSink | None:
@@ -362,12 +363,17 @@ async def start_analysis(
     else:
         log.info("noticias apagadas (HEATSIGNAL_NEWS_INTERVAL_S=0)")
 
+    from ..pipeline.cycle_log import CycleLog
+
+    cycle_log = CycleLog(cfg.eval_db)
+    stack.callback(cycle_log.close)
     loop = AnalysisLoop(
         memory, symbols, registry, graph_runner=runner,
-        interval_s=cfg.analysis_interval_s, window_s=cfg.analysis_window_s, news=news,
+        interval_s=cfg.analysis_interval_s, window_s=cfg.analysis_window_s, news=news, cycle_log=cycle_log,
     )
     task = asyncio.create_task(loop.run_forever(stop), name="analysis")
-    return AnalysisHandles(task=task, loop=loop, registry=registry, store=store, news=news, news_task=news_task)
+    return AnalysisHandles(task=task, loop=loop, registry=registry, store=store, news=news, news_task=news_task,
+                           cycle_log=cycle_log)
 
 
 # ---- panel interno --------------------------------------------------------------------------------
@@ -389,6 +395,7 @@ async def start_panel(
         health=health,
         memory=_memory_sink(sinks),
         history=_recorder(sinks),
+        cycle_log=analysis.cycle_log if analysis else None,
         analysis=analysis.loop if analysis else None,
         registry=analysis.registry if analysis else None,
         store=analysis.store if analysis else None,

@@ -143,6 +143,10 @@
       <span id="graph-state"></span>
     </div>
     <div id="cycle"></div>
+    <details id="cycle-hist-box" style="margin-top:10px">
+      <summary class="muted" id="cycle-hist-sum">Historial de ciclos</summary>
+      <div class="table-wrap"><table id="cycle-hist"></table></div>
+    </details>
   </section>
 
   <section>
@@ -180,6 +184,7 @@
 const $ = (id) => document.getElementById(id);
 const live = { build: null, lastOk: 0 };
 let lastCycle = null;
+let hypEmptyText = "Sin hipótesis todavía.";
 
 function el(tag, attrs, ...children) {
   const node = document.createElement(tag);
@@ -320,6 +325,21 @@ function renderCycle(analysis) {
   if (c.detail) box.append(el("p", { class: "muted", style: "margin:8px 0 0" }, c.detail));
 }
 
+function renderCycleHistory(a) {
+  const rows = (a && a.history) || [];
+  const c = (a && a.history_counts) || {};
+  const total = Object.values(c).reduce((x, y) => x + y, 0);
+  $("cycle-hist-sum").textContent = "Historial de ciclos · " + total + " guardados · " + (c.ran || 0) +
+    " con grafo · " + (c.warmup || 0) + " calentando" + (c.error ? " · " + c.error + " con error" : "");
+  table($("cycle-hist"), [["Hora"], ["Estado"], ["Hipótesis", "num"], ["Detalle"]],
+    rows.map((r) => [[r.ts_ms ? new Date(r.ts_ms).toLocaleString("es-AR") : r.run_id], [chip(r.status)],
+      [r.n_hypotheses, "num"], [el("span", { class: "muted" }, r.detail)]]),
+    "Todavía no hay ciclos guardados.");
+  hypEmptyText = (c.ran || 0) > 0
+    ? "Sin hipótesis todavía: en " + c.ran + " ciclos con grafo ninguna estrategia cumplió sus condiciones de entrada (ver \"Último análisis\")."
+    : "Sin hipótesis todavía.";
+}
+
 function renderStrategies(evaln) {
   if (!evaln.available) {
     table($("strategies"), [["Estado"]], [], "Base de hipótesis no disponible (ciclo de análisis apagado).");
@@ -352,7 +372,7 @@ function renderStrategies(evaln) {
       [h.exit === null ? "—" : price(Number(h.exit)), "num"],
       [h.pnl_pct === null ? "—" : el("span", { class: h.pnl_pct > 0 ? "buy" : "sell" }, pct(h.pnl_pct)), "num"],
       [h.rationale]]),
-    "Sin hipótesis todavía.");
+    hypEmptyText);
 }
 
 const OUTCOME = { hypothesis: ["ok", "abrió hipótesis"], no_hypothesis: ["", "no entró"], rejected: ["bad", "rechazada"] };
@@ -467,6 +487,7 @@ async function refreshStatus() {
     renderWorkers(s.workers, s.now_ms);
     renderMarket(s.memory, s.now_ms);
     renderCycle(s.analysis);
+    renderCycleHistory(s.analysis);
     lastCycle = s.analysis && s.analysis.last_ran;
     renderStrategies(s.evaluation);
     renderRan(s.analysis && s.analysis.last_ran);
