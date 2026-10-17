@@ -74,6 +74,9 @@
   .seg button:last-child { border-right: 0; }
   .seg button.on { background: var(--chip); font-weight: 600; }
   #chart { height: 440px; margin-top: 10px; }
+  .news ul { margin: 0; padding-left: 18px; }
+  .news li { margin: 3px 0; }
+  .news a { color: var(--ink); }
   .legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12px; margin-top: 8px; }
 </style>
 </head>
@@ -366,7 +369,22 @@ function featureCard(fs) {
       "order flow últimos " + dur(of.window_s) + " · heatmap " + hm.heatmap_model_id + " sobre " + dur(hm.window_s)),
     el("div", { class: "table-wrap" }, clusters),
     fs.data_gaps.length ? el("ul", { class: "gaps" }, fs.data_gaps.map((g) => el("li", {}, g))) : null,
+    newsList(fs),
   );
+}
+
+function newsList(fs) {
+  const items = fs.news || [];
+  if (!fs.news_model_id) return null;
+  const now = Date.now();
+  return el("div", { class: "news" },
+    el("h3", { style: "margin:12px 0 6px" }, "Noticias ", el("span", { class: "muted" }, "· " + items.length + " · " + fs.news_model_id)),
+    items.length ? el("ul", {}, items.map((it) => el("li", {},
+      it.primary ? el("span", { class: "chip info" }, "primaria") : null, it.primary ? " " : null,
+      el("a", { href: it.url, target: "_blank", rel: "noopener noreferrer" }, it.title),
+      el("span", { class: "muted" }, " · " + it.source + " · hace " + ago(it.published_ms, now) +
+        (it.symbols.length ? " · " + it.symbols.join(",") : it.market_wide ? " · mercado" : ""))))) :
+      el("p", { class: "empty" }, "Sin noticias en las últimas 48 h."));
 }
 
 async function refreshFeatures() {

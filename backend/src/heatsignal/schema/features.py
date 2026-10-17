@@ -16,6 +16,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from .events import Exchange, Side
+from .news import NewsItem
 
 
 class LiquidationCluster(BaseModel):
@@ -94,3 +95,7 @@ class FeatureSet(BaseModel):
         default_factory=list,
         description="Huecos/sesgos declarados, p.ej. 'okx: stream caido 120s', 'binance liq PARTIAL'",
     )
+    news: list[NewsItem] = Field(
+        default_factory=list, description="Noticias recientes del simbolo y del mercado (ver schema/news.py)"
+    )
+    news_model_id: str | None = Field(default=None, description="Version del lector/etiquetado de noticias")

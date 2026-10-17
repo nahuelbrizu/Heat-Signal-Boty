@@ -29,7 +29,9 @@ from typing import Any, Literal
 
 from ..evaluation.strategy_registry import StrategyHypothesis, StrategyStatus
 from ..features.builder import build_feature_set
+from ..news.window import NewsWindow
 from ..schema.features import FeatureSet
+from ..schema.news import NEWS_MODEL_ID
 from ..storage.memory import MemoryWindowSink
 
 log = logging.getLogger("heatsignal.pipeline.analysis")
@@ -70,7 +72,7 @@ def _feature_summary(fs: FeatureSet) -> str:
     atr = f"{ctx.atr:.4g}" if ctx.atr is not None else "?"
     return (
         f"{fs.symbol}: mark={mark} atr={atr} regime={ctx.regime} clusters={len(fs.heatmap.clusters)} "
-        f"cvd_usd={of.cvd_usd:,.0f} trades={of.n_trades} gaps={len(fs.data_gaps)}"
+        f"cvd_usd={of.cvd_usd:,.0f} trades={of.n_trades} news={len(fs.news)} gaps={len(fs.data_gaps)}"
     )
 
 
@@ -86,6 +88,7 @@ class AnalysisLoop:
         window_s: int = DEFAULT_WINDOW_S,
         skip_during_warmup: bool = True,
         clock_ms: Callable[[], int] = lambda: int(time.time() * 1000),
+        news: NewsWindow | None = None,
     ) -> None:
         if interval_s <= 0 or window_s <= 0:
             raise ValueError("interval_s y window_s deben ser > 0")
@@ -97,6 +100,7 @@ class AnalysisLoop:
         self._window_s = window_s
         self._skip_during_warmup = skip_during_warmup
         self._clock_ms = clock_ms
+        self._news = news
         self.last_result: CycleResult | None = None
 
     @property
@@ -113,8 +117,12 @@ class AnalysisLoop:
             fs = await asyncio.to_thread(
                 build_feature_set, sym, liqs, trades, tickers, now_ms, self._window_s
             )
-            memory_gaps = self._memory.data_gaps(sym, self._window_s)
-            out[sym] = fs.model_copy(update={"data_gaps": [*fs.data_gaps, *memory_gaps]})
+            update: dict = {"data_gaps": [*fs.data_gaps, *self._memory.data_gaps(sym, self._window_s)]}
+            if self._news is not None:
+                update["news"] = self._news.items_for(sym, now_ms)
+                update["news_model_id"] = NEWS_MODEL_ID
+                update["data_gaps"] += self._news.data_gaps(sym, now_ms)
+            out[sym] = fs.model_copy(update=update)
         return out
 
     async def run_cycle(self) -> CycleResult:

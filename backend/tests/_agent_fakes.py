@@ -164,6 +164,7 @@ def full_script(symbols: list[str], *, strategy_id: str | None = None, rounds: i
     from heatsignal.agents.debate import DebateArgumentBatch, SymbolArgument
     from heatsignal.agents.liquidation_analyst import LiquidationAnalysis, LiquidationAnalysisBatch
     from heatsignal.agents.market_context_analyst import MarketContextAnalysis, MarketContextAnalysisBatch
+    from heatsignal.agents.news_analyst import NewsAnalysis, NewsAnalysisBatch
     from heatsignal.agents.order_flow_analyst import OrderFlowAnalysis, OrderFlowAnalysisBatch
     from heatsignal.agents.redactor import ReportDraft, SymbolReportSection
     from heatsignal.agents.synthesizer import StrategyProposal, SynthesisBatch
@@ -192,6 +193,12 @@ def full_script(symbols: list[str], *, strategy_id: str | None = None, rounds: i
                 )
                 for s in symbols
             ]
+        )
+
+    def news(_):
+        return NewsAnalysisBatch(
+            analyses=[NewsAnalysis(symbol=s, news_summary="sin novedades relevantes", tone="neutral", confidence=0.3)
+                      for s in symbols]
         )
 
     def debate(_):
@@ -230,6 +237,7 @@ def full_script(symbols: list[str], *, strategy_id: str | None = None, rounds: i
         LiquidationAnalysisBatch: liq,
         OrderFlowAnalysisBatch: flow,
         MarketContextAnalysisBatch: ctx,
+        NewsAnalysisBatch: news,
         DebateArgumentBatch: debate,
         SynthesisBatch: synth,
         ReportDraft: report,

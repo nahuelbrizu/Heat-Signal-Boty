@@ -2,11 +2,11 @@
 Grafo LangGraph de Fase 2 (ver `agents.md` / `phase-2-agents.md`).
 
     START
-      |-----------------------------|------------------------------|
-      v                             v                              v
-    liquidation_analyst      order_flow_analyst       market_context_analyst   (cheap, paralelo)
-      |-----------------------------|------------------------------|
-                                    v  (fan-in: espera a los tres)
+      |-----------------------------|------------------------------|-------------------|
+      v                             v                              v                   v
+    liquidation_analyst      order_flow_analyst       market_context_analyst    news_analyst  (cheap, paralelo)
+      |-----------------------------|------------------------------|-------------------|
+                                    v  (fan-in: espera a los cuatro)
                               bull_strategist  <-----------------+          (strong)
                                     v                            |
                               bear_strategist  -- round < N -----+          (strong)
@@ -37,12 +37,13 @@ from .debate import make_debate_node, make_debate_router
 from .hypothesis_store import PendingHypothesisStore
 from .liquidation_analyst import make_liquidation_analyst_node
 from .market_context_analyst import make_market_context_analyst_node
+from .news_analyst import make_news_analyst_node
 from .order_flow_analyst import make_order_flow_analyst_node
 from .redactor import make_redactor_node
 from .state import GraphState
 from .synthesizer import DEFAULT_HORIZON_S, make_synthesizer_node
 
-ANALYST_NODES = ("liquidation_analyst", "order_flow_analyst", "market_context_analyst")
+ANALYST_NODES = ("liquidation_analyst", "order_flow_analyst", "market_context_analyst", "news_analyst")
 
 
 def build_graph(
@@ -67,6 +68,7 @@ def build_graph(
     graph.add_node("liquidation_analyst", make_liquidation_analyst_node(cheap_llm))
     graph.add_node("order_flow_analyst", make_order_flow_analyst_node(cheap_llm))
     graph.add_node("market_context_analyst", make_market_context_analyst_node(cheap_llm))
+    graph.add_node("news_analyst", make_news_analyst_node(cheap_llm))
     graph.add_node("bull_strategist", make_debate_node(strong, "bull"))
     graph.add_node("bear_strategist", make_debate_node(strong, "bear"))
     graph.add_node(

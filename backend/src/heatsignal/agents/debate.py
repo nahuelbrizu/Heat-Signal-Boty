@@ -64,11 +64,12 @@ class DebateTurn(BaseModel):
 
 
 def render_analyst_digest(state: "GraphState") -> str:
-    """Resumen por simbolo de las tres salidas de analistas + huecos declarados."""
+    """Resumen por simbolo de las salidas de los analistas + huecos declarados."""
     features: dict[str, FeatureSet] = state.get("features_by_symbol") or {}
     liq = {a.symbol: a for a in state.get("liquidation_analyses") or []}
     flow = {a.symbol: a for a in state.get("order_flow_analyses") or []}
     ctx = {a.symbol: a for a in state.get("market_context_analyses") or []}
+    news = {a.symbol: a for a in state.get("news_analyses") or []}
     blocks: list[str] = []
     for symbol, fs in features.items():
         lines = [f"## {symbol}", f"- {format_data_gaps(fs)}"]
@@ -96,6 +97,15 @@ def render_analyst_digest(state: "GraphState") -> str:
             )
         else:
             lines.append("- Contexto: SIN SALIDA del analista")
+        if (d := news.get(symbol)) is not None:
+            lines.append(
+                f"- Noticias (conf {d.confidence:.2f}, tono {d.tone}, {d.n_items} items, {d.n_primary} de fuente "
+                f"primaria, negativa material primaria: {'SI' if d.material_primary_negative else 'no'}): "
+                f"{d.news_summary} [ids relevantes: {', '.join(d.relevant_item_ids) or 'ninguno'}; "
+                f"huecos: {'; '.join(d.data_gaps) or 'ninguno'}]"
+            )
+        else:
+            lines.append("- Noticias: SIN SALIDA del analista")
         blocks.append("\n".join(lines))
     return "\n\n".join(blocks)
 

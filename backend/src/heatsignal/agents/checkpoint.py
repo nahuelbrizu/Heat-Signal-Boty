@@ -47,10 +47,12 @@ def _state_types() -> list[type]:
         OrderFlowWindow,
     )
     from ..schema.hypotheses import PendingHypothesis
+    from ..schema.news import NewsItem
     from ..schema.signals import Direction
     from .debate import DebateTurn, SymbolArgument
     from .liquidation_analyst import LiquidationAnalysis
     from .market_context_analyst import MarketContextAnalysis
+    from .news_analyst import NewsAnalysis
     from .order_flow_analyst import OrderFlowAnalysis
     from .redactor import ReportDraft, RunReport, SymbolReportSection
     from .synthesizer import SymbolDecision
@@ -60,7 +62,7 @@ def _state_types() -> list[type]:
         FeatureSet, HeatmapSnapshot, LiquidationCluster, MarketContext, OrderFlowWindow,
         PendingHypothesis, DebateTurn, SymbolArgument, LiquidationAnalysis,
         MarketContextAnalysis, OrderFlowAnalysis, ReportDraft, RunReport,
-        SymbolReportSection, SymbolDecision,
+        SymbolReportSection, SymbolDecision, NewsItem, NewsAnalysis,
     ]
 
 

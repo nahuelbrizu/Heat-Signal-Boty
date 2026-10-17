@@ -8,7 +8,7 @@ Entrada (la arma quien invoca el grafo):
     allowed_strategies   estrategias PRE-REGISTRADAS que el Sintetizador puede instanciar
 
 Salidas por nodo:
-    liquidation_analyses / order_flow_analyses / market_context_analyses  (analistas, paralelo)
+    liquidation_analyses / order_flow_analyses / market_context_analyses / news_analyses  (analistas)
     debate_transcript (reducer: concatenacion) + debate_round             (debate)
     pending_hypotheses + synthesis_decisions                              (sintetizador)
     report                                                                (redactor)
@@ -25,6 +25,7 @@ from ..schema.hypotheses import PendingHypothesis
 from .debate import DebateTurn
 from .liquidation_analyst import LiquidationAnalysis
 from .market_context_analyst import MarketContextAnalysis
+from .news_analyst import NewsAnalysis
 from .order_flow_analyst import OrderFlowAnalysis
 from .redactor import RunReport
 from .synthesizer import SymbolDecision
@@ -39,6 +40,7 @@ class GraphState(TypedDict, total=False):
     liquidation_analyses: list[LiquidationAnalysis]
     order_flow_analyses: list[OrderFlowAnalysis]
     market_context_analyses: list[MarketContextAnalysis]
+    news_analyses: list[NewsAnalysis]
     # --- debate ---
     debate_transcript: Annotated[list[DebateTurn], operator.add]
     debate_round: int

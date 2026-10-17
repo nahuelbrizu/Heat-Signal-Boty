@@ -18,6 +18,7 @@ Configuracion por variables de entorno (ver `.env.example` en la raiz del repo):
   HEATSIGNAL_MEM_LIQUIDATIONS_S 86400
   HEATSIGNAL_ANALYSIS_INTERVAL_S 900   ciclo features -> grafo -> hipotesis (modo memory; 0 lo apaga)
   HEATSIGNAL_ANALYSIS_WINDOW_S  1800   ventana de features (<= retencion de trades)
+  HEATSIGNAL_NEWS_INTERVAL_S    300    poll de noticias RSS (news/feeds.py), solo en memoria 48 h (0 lo apaga)
   HEATSIGNAL_EVAL_DB            data/heatsignal_eval.sqlite   estrategias + hipotesis (lo unico persistido)
   HEATSIGNAL_CHECKPOINT_DB      data/heatsignal_checkpoints.sqlite   checkpoints del grafo
   ANTHROPIC_API_KEY             sin key el ciclo solo calcula features (avisa en cada ciclo)
@@ -97,6 +98,7 @@ class RunConfig:
     mem_liquidations_s: float = 86400.0
     analysis_interval_s: float = 900.0
     analysis_window_s: int = 1800
+    news_interval_s: float = 300.0
     eval_db: str = "data/heatsignal_eval.sqlite"
     checkpoint_db: str = "data/heatsignal_checkpoints.sqlite"
     panel_port: int = 8000
@@ -172,6 +174,7 @@ class RunConfig:
             mem_liquidations_s=_float("HEATSIGNAL_MEM_LIQUIDATIONS_S", 86400.0),
             analysis_interval_s=_float("HEATSIGNAL_ANALYSIS_INTERVAL_S", 900.0),
             analysis_window_s=int(_float("HEATSIGNAL_ANALYSIS_WINDOW_S", 1800)),
+            news_interval_s=_float("HEATSIGNAL_NEWS_INTERVAL_S", 300.0),
             eval_db=_opt("HEATSIGNAL_EVAL_DB") or "data/heatsignal_eval.sqlite",
             checkpoint_db=_opt("HEATSIGNAL_CHECKPOINT_DB") or "data/heatsignal_checkpoints.sqlite",
             panel_port=int(_float("HEATSIGNAL_PANEL_PORT", 8000)),
@@ -272,6 +275,8 @@ class AnalysisHandles:
     loop: Any  # pipeline.analysis.AnalysisLoop
     registry: Any  # evaluation.strategy_registry.StrategyRegistry
     store: Any  # evaluation.pending_store.PendingHypothesisStore
+    news: Any = None  # news.window.NewsWindow
+    news_task: asyncio.Task | None = None
 
 
 def _memory_sink(sinks: list[EventSink]) -> MemoryWindowSink | None:
@@ -322,12 +327,21 @@ async def start_analysis(
         async def runner(state: dict[str, Any], run_id: str) -> dict[str, Any]:
             return await graph.ainvoke(state, make_run_config(symbols, run_id))
 
+    news = news_task = None
+    if cfg.news_interval_s > 0:
+        from ..news.window import NewsWindow
+
+        news = NewsWindow(interval_s=cfg.news_interval_s)
+        news_task = asyncio.create_task(news.run_forever(stop), name="news")
+    else:
+        log.info("noticias apagadas (HEATSIGNAL_NEWS_INTERVAL_S=0)")
+
     loop = AnalysisLoop(
         memory, symbols, registry, graph_runner=runner,
-        interval_s=cfg.analysis_interval_s, window_s=cfg.analysis_window_s,
+        interval_s=cfg.analysis_interval_s, window_s=cfg.analysis_window_s, news=news,
     )
     task = asyncio.create_task(loop.run_forever(stop), name="analysis")
-    return AnalysisHandles(task=task, loop=loop, registry=registry, store=store)
+    return AnalysisHandles(task=task, loop=loop, registry=registry, store=store, news=news, news_task=news_task)
 
 
 # ---- panel interno --------------------------------------------------------------------------------
@@ -351,6 +365,7 @@ async def start_panel(
         analysis=analysis.loop if analysis else None,
         registry=analysis.registry if analysis else None,
         store=analysis.store if analysis else None,
+        news=analysis.news if analysis else None,
         config={
             "symbols": list(cfg.symbols), "exchanges": list(cfg.exchanges), "storage": cfg.storage,
             "analysis_interval_s": cfg.analysis_interval_s, "analysis_window_s": cfg.analysis_window_s,
@@ -474,6 +489,9 @@ async def run(cfg: RunConfig, *, stop_event: asyncio.Event | None = None) -> Non
                 await asyncio.wait_for(asyncio.shield(analysis.task), timeout=SHUTDOWN_TIMEOUT_S)
             analysis.task.cancel()
             await asyncio.gather(analysis.task, return_exceptions=True)
+            if analysis.news_task is not None:
+                analysis.news_task.cancel()  # puede estar en medio de un GET: no se espera
+                await asyncio.gather(analysis.news_task, return_exceptions=True)
         await analysis_stack.aclose()
         await throttled.close()  # flush de tickers pendientes + cierre de fanout/sinks
         _log_final_stats(throttled, sinks, health)

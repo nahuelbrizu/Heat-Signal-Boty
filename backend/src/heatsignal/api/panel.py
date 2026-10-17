@@ -51,6 +51,7 @@ class PanelContext:
     config: dict[str, Any] = field(default_factory=dict)
     started_at: float = field(default_factory=time.time)
     http_get: HttpGet | None = None  # inyectable en tests (sin red)
+    news: Any = None  # news.window.NewsWindow
 
 
 def _cycle_view(analysis: AnalysisLoop | None) -> dict[str, Any] | None:
@@ -144,6 +145,7 @@ def create_panel_app(ctx: PanelContext) -> FastAPI:
                 "last_cycle": _cycle_view(ctx.analysis),
             },
             "evaluation": _hypotheses_view(ctx),
+            "news": None if ctx.news is None else ctx.news.summary(),
         }
 
     @app.get("/api/features")

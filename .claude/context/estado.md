@@ -14,7 +14,7 @@
 | 4 — Producto | Panel **interno** listo (no público); dashboard/API pública/reporte no iniciados | `phase-4-product.md` |
 
 Código: rama `ingestion-binance-bybit`, pusheada a GitHub (sin PR).
-Tests: 389 pasando, 1 skipped (`backend/`, `.venv/bin/pytest -q`).
+Tests: 401 pasando, 1 skipped (`backend/`, `.venv/bin/pytest -q`).
 
 ## Qué corre hoy (VM de prueba)
 
@@ -42,8 +42,9 @@ Tests: 389 pasando, 1 skipped (`backend/`, `.venv/bin/pytest -q`).
       `.env` de la VM. Definir presupuesto: ~670 llamadas/día con ciclo de 15 min.
 - [ ] **Pre-registrar las primeras estrategias** con
       `python -m heatsignal.evaluation.register_strategy archivo.json` — antes de ver resultados.
-- [ ] **XRP**: sumar `XRPUSDT` a `HEATSIGNAL_SYMBOLS` en el `.env` de la VM y revisar la RAM en el panel.
-- [ ] **`xrp-acumulacion-v1`** (borrador en `strategies/`, LONG a 90 días): revisar y registrar.
+- [x] XRP sumado a `HEATSIGNAL_SYMBOLS` en la VM.
+- [x] `xrp-acumulacion-v1` registrada (LONG a 90 días, sin noticias).
+- [ ] `xrp-acumulacion-v2` (v1 + noticias): registrar tras el deploy de noticias.
 - [ ] **Símbolos**: confirmar si se suma ETH (`HEATSIGNAL_SYMBOLS`).
 - [ ] **ToS de Binance/Bybit/OKX**: lectura rápida (`phase-0-blockers.md`, Bloqueante A).
 - [ ] **Push / PR** de la rama `ingestion-binance-bybit`.
@@ -61,6 +62,10 @@ Calibración / estadística (preguntas abiertas de los agentes de implementació
 - [ ] Supuesto de costos de 10 bps round-trip (sin slippage ni funding): decidir si se publica así.
 - [ ] Calibrar el umbral de `regime-v1` (2 ATR en 20 barras) con datos del shadow.
 - [ ] Definición de `price_mid` del cluster (hoy punto medio del rango del cluster).
+
+Noticias:
+- [ ] Sin fuente primaria de Ripple (no publica RSS). Opción: monitorear su sala de prensa de otra forma.
+- [ ] El etiquetado por palabras clave es simple (`newsrss-v1`): medir falsos positivos con lo que se acumule.
 
 Ingesta:
 - [ ] Open interest de Binance: el stream `markPrice` no lo trae; la suma de OI sale solo de Bybit + OKX

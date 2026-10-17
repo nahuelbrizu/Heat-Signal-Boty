@@ -1,0 +1,18 @@
+{
+  "description": "xrp-acumulacion-v2: igual que xrp-acumulacion-v1 (LONG de largo plazo en XRP con funding no positivo y OI cayendo, fuera de tendencia bajista) pero ademas exige que el Analista de Noticias NO marque una noticia negativa material de fuente primaria (emisor o regulador) en las ultimas 48 h. Solo XRP-USDT, solo LONG, horizonte 90 dias, evaluada como spot contra mantener XRP. Corre en paralelo con v1 para medir si las noticias mejoran el resultado.",
+  "entry_conditions": {
+    "symbol": "XRP-USDT",
+    "direction": "LONG",
+    "context.funding_rate_by_exchange": "todos los exchanges que informan <= 0",
+    "context.oi_change_pct_lte": -2.0,
+    "context.regime_not": "trend_down",
+    "news_analysis.material_primary_negative": false,
+    "news_model_id": "newsrss-v1",
+    "si_no_se_cumple_todo": "no_hypothesis"
+  },
+  "exit_conditions": {
+    "horizon_s": 7776000,
+    "salida": "cierre al vencer el horizonte (sin stop ni take profit)"
+  },
+  "author": "nahue"
+}

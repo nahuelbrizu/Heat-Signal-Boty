@@ -46,6 +46,17 @@
   hipótesis casi iguales sobre el mismo movimiento, contaría una sola apuesta como n aciertos e inflaría el
   intervalo de confianza. También ordena las estrategias de horas. Fecha: 2026-10-17.
 
+- **Noticias por RSS, solo en memoria.** Fuentes: CoinDesk, Cointelegraph y Decrypt (medios) + notas de
+  prensa de la SEC (primaria, filtradas por palabras cripto). Verificadas el 2026-10-17. No se scrapea
+  CoinMarketCap: sus Términos de Uso lo prohíben y su API ya no tiene tier gratis. Ripple/XRPL no publican
+  RSS, así que XRP no tiene fuente primaria del emisor: se declara en `data_gaps`. Ventana de 48 h en RAM
+  (`news/window.py`), poll cada 5 min. El grafo solo ve noticias con `fetched_ms <= ts` del ciclo (sin
+  look-ahead). Lo que vio cada corrida queda en su checkpoint (`run_id`). Nuevo nodo `news_analyst`
+  (modelo económico). En código: los ids citados se filtran contra la entrada, y
+  `material_primary_negative` exige citar una fuente primaria. El texto de terceros va delimitado y se trata
+  como datos. Versión `newsrss-v1`. Para medir si las noticias aportan, `xrp-acumulacion-v2` (con
+  noticias) corre en paralelo con `v1` (sin noticias). Fecha: 2026-10-17.
+
 ## Abiertas
 - ~~Plan de CoinGlass a contratar.~~ **Ya no aplica al core** — la fuente primaria pasó a WS nativos.
   Solo se retomaría si se implementa la fuente BYOK opcional (y ahí el plan lo elige el usuario).
