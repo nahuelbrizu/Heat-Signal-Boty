@@ -126,6 +126,16 @@
     `absorcion-flujo` (−4,99, falló como se esperaba: el laboratorio no inventa ganancias). Varias tienen bruto
     positivo y mueren por comisiones y slippage (break-even de 0,4–3,4 bps contra 7 bps de costo).
 
+- **Apertura del holdout de `donchian-ensemble-v1`: aprobada por el usuario; criterio fijado ANTES de abrir
+  (2026-10-17).** Procedimiento: la combinación se elige con la misma regla del walk-forward (mejor Sharpe en los
+  últimos 180 días antes del holdout). Las señales son causales; se simula solo [holdout_start, último dato) con la
+  posición vigente al arrancar. Se abre una vez (el registro lo bloquea). **Confirma si se cumplen las tres:**
+  (a) retorno neto > 0; (b) Sharpe > Sharpe de la canasta en la misma ventana; (c) p contra entradas al azar ≤ 0,10.
+  El umbral es más laxo que el del OOS porque 3 meses es una muestra chica.
+  **Si no confirma, la estrategia no pasa a paper trading con plata real; se puede seguir solo en paper para
+  juntar evidencia.** En cualquier caso, 3 meses no alcanzan para "probar": el paper trading sigue siendo
+  necesario.
+
 ## Abiertas
 - ~~Plan de CoinGlass a contratar.~~ **Ya no aplica al core** — la fuente primaria pasó a WS nativos.
   Solo se retomaría si se implementa la fuente BYOK opcional (y ahí el plan lo elige el usuario).
