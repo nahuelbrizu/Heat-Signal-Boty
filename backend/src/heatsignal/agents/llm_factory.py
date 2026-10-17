@@ -82,11 +82,48 @@ RETRY_DELAYS_S = (10.0, 30.0)
 # pedidos siguientes del mismo ciclo van directo al que responde (antes cada nodo perdia ~40 s reintentandolo).
 COOLDOWN_S = 600.0
 _cooldown_until: dict[str, float] = {}
+# Enfriamientos "duros": no se arreglan esperando un rato. Mientras duran el modelo se saltea SIEMPRE, incluso si
+# es el ultimo de la cadena (reintentar solo gasta tiempo y ensucia el log).
+#  - Cuota DIARIA de Gemini (capa gratis: 20 pedidos/dia/modelo; quotaId GenerateRequestsPerDay...): se renueva a
+#    la medianoche del Pacifico (America/Los_Angeles).
+#  - Anthropic sin credito: se reprueba cada hora (cuando se carga credito vuelve solo).
+DAILY_QUOTA_MARKERS = ("PerDay", "per day", "RequestsPerDay")
+NO_CREDIT_MARKERS = ("credit balance is too low",)
+NO_CREDIT_COOLDOWN_S = 3600.0
+_hard_cooldown: dict[str, str] = {}  # modelo -> motivo, mientras dure su enfriamiento
 
 
 def is_transient(exc: BaseException) -> bool:
     text = f"{type(exc).__name__} {exc}"
-    return any(m in text for m in TRANSIENT_MARKERS)
+    return any(m in text for m in TRANSIENT_MARKERS) and hard_cooldown(exc, 0.0) is None
+
+
+def _seconds_to_pacific_midnight(now_utc: float) -> float:
+    from datetime import datetime, timedelta
+    from zoneinfo import ZoneInfo
+
+    now = datetime.fromtimestamp(now_utc, ZoneInfo("America/Los_Angeles"))
+    nxt = (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+    return (nxt - now).total_seconds() + 120.0  # margen: la renovacion no es exacta al segundo
+
+
+def hard_cooldown(exc: BaseException, now_utc: float) -> tuple[float, str] | None:
+    """(segundos, motivo) si el error no se arregla reintentando: cuota diaria agotada o cuenta sin credito."""
+    text = f"{type(exc).__name__} {exc}"
+    if any(m in text for m in DAILY_QUOTA_MARKERS):
+        return _seconds_to_pacific_midnight(now_utc), "cuota diaria agotada (se renueva a medianoche del Pacifico)"
+    if any(m in text for m in NO_CREDIT_MARKERS):
+        return NO_CREDIT_COOLDOWN_S, "sin credito (se reprueba cada hora)"
+    return None
+
+
+def llm_status() -> dict[str, dict[str, Any]]:
+    """Modelos en enfriamiento ahora: {modelo: {"segundos": s, "motivo": m}} (para logs y el panel)."""
+    import time
+
+    now = time.monotonic()
+    return {n: {"segundos": round(u - now), "motivo": _hard_cooldown.get(n, "saturado / rate limit")}
+            for n, u in _cooldown_until.items() if u > now}
 
 
 class _FallbackStructured:
@@ -102,9 +139,11 @@ class _FallbackStructured:
         errors: list[str] = []
         for i, (name, runnable) in enumerate(self.pairs):
             until = _cooldown_until.get(name, 0.0)
-            if until > time.monotonic() and i < len(self.pairs) - 1:
-                errors.append(f"{name}: en enfriamiento ({until - time.monotonic():.0f}s)")
+            if until > time.monotonic() and (i < len(self.pairs) - 1 or name in _hard_cooldown):
+                errors.append(f"{name}: en enfriamiento {until - time.monotonic():.0f}s"
+                              + (f" ({_hard_cooldown[name]})" if name in _hard_cooldown else ""))
                 continue
+            _hard_cooldown.pop(name, None)
             for attempt in range(len(self.retry_delays) + 1):
                 try:
                     out = await runnable.ainvoke(messages, config, **kwargs)
@@ -114,6 +153,12 @@ class _FallbackStructured:
                     return out
                 except Exception as exc:  # noqa: BLE001 - cualquier falla pasa al siguiente proveedor
                     errors.append(f"{name}#{attempt + 1}: {type(exc).__name__}: {str(exc)[:160]}")
+                    hard = hard_cooldown(exc, time.time())
+                    if hard is not None:
+                        _cooldown_until[name] = time.monotonic() + hard[0]
+                        _hard_cooldown[name] = hard[1]
+                        logger.warning("LLM: %s %s; se saltea %.0f min", name, hard[1], hard[0] / 60)
+                        break
                     if is_transient(exc) and attempt < len(self.retry_delays):
                         delay = self.retry_delays[attempt]
                         logger.warning("LLM: %s saturado (%s); reintento en %.0fs", name, type(exc).__name__, delay)

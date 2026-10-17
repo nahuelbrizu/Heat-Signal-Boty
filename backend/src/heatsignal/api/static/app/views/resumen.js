@@ -62,6 +62,9 @@ function view(s, ctx) {
     kv([
       ["Estado", !a.enabled ? chip("apagado", "warn") : a.graph_enabled ? chip("habilitado", "ok") : chip("sin LLM (falta key)", "warn")],
       ["Proveedor LLM", providersText(a.llm_providers) || "—"],
+      ["Modelos en pausa", Object.keys(a.llm_cooldowns || {}).length
+        ? el("div", {}, Object.entries(a.llm_cooldowns).map(([m, c]) => el("div", { class: "small" }, chip(m, "warn"), " ", c.motivo, " · vuelve en " + dur(c.segundos))))
+        : chip("ninguno", "ok")],
       ["Intervalo", dur(a.interval_s)],
       ["Último ciclo", lc ? el("span", {}, statusChip(CYCLE_STATUS, lc.status), " ", el("a", { href: ctx.href("ciclos", [lc.run_id]) }, ago(lc.ts_ms, now))) : "—"],
       ["Próximo ciclo", isNum(a.next_cycle_eta_ms) ? (a.next_cycle_eta_ms > now ? "en " + dur((a.next_cycle_eta_ms - now) / 1000) : "en curso o atrasado") : "—"],

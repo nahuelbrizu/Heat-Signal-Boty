@@ -641,6 +641,7 @@ def register_api(app: FastAPI, ctx: PanelContext, build_id: str) -> None:  # noq
                 "enabled": ctx.analysis is not None,
                 "graph_enabled": ctx.analysis is not None and ctx.analysis.graph_enabled,
                 "llm_providers": [] if ctx.analysis is None else list(getattr(ctx.analysis, "llm_providers", [])),
+                "llm_cooldowns": _llm_cooldowns(),
                 "interval_s": interval_s,
                 "last_cycle": last_brief,
                 "last_ran": _brief(last_ran, True),
@@ -1603,3 +1604,11 @@ def register_api(app: FastAPI, ctx: PanelContext, build_id: str) -> None:  # noq
             "errors": errors,
         }
 
+
+def _llm_cooldowns() -> dict:
+    """Modelos LLM salteados ahora (cuota diaria agotada, sin credito, saturados) y por cuanto tiempo."""
+    try:
+        from ..agents.llm_factory import llm_status
+    except Exception:  # noqa: BLE001 - sin dependencias del grafo: no hay modelos que mostrar
+        return {}
+    return llm_status()

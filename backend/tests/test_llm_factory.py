@@ -212,3 +212,59 @@ async def test_model_in_cooldown_is_skipped_after_exhausting_retries() -> None:
     # 1er pedido: g35 x3 (reintentos) -> enfriamiento -> g38; 2do pedido: g35 salteado, directo a g38
     assert calls == ["g35", "g35", "g35", "g38", "g38"]
     llm_factory._cooldown_until.clear()
+
+
+async def test_daily_quota_and_no_credit_are_not_retried_and_skip_even_the_last_model() -> None:
+    from langchain_core.runnables import RunnableLambda
+
+    from heatsignal.agents import llm_factory
+    from heatsignal.agents.debate import SymbolArgument
+    from heatsignal.agents.llm_factory import AllProvidersFailedError, FallbackChatModel
+
+    llm_factory._cooldown_until.clear()
+    llm_factory._hard_cooldown.clear()
+    calls: list[str] = []
+    errors = {
+        "claude": "AnthropicInvalidRequestError 400 Your credit balance is too low to access the Anthropic API",
+        "g35": "GoogleRateLimitError 429 RESOURCE_EXHAUSTED You exceeded your current quota "
+               "quotaId: GenerateRequestsPerDayPerProjectPerModel-FreeTier",
+    }
+
+    class M:
+        def __init__(self, name):
+            self.model = name
+
+        def with_structured_output(self, schema, **kw):
+            def run(msgs):
+                calls.append(self.model)
+                raise RuntimeError(errors[self.model])
+            return RunnableLambda(run)
+
+    fm = FallbackChatModel(M("claude"), M("g35"))
+    for _ in range(2):
+        st = fm.with_structured_output(SymbolArgument)
+        st.retry_delays = (0.0, 0.0)
+        try:
+            await st.ainvoke(["x"])
+        except AllProvidersFailedError as exc:
+            last = str(exc)
+    # 1 intento cada uno (sin reintentos); en el 2do pedido los dos estan en enfriamiento duro, incluso el ultimo
+    assert calls == ["claude", "g35"]
+    assert "cuota diaria" in last and "sin credito" in last
+    st_ = llm_factory.llm_status()
+    assert st_["g35"]["segundos"] > 0 and "cuota diaria" in st_["g35"]["motivo"]
+    assert 3000 < st_["claude"]["segundos"] <= 3600
+    llm_factory._cooldown_until.clear()
+    llm_factory._hard_cooldown.clear()
+
+
+def test_daily_quota_cooldown_lasts_until_pacific_midnight() -> None:
+    from datetime import datetime, timezone
+
+    from heatsignal.agents.llm_factory import hard_cooldown
+
+    exc = RuntimeError("429 quotaId GenerateRequestsPerDayPerProjectPerModel-FreeTier")
+    # 2026-10-18 06:00 UTC = 23:00 PDT del 17 -> renueva en ~1 h (+ margen de 2 min)
+    secs, why = hard_cooldown(exc, datetime(2026, 10, 18, 6, 0, tzinfo=timezone.utc).timestamp())
+    assert abs(secs - 3720) < 1 and "cuota diaria" in why
+    assert hard_cooldown(RuntimeError("503 UNAVAILABLE high demand"), 0.0) is None
