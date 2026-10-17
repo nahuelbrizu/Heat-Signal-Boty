@@ -52,7 +52,8 @@ Tests: 401 pasando, 1 skipped (`backend/`, `.venv/bin/pytest -q`).
 ## Pendientes — código / técnicos
 
 Cuando el grafo empiece a correr:
-- [ ] Validar el grafo contra la API real (todo está testeado solo con modelos falsos).
+- [x] Grafo validado contra la API real (2026-10-17 03:01 UTC): 8 llamadas, ~90 s, `estado=ran`,
+      los 3 símbolos `no_hypothesis`. Falta medir el costo real por ciclo en la consola de Anthropic.
 - [ ] Manejar refusals del modelo y modelo de fallback (hoy un fallo del LLM = ciclo `error`, sin reintento
       de otro modelo).
 - [ ] Medir la RAM real de la ventana de 30 min de trades en la VM (estimado 160–250 MB).
