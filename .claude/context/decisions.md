@@ -188,3 +188,20 @@
 ```
 - **[Título] → [elección].** Sobre [alternativa]. Razón: [...]. Fecha: [...].
 ```
+
+- **Almacenamiento por niveles: caliente en la VM, frío en Drive (2026-10-18).** Pedido del usuario: "cuando la VM
+  esté al 80 % de su almacenamiento, que migre al Drive y lea de ahí". `history/archive.py` (`heatsignal-archive.timer`,
+  cada hora): si el uso de `data/` (como `df`) es >= 80 %, archiva lo más viejo hasta un uso proyectado de 70 %, en
+  orden: exports locales ya verificados en Drive → velas 1m > 60 días (re-descargables, igual se respaldan) →
+  bars_1m/liquidations/news > 60 días → checkpoints del grafo > 30 días (reconstruibles solo en parte: se respaldan
+  y el panel los relee de Drive). Cada unidad: CSV.gz con el formato del export (gzip determinista) → `rclone copyto
+  --immutable` a `gdrive:archive/...` → verificación tamaño + md5 → DELETE + alta en `archive_catalog` en UNA
+  transacción (el catálogo vive en la misma base histórica: un rango está en la VM o en Drive, nunca en los dos ni
+  en ninguno). Si algo falla, no se borra nada. Catálogo y corridas solo-agregar (triggers). **Nunca**
+  `heatsignal_eval.sqlite` ni `freqtrade_dryrun.sqlite` (el archivador se niega a arrancar si una ruta apunta ahí).
+  Lectura: `/api/history/bars`, `/liquidations` (con `since`) y `/api/cycles/{run_id}` bajan lo archivado a un cache
+  LRU de 300 MB (`data/cold_cache/`) en otro hilo; responden `source: local|drive|mixed`; Drive caído → 503,
+  `partial` solo si se pide. Espacio: la base hoy no tiene auto_vacuum; el primer `run` (o `archive vacuum`) hace
+  un VACUUM completo si hay ~2× la base libre y la deja en `auto_vacuum=INCREMENTAL`; si no alcanza, lo borrado se
+  reusa dentro de la base y el uso proyectado lo descuenta. Respaldo completo semanal: `heatsignal-backup.timer`
+  (domingo 03:00 UTC, `deploy/backup-vm.sh`, ahora no arranca sin espacio).

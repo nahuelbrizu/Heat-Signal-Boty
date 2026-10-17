@@ -34,6 +34,7 @@ de ingesta, en `127.0.0.1:8000` de la VM (se abre con túnel SSH). Todo es `GET`
 | `/api/history/summary` | escanea tablas grandes, pero cacheado 30 s y en otro hilo | al abrir la vista |
 | `/api/history/bars` | **pesado** para rangos largos (ver abajo); en otro hilo | a demanda; no pollear |
 | `/api/history/liquidations` | liviano a medio (en otro hilo) | a demanda |
+| `/api/history/storage` | liviano (catálogo + resumen cacheado 30 s) | al abrir Datos / Sistema |
 | `/api/lab`, `/api/lab/{id}` | lee archivos (se releen solo si cambian) | al abrir; cambian cuando se publica desde la PC |
 | `/api/paper` | lee la base de Freqtrade (read-only) + 4 llamadas a su API REST, en otro hilo; cache 10 s | al abrir la vista; cada 30 s si está abierta |
 | `/api/paper/compare` | lee un archivo (se relee solo si cambia) | al abrir; cambia una vez por semana |
@@ -279,7 +280,8 @@ Un ciclo con el razonamiento completo del grafo.
 ```
 
 - `report_source`: `cycle_log` | `checkpoint` (no estaba en el historial; se leyó del estado final del
-  grafo en `heatsignal_checkpoints.sqlite`, en otro hilo, y se cachea) | `null` (no hay razonamiento:
+  grafo en `heatsignal_checkpoints.sqlite`, en otro hilo, y se cachea) | `checkpoint_drive` (el checkpoint ya
+  se archivó: se bajó de `gdrive:archive/checkpoints/...` al cache; `notes` lo dice) | `null` (no hay razonamiento:
   `notes` dice por qué, p.ej. un `warmup`).
 - Un run que solo existe en los checkpoints responde con `detail: "(solo en checkpoints)"`.
 - 404 si no está en ningún lado; 400 si el `run_id` tiene caracteres raros.
@@ -398,6 +400,35 @@ Tope: **5000 barras** por exchange (`400` si el rango pide más: acortar o subir
   minuto del rango: ~1 s cada ~300 mil minutos-exchange en la PC (más lento en la e2-small). Ej.: `1h`
   sobre 60 días × 4 exchanges ≈ 1,5 s. Para vistas largas usar `1h` con rangos de semanas; no pollear.
 
+### Lectura fría (rangos archivados en Drive)
+
+Cuando el disco de la VM pasa el umbral (80 %), `history/archive.py` sube a Drive lo más viejo (más de 60 días) y
+lo borra de la base (ver "Almacenamiento por niveles" abajo). Si `since`/`until` tocan un rango archivado, el
+endpoint baja esos archivos de Drive en otro hilo (cache local LRU `data/cold_cache/`, 300 MB) y los combina
+con lo local. Los archivos son de un día UTC y las barras de hasta 1 h: cada barra sale entera de un solo lado.
+
+| Parámetro extra | Tipo | Default | Notas |
+|---|---|---|---|
+| `allow_partial` | bool | false | si un archivo de Drive falla: devolver el resto con `partial: true` en vez de 503 |
+
+Campos extra en la respuesta (también en `/api/history/liquidations`):
+
+```json
+{
+  "source": "mixed",
+  "archive": {"files": 3, "cache_hits": 1, "downloaded": 2, "seconds": 4.2, "errors": [],
+              "first_ms": 1786060800000, "end_ms": 1786320000000,
+              "note": "parte del rango vino de Drive (archivado): la primera consulta puede tardar; despues sale del cache"},
+  "partial": false, "partial_reasons": []
+}
+```
+
+- `source`: `local` (no tocó Drive; `archive` = null), `drive` (todo lo devuelto vino de Drive) o `mixed`.
+- Errores: Drive caído, archivo alterado (md5 distinto al del catálogo) o remoto sin configurar → **503** con el
+  motivo en `detail`; tardar más de 120 s → 503 (lo ya bajado queda en el cache para el reintento). Nunca datos
+  parciales en silencio: con `allow_partial=true` se devuelve lo legible y `partial: true` + `partial_reasons`.
+- Más de 120 archivos fríos en una consulta → 400 (acortar el rango).
+
 ## `GET /api/history/liquidations`
 
 | Parámetro | Tipo | Default | Notas |
@@ -420,9 +451,67 @@ Tope: **5000 barras** por exchange (`400` si el rango pide más: acortar o subir
 }
 ```
 
+Lectura fría: igual que `/api/history/bars` (`allow_partial`, `source`, `archive`, `partial`), pero **solo si se
+pasa `since`**: sin `since` el listado es de la base local y, si hay liquidaciones archivadas, viene
+`"archive_note": "hay N archivos de liquidaciones en Drive (...): pedir since para incluirlos"`. Con datos fríos,
+`total`/`totals` suman local + Drive y la página se arma sobre la unión ordenada por `ts_ms` descendente.
+
 `side` es el lado de la orden de liquidación (sell = long liquidado). `coverage`: `full` (Bybit) o
 `partial` (Binance ≤ 1/s por símbolo, OKX no informa el total): no comparar montos entre exchanges como si
 fueran completos. `totals` suma todo el filtro, no solo la página.
+
+## `GET /api/history/storage`
+
+Almacenamiento por niveles: disco con el umbral, qué hay en caliente (VM) y en frío (Drive) por tabla y el
+último archivado. 503 si la grabación está apagada.
+
+```json
+{
+  "disk": {"path": "/home/nahue/heatsignal/data", "total_bytes": 10330861568, "used_bytes": 6932578304,
+           "free_bytes": 2851401728, "used_pct": 70.86, "threshold_pct": 80.0, "target_pct": 70.0,
+           "over_threshold": false},
+  "tables": [
+    {"table": "bars_1m", "label": "Barras de 1 min (propias)",
+     "hot": {"rows": 2400000, "first_ms": 1786060800000, "last_ms": 1792262460000},
+     "cold": {"kind": "table", "files": 30, "rows": 1200000, "bytes": 41000000, "first_ms": 1781000000000,
+              "end_ms": 1786060800000, "last_archived_ms": 1792262460000, "first_at": "...", "end_at": "...",
+              "last_archived_at": "..."}},
+    {"table": "liquidations", "...": "..."}, {"table": "news", "...": "..."},
+    {"table": "klines_1m", "hot": {"rows": 600000, "symbols": 7, "first_ms": 0, "last_ms": 0}, "cold": null},
+    {"table": "checkpoints", "hot": {"path": "...", "exists": true, "size_bytes": 8192000}, "cold": null},
+    {"table": "export", "hot": {"days": 3, "last_day": "2026-10-17"}, "cold": {"files": 120, "...": "..."}}
+  ],
+  "last_run": {"run_id": "arch-1792262460000", "started_ms": 0, "finished_ms": 0, "started_at": "...",
+               "finished_at": "...", "status": "ok", "threshold_pct": 80.0, "target_pct": 70.0,
+               "used_pct_before": 80.4, "used_pct_after": 69.9, "freed_bytes": 1100000000,
+               "detail": {"archived": ["klines 2025-10 (...)"], "errors": [], "vacuum": []}},
+  "runs": ["... ultimas 5 ..."],
+  "last_check": {"mode": "run", "ts_ms": 0, "status": "skipped", "note": "uso 70.9 % < umbral 80.0 %: ..."},
+  "history_db": {"auto_vacuum": "none", "freelist_bytes": 0, "size_bytes": 523976704},
+  "cache": {"dir": ".../data/cold_cache", "files": 2, "bytes": 2400000, "cap_bytes": 314572800},
+  "remote": "gdrive:archive", "remote_error": null, "cold_reads": true,
+  "keep_days": 60, "checkpoint_keep_days": 30,
+  "protected": ["heatsignal_eval.sqlite", "freqtrade_dryrun.sqlite"], "summary_age_s": 3.1
+}
+```
+
+- `used_pct` es el de `df`: usado / (usado + disponible). `threshold_pct`/`target_pct` salen de
+  `HEATSIGNAL_ARCHIVE_THRESHOLD` / `HEATSIGNAL_ARCHIVE_TARGET` (default 80 / 70).
+- `cold` es `null` si nunca se archivó esa tabla. `cold.end_ms` es exclusivo. `export` en frío = días cuya carpeta
+  local `data/export/YYYY/MM/DD` se verificó contra Drive y se borró de la VM.
+- `last_run` = última corrida que hizo algo (o falló); `last_check` = último `archive run` (aunque no hiciera
+  nada), leído de `data/archive_status.json`. `status`: `ok`, `nothing`, `partial` (no llegó al objetivo con lo
+  elegible), `error` (no se borró nada de la unidad que falló), `skipped` (bajo el umbral).
+- `history_db.auto_vacuum`: `none` = lo borrado queda como espacio libre dentro de la base (se reusa) hasta un
+  VACUUM completo; `incremental` = se devuelve al disco en cada corrida.
+
+### Almacenamiento por niveles (resumen)
+
+`python -m heatsignal.history.archive [check|run|status|vacuum]` en la VM (`heatsignal-archive.timer`, cada hora).
+Orden: exports locales ya verificados en Drive → velas 1m (re-descargables) → bars_1m/liquidations/news → checkpoints
+del grafo. Cada unidad: CSV.gz (mismo formato que el export) → `rclone copyto --immutable` a `gdrive:archive/...`
+→ verificación de tamaño + md5 → DELETE + alta en `archive_catalog` en una sola transacción. Nunca
+`heatsignal_eval.sqlite` ni `freqtrade_dryrun.sqlite`. Detalle en el docstring de `history/archive.py`.
 
 ## `GET /api/lab`
 
@@ -640,6 +729,8 @@ Snapshot de mercado desde la ventana en memoria (solo símbolos configurados; 40
 - `last_trades` en orden de llegada (más nuevo primero); `last_liquidations` por hora del evento.
 
 ## `GET /api/system`
+
+`disk` trae además `used_bytes`, `used_pct` (como `df`), `threshold_pct` y `target_pct` del archivado a Drive.
 
 ```json
 {

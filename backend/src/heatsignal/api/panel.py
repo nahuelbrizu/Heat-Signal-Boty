@@ -108,6 +108,7 @@ class PanelContext:
     settings: dict[str, Any] = field(default_factory=dict)  # intervalos y retenciones para /api/system
     lab_requests: Any = None  # evaluation.lab_requests.LabRequestStore: cola "Mandar al laboratorio"
     paper: PaperSources | None = None  # paper trading (Freqtrade dry-run): base, API REST y comparacion publicada
+    archive: Any = None  # history.cold.ColdReader: lectura fria de lo archivado en Drive (almacenamiento por niveles)
 
 
 @dataclass

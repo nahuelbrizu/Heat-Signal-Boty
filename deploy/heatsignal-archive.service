@@ -1,0 +1,30 @@
+# Almacenamiento por niveles: si el disco de data/ esta >= 80 %, sube lo mas viejo a gdrive:archive/..., lo verifica
+# (tamano + md5) y recien ahi lo borra de la VM. Ver backend/src/heatsignal/history/archive.py.
+# Lo dispara heatsignal-archive.timer (cada hora). Bajo el umbral no hace nada (solo deja data/archive_status.json).
+# Nunca toca heatsignal_eval.sqlite ni freqtrade_dryrun.sqlite.
+[Unit]
+Description=HeatSignal archive: datos viejos a Drive cuando el disco pasa el umbral
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=nahue
+WorkingDirectory=/home/nahue/heatsignal/backend
+EnvironmentFile=-/home/nahue/heatsignal/.env
+Environment=PYTHONPATH=/home/nahue/heatsignal/backend/src
+Environment=HEATSIGNAL_HISTORY_DB=/home/nahue/heatsignal/data/heatsignal_history.sqlite
+Environment=HEATSIGNAL_CHECKPOINT_DB=/home/nahue/heatsignal/data/heatsignal_checkpoints.sqlite
+Environment=HEATSIGNAL_EXPORT_DIR=/home/nahue/heatsignal/data/export
+# Umbral / objetivo / dias a conservar: se pueden pisar en .env (HEATSIGNAL_ARCHIVE_THRESHOLD, _TARGET, _KEEP_DAYS)
+ExecStart=/home/nahue/heatsignal/backend/.venv/bin/python -m heatsignal.history.archive run
+# Un mes de velas 1m (~300 mil filas) se escribe en streaming: el pico de RAM es chico. rclone suma ~50 MB.
+MemoryMax=300M
+Nice=10
+IOSchedulingClass=idle
+TimeoutStartSec=3h
+ProtectSystem=strict
+# rclone renueva el token de Drive y lo reescribe en su config
+ReadWritePaths=/home/nahue/heatsignal -/home/nahue/.config/rclone
+PrivateTmp=true
+NoNewPrivileges=true

@@ -1,0 +1,10 @@
+[Unit]
+Description=HeatSignal archive cada hora (solo actua si el disco esta >= umbral)
+
+[Timer]
+OnCalendar=*-*-* *:45:00 UTC
+Persistent=true
+RandomizedDelaySec=120
+
+[Install]
+WantedBy=timers.target

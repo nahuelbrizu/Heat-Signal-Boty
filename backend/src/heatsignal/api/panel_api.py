@@ -60,6 +60,9 @@ LAB_ID = re.compile(r"^[a-z0-9][a-z0-9._-]{0,99}$")  # = lab.publish.SAFE_ID (si
 RUN_ID = re.compile(r"^[A-Za-z0-9._:-]{1,120}$")
 SUMMARY_TTL_S = 10.0
 CHECKPOINT_TIMEOUT_S = 15.0
+COLD_TIMEOUT_S = 120.0  # lectura fria (Drive): mas que esto -> 503 (lo bajado queda en cache para el reintento)
+MAX_COLD_FILES = 120    # archivos frios por consulta (~4 meses de dias): acota descarga, disco y memoria
+COLD_NOTE = "parte del rango vino de Drive (archivado): la primera consulta puede tardar; despues sale del cache"
 CALIBRATION_BINS = 10
 
 # ---- acciones (POST) ------------------------------------------------------------------------------
@@ -753,6 +756,18 @@ def register_api(app: FastAPI, ctx: PanelContext, build_id: str) -> None:  # noq
 
     _checkpoint_cache: dict[str, dict[str, Any] | None] = {}
 
+    def _cold_checkpoint(run_id: str) -> dict[str, Any] | None:
+        from ..pipeline.cycle_log import ts_from_run_id
+
+        ms = ts_from_run_id(run_id)
+        if not ms:
+            return None
+        cold_path, _ = ctx.archive.checkpoint_file(ms)  # ColdError -> se informa como error del respaldo
+        if cold_path is None:
+            return None
+        found = checkpoint_report_sync(cold_path, run_id)
+        return None if found is None else {**found, "from_drive": True}
+
     async def _from_checkpoint(run_id: str) -> dict[str, Any] | None:
         if ctx.checkpoint_db is None:
             return None
@@ -761,6 +776,8 @@ def register_api(app: FastAPI, ctx: PanelContext, build_id: str) -> None:  # noq
         try:
             found = await asyncio.wait_for(
                 asyncio.to_thread(checkpoint_report_sync, Path(ctx.checkpoint_db), run_id), CHECKPOINT_TIMEOUT_S)
+            if found is None and ctx.archive is not None:  # checkpoints viejos: archivados en Drive
+                found = await asyncio.wait_for(asyncio.to_thread(_cold_checkpoint, run_id), COLD_TIMEOUT_S)
         except Exception as exc:  # noqa: BLE001 - el respaldo nunca tumba el endpoint: se informa
             return {"error": f"{type(exc).__name__}: {exc}"[:300]}
         if len(_checkpoint_cache) > 64:
@@ -782,7 +799,9 @@ def register_api(app: FastAPI, ctx: PanelContext, build_id: str) -> None:  # noq
             if ck is not None and "error" in ck:
                 notes.append(f"no se pudo leer el checkpoint: {ck['error']}")
             elif ck is not None:
-                source = "checkpoint"
+                source = "checkpoint_drive" if ck.get("from_drive") else "checkpoint"
+                if ck.get("from_drive"):
+                    notes.append("razonamiento leido de los checkpoints archivados en Drive")
                 if row is None:
                     from ..pipeline.cycle_log import ts_from_run_id
 
@@ -895,6 +914,38 @@ def register_api(app: FastAPI, ctx: PanelContext, build_id: str) -> None:  # noq
 
     # ---------------------------------------------------------------- historia
 
+    async def _cold_read(table: str, a: int | None, b: int | None, work: Callable[[list[Any]], Any]) -> tuple[Any, Any]:
+        """Lectura fria (Drive) de lo archivado de `table` en [a, b): (resultado, ColdRead) o (None, None).
+
+        Corre en un hilo (rclone + gzip + sqlite). Drive caido / archivo alterado -> 503 claro; nunca datos
+        parciales en silencio (con allow_partial, `work` devuelve lo que pudo y los errores van en la respuesta)."""
+        if ctx.archive is None:
+            return None, None
+        entries = await asyncio.to_thread(ctx.archive.entries, table, a, b)
+        if not entries:
+            return None, None
+        if len(entries) > MAX_COLD_FILES:
+            raise HTTPException(status_code=400, detail=(
+                f"el rango toca {len(entries)} archivos archivados en Drive (maximo {MAX_COLD_FILES} por consulta): "
+                "acortar since/until"))
+        from ..history.cold import ColdError
+
+        try:
+            return await asyncio.wait_for(asyncio.to_thread(work, entries), COLD_TIMEOUT_S)
+        except TimeoutError:
+            raise HTTPException(status_code=503, detail=(
+                f"Drive tardo mas de {COLD_TIMEOUT_S:.0f} s en entregar lo archivado de {table}; reintentar en un "
+                "rato (lo ya bajado queda en el cache)")) from None
+        except ColdError as exc:
+            raise HTTPException(status_code=503, detail=f"no se pudo leer de Drive lo archivado de {table}: {exc}") from None
+
+    def _cold_fields(meta: Any, *, has_local: bool) -> dict[str, Any]:
+        """`source` local|drive|mixed, detalle del archivo frio y `partial` con motivos si algo no se leyo."""
+        if meta is None:
+            return {"source": "local", "archive": None, "partial": False, "partial_reasons": []}
+        return {"source": "mixed" if has_local else "drive", "archive": {**meta.meta(), "note": COLD_NOTE},
+                "partial": bool(meta.errors), "partial_reasons": list(meta.errors)}
+
     @app.get("/api/history/summary")
     async def history_summary() -> dict[str, Any]:
         _require_history()
@@ -916,6 +967,7 @@ def register_api(app: FastAPI, ctx: PanelContext, build_id: str) -> None:  # noq
         since: str | None = Query(None, description=f"default: until - {DEFAULT_BARS} barras"),
         until: str | None = Query(None, description="default: ahora"),
         combine: bool = Query(False, description="sumar exchanges en una sola serie (exchange='all')"),
+        allow_partial: bool = Query(False, description="si un archivo de Drive falla: devolver el resto marcado partial"),
     ) -> dict[str, Any]:
         path = _require_history()
         sym = internal_symbol(symbol)
@@ -932,13 +984,23 @@ def register_api(app: FastAPI, ctx: PanelContext, build_id: str) -> None:  # noq
                 f"rango demasiado grande: {n_bars} barras de {tf} (maximo {MAX_BARS}); "
                 "acortar since/until o usar una temporalidad mayor"))
         rows = await asyncio.to_thread(ro_query, path, lambda c: query_bars(c, sym, exchange, a, b, tf_ms))
+
+        def keep(r: tuple) -> bool:  # fila de bars_1m: (exchange, symbol, minute_ms, ...)
+            return r[1] == sym and (exchange is None or r[0] == exchange) and a <= r[2] < b
+
+        # archivos frios de un dia UTC y barras de hasta 1 h: cada barra sale entera de un solo archivo
+        cold_rows, meta = await _cold_read("bars_1m", a, b, lambda es: ctx.archive.per_file(
+            "bars_1m", es, keep, lambda m: query_bars(m, sym, exchange, a, b, tf_ms), allow_partial=allow_partial))
+        if cold_rows:
+            rows = sorted([*rows, *cold_rows], key=lambda r: (r[1], r[0]))
         bars = [bar_json(r) for r in rows]
         exchanges = sorted({x["exchange"] for x in bars})
         if combine:
             bars = combine_bars(bars)
         return {"symbol": sym, "tf": tf, "tf_ms": tf_ms, "since_ms": a, "since_at": iso(a), "until_ms": b,
                 "until_at": iso(b), "exchange": exchange, "combined": combine, "exchanges": exchanges,
-                "count": len(bars), "bars": bars}
+                "count": len(bars), "bars": bars,
+                **_cold_fields(meta, has_local=len(rows) > len(cold_rows or []))}
 
     @app.get("/api/history/liquidations")
     async def history_liquidations(
@@ -950,9 +1012,11 @@ def register_api(app: FastAPI, ctx: PanelContext, build_id: str) -> None:  # noq
         min_usd: float = Query(0.0, ge=0),
         limit: int = Query(200, ge=1, le=MAX_LIQ_PAGE),
         offset: int = Query(0, ge=0, le=MAX_OFFSET),
+        allow_partial: bool = Query(False, description="si un archivo de Drive falla: devolver el resto marcado partial"),
     ) -> dict[str, Any]:
         path = _require_history()
         a, b = time_range(since, until)
+        sym = internal_symbol(symbol) if symbol else None
         where, params = [], []
         if symbol:
             where.append("symbol = ?")
@@ -974,21 +1038,122 @@ def register_api(app: FastAPI, ctx: PanelContext, build_id: str) -> None:  # noq
             params.append(b)
         clause = f"WHERE {' AND '.join(where)}" if where else ""
 
-        def work(conn: Any) -> tuple[tuple, list[tuple]]:
+        def work(conn: Any, lim: int = limit, off: int = offset) -> tuple[tuple, list[tuple]]:
             agg = conn.execute(
                 "SELECT COUNT(*), SUM(CASE WHEN side = 'sell' THEN notional_usd ELSE 0 END), "
                 f"SUM(CASE WHEN side = 'buy' THEN notional_usd ELSE 0 END) FROM liquidations {clause}", params).fetchone()
             rows = conn.execute(
                 "SELECT exchange, symbol, ts_ms, side, price, qty, notional_usd, coverage FROM liquidations "
-                f"{clause} ORDER BY ts_ms DESC LIMIT ? OFFSET ?", [*params, limit, offset]).fetchall()
+                f"{clause} ORDER BY ts_ms DESC LIMIT ? OFFSET ?", [*params, lim, off]).fetchall()
             return agg, rows
 
-        agg, rows = await asyncio.to_thread(ro_query, path, work)
+        meta = None
+        archive_note = None
+        local_n = 0
+        if a is None:  # sin `since` no se baja nada de Drive: se avisa si hay historia archivada
+            if ctx.archive is not None:
+                older = await asyncio.to_thread(ctx.archive.entries, "liquidations", None, b)
+                if older:
+                    archive_note = (f"hay {len(older)} archivos de liquidaciones en Drive "
+                                    f"({iso(older[0].start_ms)} a {iso(older[-1].end_ms)}): pedir `since` para incluirlos")
+            agg, rows = await asyncio.to_thread(ro_query, path, work)
+        else:
+            want_side = None if side is None else ("sell" if side == "long" else "buy")
+
+            def keep(r: tuple) -> bool:  # (exchange, symbol, ts_ms, side, price, qty, notional_usd, coverage)
+                return ((sym is None or r[1] == sym) and (exchange is None or r[0] == exchange)
+                        and (want_side is None or r[3] == want_side) and r[6] >= min_usd
+                        and r[2] >= a and (b is None or r[2] < b))
+
+            def cold_work(entries: list[Any]) -> tuple[tuple[tuple, list[tuple]], Any]:
+                mem, res = ctx.archive.combined("liquidations", entries, keep, allow_partial=allow_partial)
+                try:
+                    return work(mem, offset + limit, 0), res
+                finally:
+                    mem.close()
+
+            cold, meta = await _cold_read("liquidations", a, b, cold_work)
+            if cold is None:
+                agg, rows = await asyncio.to_thread(ro_query, path, work)
+            else:
+                lagg, lrows = await asyncio.to_thread(ro_query, path, lambda c: work(c, offset + limit, 0))
+                cagg, crows = cold
+                agg = (int(lagg[0]) + int(cagg[0]), (lagg[1] or 0.0) + (cagg[1] or 0.0), (lagg[2] or 0.0) + (cagg[2] or 0.0))
+                rows = sorted([*lrows, *crows], key=lambda r: r[2], reverse=True)[offset:offset + limit]
+                local_n = int(lagg[0])
         items = [{"exchange": e, "symbol": s, "ts_ms": t, "ts_at": iso(t), "side": sd,
                   "position": "long" if sd == "sell" else "short", "price": p, "qty": qty, "notional_usd": n,
                   "coverage": cov} for e, s, t, sd, p, qty, n, cov in rows]
+        extra = _cold_fields(meta, has_local=meta is None or local_n > 0)
+        if archive_note:
+            extra["archive_note"] = archive_note
         return page(int(agg[0]), limit, offset, items,
-                    totals={"n": int(agg[0]), "long_usd": agg[1] or 0.0, "short_usd": agg[2] or 0.0})
+                    totals={"n": int(agg[0]), "long_usd": agg[1] or 0.0, "short_usd": agg[2] or 0.0}, **extra)
+
+    @app.get("/api/history/storage")
+    async def history_storage() -> dict[str, Any]:
+        """Almacenamiento por niveles: disco con umbral, caliente (VM) vs frio (Drive) por tabla, ultimo archivado."""
+        path = _require_history()
+        from ..history import archive as arch
+        from ..history import catalog as cat
+        from ..history.store import open_readonly
+
+        cfg = arch.ArchiveConfig.from_env(history_db=path, checkpoints_db=ctx.checkpoint_db)
+
+        def work() -> dict[str, Any]:
+            conn = open_readonly(path)
+            try:
+                cold = cat.summary(conn)
+                runs = cat.last_runs(conn)
+                vac = {"auto_vacuum": {0: "none", 1: "full", 2: "incremental"}.get(
+                    int(conn.execute("PRAGMA auto_vacuum").fetchone()[0]), "?"),
+                       "freelist_bytes": arch.freelist_bytes(conn)}
+            finally:
+                conn.close()
+            return {"disk": arch.disk_info(cfg.data_dir), "cold": cold, "runs": runs, "vacuum": vac,
+                    "last_check": arch.read_status_file(cfg.data_dir),
+                    "cache": ctx.archive.cache.stats() if ctx.archive is not None else None}
+
+        info = await asyncio.to_thread(work)
+        hist = await _history_summary(ctx)
+        hot = hist[1] if hist else {}
+        kl = hot.get("klines") or []
+        kl1 = [k for k in kl if k.get("interval") == "1m"]
+        hot_tables = {
+            "bars_1m": hot.get("bars_1m"), "liquidations": hot.get("liquidations"), "news": hot.get("news"),
+            "klines_1m": {"rows": sum(k["rows"] for k in kl1), "symbols": len(kl1),
+                          "first_ms": min((k["first_ms"] for k in kl1), default=None),
+                          "last_ms": max((k["last_ms"] for k in kl1), default=None)} if kl1 else None,
+            "checkpoints": _file_info(Path(ctx.checkpoint_db)) if ctx.checkpoint_db is not None else None,
+            "export": {"days": hot.get("export_days"), "last_day": hot.get("last_export_day")},
+        }
+        labels = {"bars_1m": "Barras de 1 min (propias)", "liquidations": "Liquidaciones", "news": "Noticias",
+                  "klines_1m": "Velas 1m de Binance", "checkpoints": "Checkpoints del grafo",
+                  "export": "Export diario local (data/export)"}
+        cold = info["cold"]
+        tables = []
+        for key, label in labels.items():
+            c = cold.get("export_local") if key == "export" else cold.get(key)
+            if c:
+                c = {**c, "first_at": iso(c["first_ms"]), "end_at": iso(c["end_ms"]),
+                     "last_archived_at": iso(c["last_archived_ms"])}
+            tables.append({"table": key, "label": label, "hot": hot_tables.get(key), "cold": c})
+        d = info["disk"]
+        runs = [{**r, "started_at": iso(r["started_ms"]), "finished_at": iso(r["finished_ms"])} for r in info["runs"]]
+        return {
+            "disk": {**d, "threshold_pct": cfg.threshold_pct, "target_pct": cfg.target_pct,
+                     "over_threshold": d["used_pct"] >= cfg.threshold_pct},
+            "tables": tables,
+            "last_run": runs[0] if runs else None, "runs": runs, "last_check": info["last_check"],
+            "history_db": {**info["vacuum"], "size_bytes": hot.get("size_bytes")},
+            "cache": info["cache"],
+            "remote": arch.join_remote(cfg.remote_base, cfg.archive_prefix) if cfg.remote_base else None,
+            "remote_error": None if ctx.archive is None else ctx.archive.remote_error,
+            "cold_reads": ctx.archive is not None,
+            "keep_days": cfg.keep_days, "checkpoint_keep_days": cfg.checkpoint_keep_days,
+            "protected": list(arch.PROTECTED_NAMES),
+            "summary_age_s": round(time.time() - hist[0], 1) if hist else None,
+        }
 
     # ---------------------------------------------------------------- acciones: analizar ahora
 
@@ -1390,7 +1555,12 @@ def register_api(app: FastAPI, ctx: PanelContext, build_id: str) -> None:  # noq
             import shutil
 
             du = shutil.disk_usage(data_dir)
-            disk = {"path": str(data_dir), "total_bytes": du.total, "free_bytes": du.free}
+            from ..history.archive import ArchiveConfig
+
+            thr = ArchiveConfig.from_env(history_db=data_dir / "x.sqlite")
+            disk = {"path": str(data_dir), "total_bytes": du.total, "free_bytes": du.free, "used_bytes": du.used,
+                    "used_pct": round(100.0 * du.used / (du.used + du.free), 2) if du.used + du.free else 0.0,
+                    "threshold_pct": thr.threshold_pct, "target_pct": thr.target_pct}
 
         export = None
         if ctx.history is not None:

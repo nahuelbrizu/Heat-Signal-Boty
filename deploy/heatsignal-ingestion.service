@@ -24,7 +24,8 @@ RestartSec=5
 MemoryMax=700M
 # Sin escritura a disco salvo el directorio del proyecto (base de hipotesis en data/).
 ProtectSystem=strict
-ReadWritePaths=/home/nahue/heatsignal
+# rclone (lectura fria del panel: rangos archivados en Drive) renueva el token y lo reescribe en su config
+ReadWritePaths=/home/nahue/heatsignal -/home/nahue/.config/rclone
 PrivateTmp=true
 NoNewPrivileges=true
 

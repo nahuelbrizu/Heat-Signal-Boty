@@ -5,6 +5,14 @@
 set -euo pipefail
 DATA="$HOME/heatsignal/data"
 STAMP="$(date -u +%Y-%m-%dT%H%MZ)"
+# La copia temporal de las bases va al mismo disco: si no hay lugar para la mas grande x1.5 (+256 MB), no se arranca
+# (con el disco lleno es peor llenarlo del todo; el archivado por niveles libera espacio primero).
+NEED=$(( $(du -cb "$DATA"/*.sqlite | tail -1 | cut -f1) * 3 / 2 + 268435456 ))
+FREE=$(df -B1 --output=avail "${TMPDIR:-/tmp}" | tail -1 | tr -d ' ')
+if [ "$FREE" -lt "$NEED" ]; then
+  echo "sin espacio para el respaldo: libres $FREE B, hacen falta ~$NEED B" >&2
+  exit 1
+fi
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 DEST="gdrive:backups/vm/$STAMP"

@@ -86,6 +86,46 @@ CREATE TABLE IF NOT EXISTS klines (
     taker_buy_quote REAL    NOT NULL,
     PRIMARY KEY (exchange, symbol, interval, open_time_ms)
 );
+
+-- Catalogo del almacenamiento por niveles (history/archive.py): que rangos ya NO estan en esta base porque se
+-- archivaron en Drive (verificados). Vive en esta misma base para que el DELETE de las filas y el alta en el
+-- catalogo sean UNA transaccion: un rango esta en el catalogo si y solo si se borro de aca. Solo-agregar.
+CREATE TABLE IF NOT EXISTS archive_catalog (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    kind         TEXT    NOT NULL,      -- 'table' (filas borradas) | 'export_local' | 'checkpoints'
+    table_name   TEXT    NOT NULL,      -- bars_1m | liquidations | news | klines_1m | export | checkpoints
+    symbols      TEXT    NOT NULL,      -- 'BTC-USDT,XRP-USDT' ('' si no aplica)
+    start_ms     INTEGER NOT NULL,      -- rango [start_ms, end_ms) UTC
+    end_ms       INTEGER NOT NULL,
+    rows         INTEGER NOT NULL,
+    remote_path  TEXT    NOT NULL,      -- 'gdrive:archive/history/2026/08/17/bars_1m.csv.gz'
+    bytes        INTEGER NOT NULL,
+    md5          TEXT    NOT NULL,
+    archived_ms  INTEGER NOT NULL,
+    run_id       TEXT    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_archive_catalog_table ON archive_catalog (table_name, start_ms);
+CREATE TRIGGER IF NOT EXISTS archive_catalog_no_update BEFORE UPDATE ON archive_catalog
+BEGIN SELECT RAISE(ABORT, 'archive_catalog es solo-agregar'); END;
+CREATE TRIGGER IF NOT EXISTS archive_catalog_no_delete BEFORE DELETE ON archive_catalog
+BEGIN SELECT RAISE(ABORT, 'archive_catalog es solo-agregar'); END;
+
+CREATE TABLE IF NOT EXISTS archive_runs (
+    run_id          TEXT PRIMARY KEY,
+    started_ms      INTEGER NOT NULL,
+    finished_ms     INTEGER NOT NULL,
+    status          TEXT    NOT NULL,   -- ok | error | partial
+    threshold_pct   REAL    NOT NULL,
+    target_pct      REAL    NOT NULL,
+    used_pct_before REAL,
+    used_pct_after  REAL,
+    freed_bytes     INTEGER NOT NULL DEFAULT 0,
+    detail          TEXT    NOT NULL    -- JSON: unidades archivadas, errores, vacuum
+);
+CREATE TRIGGER IF NOT EXISTS archive_runs_no_update BEFORE UPDATE ON archive_runs
+BEGIN SELECT RAISE(ABORT, 'archive_runs es solo-agregar'); END;
+CREATE TRIGGER IF NOT EXISTS archive_runs_no_delete BEFORE DELETE ON archive_runs
+BEGIN SELECT RAISE(ABORT, 'archive_runs es solo-agregar'); END;
 """
 
 
@@ -224,8 +264,8 @@ def summarize(conn: sqlite3.Connection, path: str | Path) -> dict[str, Any]:
         return conn.execute(sql).fetchone()
 
     bars = one("SELECT COUNT(*), MIN(minute_ms), MAX(minute_ms) FROM bars_1m")
-    liqs = one("SELECT COUNT(*), MAX(ts_ms) FROM liquidations")
-    news = one("SELECT COUNT(*), MAX(fetched_ms) FROM news")
+    liqs = one("SELECT COUNT(*), MAX(ts_ms), MIN(ts_ms) FROM liquidations")
+    news = one("SELECT COUNT(*), MAX(fetched_ms), MIN(fetched_ms) FROM news")
     klines = conn.execute(
         "SELECT exchange, symbol, interval, COUNT(*), MIN(open_time_ms), MAX(open_time_ms) "
         "FROM klines GROUP BY exchange, symbol, interval ORDER BY symbol").fetchall()
@@ -234,8 +274,8 @@ def summarize(conn: sqlite3.Connection, path: str | Path) -> dict[str, Any]:
         "path": str(path),
         "size_bytes": size,
         "bars_1m": {"rows": bars[0], "first_ms": bars[1], "last_ms": bars[2]},
-        "liquidations": {"rows": liqs[0], "last_ms": liqs[1]},
-        "news": {"rows": news[0], "last_ms": news[1]},
+        "liquidations": {"rows": liqs[0], "first_ms": liqs[2], "last_ms": liqs[1]},
+        "news": {"rows": news[0], "first_ms": news[2], "last_ms": news[1]},
         "klines": [
             {"exchange": e, "symbol": s, "interval": i, "rows": n, "first_ms": a, "last_ms": b}
             for e, s, i, n, a, b in klines

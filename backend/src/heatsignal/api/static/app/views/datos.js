@@ -5,9 +5,10 @@ import {
   el, clear, api, errorBox, when, int, usd, bytes, day, dur, price, funding, card, table, pageHead, loading, chip, kv, field, select, pager, seg, stat, isNum, ago,
 } from "../core.js";
 import { makeChart, disposeChart, css, toChartTime, pricePrecision, legend } from "../charts.js";
+import { storageCard, coldNote } from "../storage-ui.js";
 
 const TF = { "1m": 60e3, "5m": 300e3, "15m": 900e3, "1h": 3600e3 };
-const RANGES = [["6h", 6 * 3600e3, "6 h"], ["24h", 24 * 3600e3, "24 h"], ["3d", 3 * 86400e3, "3 días"], ["7d", 7 * 86400e3, "7 días"], ["30d", 30 * 86400e3, "30 días"]];
+const RANGES = [["6h", 6 * 3600e3, "6 h"], ["24h", 24 * 3600e3, "24 h"], ["3d", 3 * 86400e3, "3 días"], ["7d", 7 * 86400e3, "7 días"], ["30d", 30 * 86400e3, "30 días"], ["90d", 90 * 86400e3, "90 días"], ["180d", 180 * 86400e3, "180 días"]];
 const EXCHANGES = [["", "combinado"], ["binance", "binance"], ["bybit", "bybit"], ["okx", "okx"], ["hyperliquid", "hyperliquid"]];
 const MAX_BARS = 5000;
 
@@ -19,13 +20,14 @@ export async function mount(root, ctx) {
     tf: TF[q.get("tf")] ? q.get("tf") : "5m", exchange: q.get("exchange") || "", range: RANGES.some((r) => r[0] === q.get("range")) ? q.get("range") : "24h",
   };
   const lq = { side: "", min_usd: "", offset: 0 };
-  const sumBox = el("div", {}, loading()), ctrl = el("div"), chartNode = el("div", { class: "chart tall", role: "img", "aria-label": "Barras guardadas" });
+  const sumBox = el("div", {}, loading()), storeBox = el("div"), ctrl = el("div"), chartNode = el("div", { class: "chart tall", role: "img", "aria-label": "Barras guardadas" });
   const barsMsg = el("div"), barsStats = el("div", { class: "stats", style: { marginBottom: "12px" } }), liqCtrl = el("div"), liqBox = el("div");
   const st = { chart: null, series: {} };
 
   clear(root,
     pageHead("Datos guardados", "Lo que la VM viene grabando minuto a minuto (base SQLite propia), con respaldo diario."),
     sumBox,
+    storeBox,
     card("Explorador de barras", "agregados por minuto de la ingesta (no son velas de un exchange)", ctrl, barsMsg, barsStats, chartNode,
       legend([[css("--buy"), "vela alcista", true], [css("--sell"), "vela bajista", true], [css("--s1"), "delta de flujo taker (compra − venta)", true],
         [css("--s4"), "shorts liquidados (arriba)", true], [css("--s2"), "longs liquidados (abajo)", true]]),
@@ -72,6 +74,12 @@ export async function mount(root, ctx) {
     } catch (e) { const b = errorBox(e, "el resumen histórico"); if (b) clear(sumBox, b); }
   }
 
+  // ---------------------------------------------------------------- caliente (VM) vs frio (Drive)
+  async function loadStorage() {
+    try { clear(storeBox, storageCard(await api("/api/history/storage", null, ctx.signal))); }
+    catch (e) { const b = errorBox(e, "el estado del almacenamiento"); if (b) clear(storeBox, b); }
+  }
+
   // ---------------------------------------------------------------- barras
   function ensureChart() {
     if (st.chart) return true;
@@ -104,7 +112,7 @@ export async function mount(root, ctx) {
     }
     if (!ensureChart()) return;
     const my = ++seq;
-    clear(barsMsg, loading("Consultando la base (puede tardar en rangos largos)…"));
+    clear(barsMsg, loading("Consultando la base (puede tardar en rangos largos; si el rango está archivado, se baja de Drive)…"));
     try {
       const params = { symbol: f.symbol, tf: f.tf, since, until };
       if (f.exchange) params.exchange = f.exchange; else params.combine = "true";
@@ -132,7 +140,7 @@ export async function mount(root, ctx) {
         stat("Liquidaciones", usd(sum("liq_long_usd") + sum("liq_short_usd")), "longs " + usd(sum("liq_long_usd")) + " · shorts " + usd(sum("liq_short_usd")) + " · n=" + int(sum("n_liqs"))),
         stat("Último cierre", price(last.close), "mark " + price(last.mark) + " · funding " + funding(last.funding_8h)),
         stat("Open interest", usd(last.oi_usd), d.combined ? int(last.oi_exchanges) + " exchanges lo informan" : "último de la barra"));
-      clear(barsMsg, el("p", { class: "small muted" }, `${new Date(d.since_ms).toLocaleString("es-AR")} → ${new Date(d.until_ms).toLocaleString("es-AR")} · consulta ${dur((performance.now() - t0) / 1000)}`,
+      clear(barsMsg, coldNote(d), el("p", { class: "small muted" }, `${new Date(d.since_ms).toLocaleString("es-AR")} → ${new Date(d.until_ms).toLocaleString("es-AR")} · consulta ${dur((performance.now() - t0) / 1000)}`,
         d.count ? "" : " · sin barras en ese rango"));
     } catch (e) { const b = errorBox(e, "las barras"); if (b && my === seq) clear(barsMsg, b); }
   }
@@ -151,6 +159,7 @@ export async function mount(root, ctx) {
     try {
       const d = await api("/api/history/liquidations", { symbol: f.symbol, exchange: f.exchange, side: lq.side, min_usd: lq.min_usd, since, until, limit: 100, offset: lq.offset }, ctx.signal);
       clear(liqBox,
+        coldNote(d),
         el("div", { class: "note warn" }, "Cobertura: Bybit es completa; Binance (≤ 1 por segundo por símbolo) y OKX son parciales. Los totales subestiman y no se comparan entre exchanges."),
         el("div", { class: "stats", style: { marginBottom: "12px" } },
           stat("Liquidaciones (filtro)", int(d.totals.n), "en todo el filtro, no solo la página"),
@@ -166,6 +175,6 @@ export async function mount(root, ctx) {
   drawCtrl();
   drawLiqCtrl();
   if (!f.symbol) { clear(barsMsg, el("p", { class: "empty" }, "No hay símbolos configurados.")); }
-  await Promise.all([loadSummary(), f.symbol ? loadBars() : null, f.symbol ? loadLiqs() : null]);
-  return { unmount: () => disposeChart(st.chart), refresh: loadSummary };
+  await Promise.all([loadSummary(), loadStorage(), f.symbol ? loadBars() : null, f.symbol ? loadLiqs() : null]);
+  return { unmount: () => disposeChart(st.chart), refresh: () => Promise.all([loadSummary(), loadStorage()]) };
 }

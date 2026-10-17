@@ -22,6 +22,11 @@
 - **LLM:** Anthropic (sin crédito) → gemini-3.5 → gemini-3.8-flash / 3.1-flash-lite. Rotar ambas keys (quedaron en el chat).
 - **Laboratorio:** resultados del lote 1 y holdout en `decisions.md`.
 
+- **Almacenamiento por niveles (2026-10-18, sin desplegar):** `history/archive.py` + `heatsignal-archive.timer` (cada
+  hora: al 80 % de disco sube lo viejo a `gdrive:archive/`, verifica md5 y borra) y lectura fría en el panel
+  (`/api/history/storage`, badge "desde Drive"). Respaldo semanal `heatsignal-backup.timer`. Falta: deploy del código,
+  instalar los timers y reiniciar la ingesta (nuevo `ReadWritePaths` para rclone). Ver `decisions.md`.
+
 ## Estado por fase
 
 | Fase | Estado | Dónde |

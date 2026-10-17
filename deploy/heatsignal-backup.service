@@ -1,0 +1,21 @@
+# Respaldo completo semanal de la VM a gdrive:backups/vm/<UTC>/ (deploy/backup-vm.sh): copia consistente de cada
+# SQLite con la API de backup (sirve con las bases en uso), gzip, JSON publicados y exports. No borra nada en Drive.
+[Unit]
+Description=HeatSignal respaldo semanal completo de la VM a Drive
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=nahue
+WorkingDirectory=/home/nahue/heatsignal
+Environment=HOME=/home/nahue
+ExecStart=/bin/bash /home/nahue/heatsignal/deploy/backup-vm.sh
+MemoryMax=300M
+Nice=10
+IOSchedulingClass=idle
+TimeoutStartSec=3h
+ProtectSystem=strict
+ReadWritePaths=/home/nahue/heatsignal -/home/nahue/.config/rclone
+PrivateTmp=true
+NoNewPrivileges=true

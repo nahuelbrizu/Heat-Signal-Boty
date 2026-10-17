@@ -22,6 +22,7 @@ Configuracion por variables de entorno (ver `.env.example` en la raiz del repo):
   HEATSIGNAL_NEWS_INTERVAL_S    300    poll de noticias RSS (news/feeds.py), ventana en memoria de 48 h (0 lo apaga)
   HEATSIGNAL_RECORD             1      guardar agregados por minuto + liquidaciones + noticias (history/), 0 lo apaga
   HEATSIGNAL_HISTORY_DB         data/heatsignal_history.sqlite   base historica privada (respaldo diario a Drive)
+  HEATSIGNAL_COLD_CACHE_MB      300  tope del cache local de lo archivado que el panel baja de Drive (data/cold_cache)
   HEATSIGNAL_EVAL_DB            data/heatsignal_eval.sqlite   estrategias + hipotesis (lo unico persistido)
   HEATSIGNAL_CHECKPOINT_DB      data/heatsignal_checkpoints.sqlite   checkpoints del grafo
   ANTHROPIC_API_KEY             sin key el ciclo solo calcula features (avisa en cada ciclo)
@@ -391,6 +392,21 @@ async def start_analysis(
                            cycle_log=cycle_log)
 
 
+def _cold_reader(cfg: RunConfig, sinks: list[EventSink]) -> Any:
+    """Lectura fria de lo archivado en Drive (history/cold.py). Sin grabacion no hay historia que leer."""
+    if _recorder(sinks) is None:
+        return None
+    try:
+        from ..history.cold import DEFAULT_CACHE_BYTES, make_reader
+
+        mb = os.environ.get("HEATSIGNAL_COLD_CACHE_MB", "").strip()
+        return make_reader(cfg.history_db, remote_base=os.environ.get("HEATSIGNAL_DRIVE_REMOTE") or None,
+                           cap_bytes=int(float(mb) * 1024 * 1024) if mb else DEFAULT_CACHE_BYTES)
+    except Exception:  # noqa: BLE001 - sin lectura fria el panel sigue con lo local
+        log.exception("no se pudo preparar la lectura fria (Drive)")
+        return None
+
+
 # ---- panel interno --------------------------------------------------------------------------------
 
 async def start_panel(
@@ -425,6 +441,7 @@ async def start_panel(
         health=health,
         memory=_memory_sink(sinks),
         history=_recorder(sinks),
+        archive=_cold_reader(cfg, sinks),
         cycle_log=analysis.cycle_log if analysis else None,
         lab_summary_path=Path(cfg.eval_db).parent / "lab_summary.json",
         checkpoint_db=Path(cfg.checkpoint_db),

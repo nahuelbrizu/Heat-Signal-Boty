@@ -247,3 +247,11 @@ textarea { font: inherit; color: var(--ink); background: var(--surface); border:
 .filters > * { min-width: 0; max-width: 100%; }
 .field select, .field input { width: 100%; }
 .kv .nowrap, .stat .nowrap { white-space: normal; }
+
+/* ---------- almacenamiento por niveles (disco con umbral) */
+.disk-meter { position: relative; height: 14px; background: var(--chip); border-radius: 7px; overflow: visible; margin: 6px 0 4px; }
+.disk-meter > .fill { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 7px; background: var(--ok); }
+.disk-meter > .fill.warn { background: var(--warn); } .disk-meter > .fill.bad { background: var(--bad); }
+.disk-meter > .mark { position: absolute; top: -4px; bottom: -4px; width: 2px; margin-left: -1px; background: var(--ink); }
+.disk-meter > .mark.target { background: var(--muted); width: 1px; }
+.disk-legend { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 12px; font-size: 12px; color: var(--muted); }

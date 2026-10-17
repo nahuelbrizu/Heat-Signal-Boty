@@ -1,16 +1,19 @@
 // Sistema (/api/system): version, uptime, RAM, tamaños de bases, disco, backups, errores recientes y configuracion.
 // Se refresca cada 45 s mientras la vista esta abierta.
 import { el, clear, api, errorBox, when, ago, int, dur, bytes, card, table, pageHead, loading, chip, kv, stat, isNum, prose } from "../core.js";
+import { storageCard } from "../storage-ui.js";
 
 const DB_LABEL = { eval: "Evaluación (estrategias, hipótesis, ciclos)", history: "Historia (barras, liquidaciones, noticias)", checkpoints: "Checkpoints del grafo", lab_summary: "Resumen del laboratorio", freqtrade: "Freqtrade dry-run (paper trading, solo lectura)", paper_summary: "Comparación paper vs backtest (publicada desde la PC)" };
 
 export async function mount(root, ctx) {
-  const body = el("div", {}, loading());
-  clear(root, pageHead("Sistema", "Operación del proceso de ingesta en la VM (solo lectura)."), body);
+  const body = el("div", {}, loading()), storeBox = el("div");
+  clear(root, pageHead("Sistema", "Operación del proceso de ingesta en la VM (solo lectura)."), body, storeBox);
 
   async function load() {
     try { render(await api("/api/system", null, ctx.signal)); }
     catch (e) { const b = errorBox(e, "el estado del sistema"); if (b) clear(body, b); }
+    try { clear(storeBox, storageCard(await api("/api/history/storage", null, ctx.signal))); }
+    catch (e) { if (e && e.status === 503) clear(storeBox); else { const b = errorBox(e, "el almacenamiento"); if (b) clear(storeBox, b); } }
   }
 
   function render(s) {
@@ -23,7 +26,8 @@ export async function mount(root, ctx) {
         stat("Uptime", dur(s.uptime_s), "desde " + new Date(s.started_ms).toLocaleString("es-AR")),
         stat("RAM (RSS)", bytes(s.rss_bytes), "pid " + s.pid + " · Python " + s.python),
         stat("Versión", el("span", { class: "mono" }, (v.commit || "—").slice(0, 10)), (v.branch || v.source || "") + (v.source_mtime_ms ? " · código del " + new Date(v.source_mtime_ms).toLocaleDateString("es-AR") : "")),
-        stat("Disco libre", dk ? bytes(dk.free_bytes) : "—", dk ? "de " + bytes(dk.total_bytes) + " · " + Math.round(used * 100) + " % usado" : "", used !== null && used > 0.85 ? "bad-t" : ""),
+        stat("Disco libre", dk ? bytes(dk.free_bytes) : "—", dk ? "de " + bytes(dk.total_bytes) + " · " + (isNum(dk.used_pct) ? dk.used_pct : Math.round(used * 100)) + " % usado" + (isNum(dk.threshold_pct) ? " · archiva a Drive al " + dk.threshold_pct + " %" : "") : "",
+          dk && isNum(dk.used_pct) && isNum(dk.threshold_pct) ? (dk.used_pct >= dk.threshold_pct ? "bad-t" : dk.used_pct >= dk.threshold_pct - 5 ? "warn-t" : "") : used !== null && used > 0.85 ? "bad-t" : ""),
         stat("Último backup", ex && ex.last_upload && ex.last_upload.ts_ms ? ago(ex.last_upload.ts_ms) : "nunca", ex && ex.last_upload && ex.last_upload.remote ? "a " + ex.last_upload.remote : ""),
         stat("Build del panel", el("span", { class: "mono" }, s.build), "cambia con cada reinicio: la página se recarga sola")),
       card("Errores recientes", nErr ? chip(nErr + " fuentes con problemas", "bad") : chip("sin errores", "ok"),
