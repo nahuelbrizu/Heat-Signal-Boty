@@ -1,0 +1,29 @@
+# Paper trading de donchian-ensemble-v1 con Freqtrade en DRY-RUN (dinero simulado, precios reales de Binance,
+# sin API keys de exchange). FreqUI/API en 127.0.0.1:8081 (tunel SSH, como el panel). Las credenciales de FreqUI
+# estan en freqtrade/config.secrets.json, que se genera en la VM y no va a git.
+[Unit]
+Description=HeatSignal Freqtrade dry-run (donchian-ensemble-v1)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=nahue
+WorkingDirectory=/home/nahue/heatsignal/freqtrade
+ExecStart=/home/nahue/freqtrade/.venv/bin/freqtrade trade \
+  -c /home/nahue/heatsignal/freqtrade/config.dryrun.json \
+  -c /home/nahue/heatsignal/freqtrade/config.secrets.json \
+  --userdir /home/nahue/heatsignal/freqtrade/user_data \
+  --db-url sqlite:////home/nahue/heatsignal/data/freqtrade_dryrun.sqlite \
+  --logfile /home/nahue/heatsignal/freqtrade/user_data/logs/freqtrade.log
+Restart=always
+RestartSec=30
+MemoryMax=700M
+Nice=5
+ProtectSystem=strict
+ReadWritePaths=/home/nahue/heatsignal /home/nahue/freqtrade -/home/nahue/.cache
+PrivateTmp=true
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target
