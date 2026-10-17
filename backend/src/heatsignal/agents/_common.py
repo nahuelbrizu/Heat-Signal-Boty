@@ -13,6 +13,7 @@ Utilidades compartidas por los nodos del grafo.
 from __future__ import annotations
 
 import logging
+import math
 from typing import Callable, Iterable, Protocol, Sequence, TypeVar
 
 from ..schema.features import FeatureSet
@@ -39,18 +40,31 @@ def _fmt(value: float | None, fmt: str = "{:,.2f}") -> str:
     return "n/d" if value is None else fmt.format(value)
 
 
+def fmt_price(value: float | None, sig: int = 5) -> str:
+    """Precio/ATR con al menos `sig` cifras significativas (y 2 decimales minimo).
+
+    Con 2 decimales fijos un ATR de XRP (0.00054) se leia '0.00' y el LLM no veia la volatilidad.
+    """
+    if value is None:
+        return "n/d"
+    if value == 0 or not math.isfinite(value):
+        return f"{value:,.2f}"
+    decimals = min(10, max(2, sig - 1 - math.floor(math.log10(abs(value)))))
+    return f"{value:,.{decimals}f}"
+
+
 def render_heatmap(fs: FeatureSet) -> str:
     hm = fs.heatmap
     lines = [
         f"{fs.symbol} [heatmap {hm.heatmap_model_id}, ventana {hm.window_s}s, "
-        f"mark {_fmt(hm.mark_price)}, ATR {_fmt(hm.atr)}]"
+        f"mark {fmt_price(hm.mark_price)}, ATR {fmt_price(hm.atr)}]"
     ]
     if not hm.clusters:
         lines.append("  sin clusters de liquidacion en la ventana.")
     for c in hm.clusters:
         side = c.dominant_side.value if c.dominant_side else "mixto"
         lines.append(
-            f"  - cluster {c.price_low:,.2f}-{c.price_high:,.2f} (mid {c.price_mid:,.2f}): "
+            f"  - cluster {fmt_price(c.price_low)}-{fmt_price(c.price_high)} (mid {fmt_price(c.price_mid)}): "
             f"notional ${c.notional_usd:,.0f}, {c.n_events} eventos, lado orden dominante {side}, "
             f"distancia {_fmt(c.distance_atr, '{:+.2f}')} ATR, "
             f"cobertura PARTIAL {c.partial_coverage_share:.0%}, "
@@ -73,12 +87,12 @@ def render_order_flow(fs: FeatureSet) -> str:
 
 def render_context(fs: FeatureSet) -> str:
     ctx = fs.context
-    funding = ", ".join(f"{ex.value}={rate:+.5f}" for ex, rate in ctx.funding_rate_by_exchange.items())
+    funding = ", ".join(f"{ex.value}={rate:+.7f}" for ex, rate in ctx.funding_rate_by_exchange.items())
     return (
-        f"{fs.symbol}: regimen (calculado por codigo) {ctx.regime}, mark {_fmt(ctx.mark_price)}, "
+        f"{fs.symbol}: regimen (calculado por codigo) {ctx.regime}, mark {fmt_price(ctx.mark_price)}, "
         f"funding [{funding or 'n/d'}], OI ${_fmt(ctx.open_interest_usd, '{:,.0f}')}, "
-        f"cambio OI {_fmt(ctx.oi_change_pct, '{:+.2f}')}%, ATR {_fmt(ctx.atr)} "
-        f"({_fmt(ctx.atr_pct, '{:.2f}')}%)\n  {format_data_gaps(fs)}"
+        f"cambio OI {_fmt(ctx.oi_change_pct, '{:+.2f}')}%, ATR {fmt_price(ctx.atr)} "
+        f"({_fmt(ctx.atr_pct, '{:.3f}')}%)\n  {format_data_gaps(fs)}"
     )
 
 

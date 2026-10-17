@@ -70,6 +70,12 @@
   funding, OI ni liquidaciones, el volumen es chico y los trades salen de parsear la metadata del ledger.
   Se retoma si se arma el plan de bots, donde Hummingbot ya tiene conector `xrpl`. Fecha: 2026-10-17.
 
+- **El grafo solo analiza símbolos con estrategia.** Una estrategia con `entry_conditions.symbol` aplica solo
+  a ese símbolo; una sin `symbol` aplica a todos (`pipeline/analysis.py::symbols_for_graph`). El resto
+  sigue en features y panel, pero no gasta LLM; el ciclo lo declara en el detalle. Hoy solo XRP pasa por
+  el grafo: el costo baja a ~1/3. Precios y ATR van a los prompts con cifras significativas
+  (`fmt_price`), porque con 2 decimales fijos el ATR de XRP se leía "0.00". Fecha: 2026-10-17.
+
 ## Abiertas
 - ~~Plan de CoinGlass a contratar.~~ **Ya no aplica al core** — la fuente primaria pasó a WS nativos.
   Solo se retomaría si se implementa la fuente BYOK opcional (y ahí el plan lo elige el usuario).

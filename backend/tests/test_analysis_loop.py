@@ -7,7 +7,7 @@ import asyncio
 from heatsignal.agents.graph import build_graph
 from heatsignal.evaluation.pending_store import PendingHypothesisStore
 from heatsignal.evaluation.strategy_registry import StrategyHypothesis, StrategyRegistry, StrategyStatus
-from heatsignal.pipeline.analysis import AnalysisLoop, active_strategies
+from heatsignal.pipeline.analysis import AnalysisLoop, active_strategies, symbols_for_graph
 from heatsignal.schema.events import Exchange, Side
 from heatsignal.storage.memory import MemoryWindowSink
 
@@ -163,3 +163,44 @@ async def test_features_carry_structured_quality_for_the_panel() -> None:
     assert q.coverage["hyperliquid"]["liquidations"] == "na"  # no publica liquidaciones: no es un hueco
     assert q.coverage["okx"] == {"trades": "missing", "liquidations": "missing", "ticker": "missing",
                                  "funding": "missing", "open_interest": "missing"}
+
+
+def test_symbols_for_graph() -> None:
+    xrp = StrategyHypothesis(description="x", entry_conditions={"symbol": "XRP-USDT"}, exit_conditions={}, author="t")
+    anyone = StrategyHypothesis(description="a", entry_conditions={}, exit_conditions={}, author="t")
+    syms = ["BTC-USDT", "SOL-USDT", "XRP-USDT"]
+    assert symbols_for_graph([xrp], syms) == ["XRP-USDT"]
+    assert symbols_for_graph([xrp, anyone], syms) == syms  # una sin simbolo aplica a todos
+    assert symbols_for_graph([xrp], ["BTC-USDT"]) == []
+
+
+async def test_graph_only_sees_symbols_with_strategies_and_last_ran_survives(tmp_path) -> None:
+    clock = Clock(T0)
+    memory = await _filled_memory(clock)
+    strategy = StrategyHypothesis(description="solo SOL", entry_conditions={"symbol": SYM},
+                                  exit_conditions={"horizon_s": 3600}, author="tests")
+    registry = _registry(tmp_path, strategy)
+    store = PendingHypothesisStore(tmp_path / "eval.sqlite", registry)
+    graph = build_graph(ScriptedChatModel(full_script([SYM])), hypothesis_store=store)
+    seen: list[list[str]] = []
+
+    async def runner(state, run_id):
+        seen.append(list(state["features_by_symbol"]))
+        return await graph.ainvoke(state)
+
+    loop = AnalysisLoop(memory, [SYM, "BTC-USDT"], registry, graph_runner=runner, clock_ms=clock)
+    result = await loop.run_cycle()
+    assert result.status == "ran" and seen == [[SYM]]
+    assert set(result.features) == {SYM, "BTC-USDT"}  # los features se calculan igual (panel)
+    assert "no pasan por el LLM: BTC-USDT" in result.detail
+    rep = result.report
+    assert rep is not None and rep["status"] == "ok" and list(rep["symbols"]) == [SYM]
+    sol = rep["symbols"][SYM]
+    assert sol["news"]["tone"] == "none"  # sin ventana de noticias el analista no llama al LLM
+    assert sol["order_flow"]["text"] == "comprador domino"
+    assert {t["side"] for t in sol["debate"]} == {"bull", "bear"}
+
+    loop._skip_during_warmup = True
+    memory.started_at_ms = clock.ms  # simula un reinicio: el proximo ciclo es warmup
+    warm = await loop.run_cycle()
+    assert warm.status == "warmup" and loop.last_result is warm and loop.last_ran is result

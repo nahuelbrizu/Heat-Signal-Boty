@@ -55,17 +55,21 @@ class PanelContext:
     news: Any = None  # news.window.NewsWindow
 
 
-def _cycle_view(analysis: AnalysisLoop | None) -> dict[str, Any] | None:
-    if analysis is None or analysis.last_result is None:
+def _cycle_view(analysis: AnalysisLoop | None, *, ran: bool = False) -> dict[str, Any] | None:
+    if analysis is None:
         return None
-    r = analysis.last_result
+    r = analysis.last_ran if ran else analysis.last_result
+    if r is None:
+        return None
     return {
         "run_id": r.run_id,
         "status": r.status,
         "n_hypotheses": r.n_hypotheses,
         "detail": r.detail,
         "decisions": r.decisions,
-        "features": {s: fs.model_dump(mode="json") for s, fs in r.features.items()},
+        "report": r.report,
+        # el ultimo ciclo con LLM no repite los features (ya van en last_cycle y en /api/features)
+        "features": {} if ran else {s: fs.model_dump(mode="json") for s, fs in r.features.items()},
     }
 
 
@@ -160,6 +164,7 @@ def create_panel_app(ctx: PanelContext) -> FastAPI:
                 "enabled": ctx.analysis is not None,
                 "graph_enabled": ctx.analysis is not None and ctx.analysis.graph_enabled,
                 "last_cycle": _cycle_view(ctx.analysis),
+                "last_ran": _cycle_view(ctx.analysis, ran=True),
             },
             "evaluation": _hypotheses_view(ctx),
             "news": None if ctx.news is None else ctx.news.summary(),

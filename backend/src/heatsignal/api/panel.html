@@ -83,6 +83,8 @@
   .cov-cell.ok { color: var(--ok); font-weight: 600; } .cov-cell.warn { color: var(--warn); font-weight: 600; }
   details.gaps-box { margin-top: 8px; } details.gaps-box summary { cursor: pointer; font-size: 12px; }
   @media (max-width: 520px) { .prog-row { grid-template-columns: 1fr; gap: 2px; } .prog-val { text-align: left; } }
+  ul.ran-list { margin: 8px 0; padding-left: 18px; } ul.ran-list li { margin: 6px 0; }
+  details summary { cursor: pointer; }
   .news ul { margin: 0; padding-left: 18px; }
   .news li { margin: 3px 0; }
   .news a { color: var(--ink); }
@@ -136,6 +138,14 @@
       <span id="graph-state"></span>
     </div>
     <div id="cycle"></div>
+  </section>
+
+  <section>
+    <div class="row" style="justify-content: space-between; margin-bottom: 10px;">
+      <h2 style="margin:0">Último análisis del grafo</h2>
+      <span class="muted" id="ran-meta"></span>
+    </div>
+    <div id="ran"></div>
   </section>
 
   <section>
@@ -340,6 +350,61 @@ function renderStrategies(evaln) {
     "Sin hipótesis todavía.");
 }
 
+const OUTCOME = { hypothesis: ["ok", "abrió hipótesis"], no_hypothesis: ["", "no entró"], rejected: ["bad", "rechazada"] };
+const TONE = { positive: ["ok", "positivo"], negative: ["bad", "negativo"], mixed: ["warn", "mixto"],
+               neutral: ["", "neutral"], none: ["", "sin noticias"] };
+
+function confSpan(c) { return el("span", { class: "muted mono" }, " conf " + num(c, 2)); }
+
+function analystLine(label, a, extra) {
+  if (!a) return el("li", {}, el("b", {}, label + ": "), el("span", { class: "muted" }, "sin salida del analista"));
+  return el("li", {}, el("b", {}, label), confSpan(a.confidence), extra || null, el("br"), el("span", {}, a.text));
+}
+
+function renderRan(r) {
+  const box = $("ran");
+  if (!r) {
+    $("ran-meta").textContent = "";
+    box.replaceChildren(el("p", { class: "empty" },
+      "Todavía no corrió el grafo en este proceso (tras un reinicio, el primero es ~30 min después)."));
+    return;
+  }
+  const ts = Number((r.run_id.match(/(\d+)$/) || [])[1]);
+  $("ran-meta").textContent = r.run_id + " · " + (ts ? new Date(ts).toLocaleString("es-AR") : "");
+  const rep = r.report || { symbols: {} };
+  const key = r.run_id + "|" + (rep.status || "");
+  if (box.dataset.key === key) return;  // no redibujar (y no cerrar los <details>) si no cambió
+  box.dataset.key = key;
+  const cards = Object.entries(rep.symbols || {}).map(([sym, a]) => {
+    const d = (r.decisions || []).find((x) => x.symbol === sym);
+    const [ocls, olabel] = d ? (OUTCOME[d.outcome] || ["", d.outcome]) : ["", "sin decisión"];
+    const n = a.news;
+    const [tcls, tlabel] = n ? (TONE[n.tone] || ["", n.tone]) : ["", "—"];
+    return el("div", { class: "card" },
+      el("h3", {}, sym, " ", el("span", { class: "chip " + ocls }, olabel)),
+      d ? el("p", { style: "margin:0 0 8px" }, d.reason) : null,
+      el("details", {},
+        el("summary", { class: "muted" }, "Analistas, noticias y debate"),
+        el("ul", { class: "ran-list" },
+          analystLine("Noticias", n, el("span", {}, " · ", el("span", { class: "chip " + tcls }, tlabel),
+            n && n.material_primary_negative ? el("span", { class: "chip bad" }, " negativa material (fuente primaria)") : null)),
+          analystLine("Liquidaciones", a.liquidations),
+          analystLine("Order flow", a.order_flow),
+          analystLine("Contexto", a.context),
+        ),
+        a.debate.length ? el("ul", { class: "ran-list" }, a.debate.map((t) => el("li", {},
+          el("b", { class: t.side === "bull" ? "buy" : "sell" }, (t.side === "bull" ? "Alcista" : "Bajista") + " r" + t.round),
+          el("span", { class: "muted mono" }, " fuerza " + num(t.strength, 2)), el("br"), t.text))) : null,
+        a.report ? el("p", { class: "muted" }, el("b", {}, "Reporte: "), a.report) : null,
+      ));
+  });
+  box.replaceChildren(...[  // replaceChildren escribe null como texto: se filtran
+    rep.summary ? el("p", { style: "margin:0 0 10px" }, rep.summary) : null,
+    el("div", { class: "grid", style: "grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));" }, cards),
+    rep.status && rep.status !== "ok" ? el("p", { class: "err" }, "reporte: " + rep.status) : null,
+  ].filter(Boolean));
+}
+
 async function refreshStatus() {
   try {
     const r = await fetch("/api/status", { cache: "no-store" });
@@ -354,8 +419,9 @@ async function refreshStatus() {
     renderWorkers(s.workers, s.now_ms);
     renderMarket(s.memory, s.now_ms);
     renderCycle(s.analysis);
-    lastCycle = s.analysis && s.analysis.last_cycle;
+    lastCycle = s.analysis && s.analysis.last_ran;
     renderStrategies(s.evaluation);
+    renderRan(s.analysis && s.analysis.last_ran);
     chartState.symbols = s.config.symbols || [];
     chartState.hypotheses = (s.evaluation && s.evaluation.hypotheses) || [];
     renderChartControls();

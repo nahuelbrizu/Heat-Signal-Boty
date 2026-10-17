@@ -63,11 +63,69 @@ class CycleResult:
     n_hypotheses: int = 0
     detail: str = ""
     decisions: list[dict[str, Any]] = field(default_factory=list)  # por simbolo: outcome + motivo
+    report: dict[str, Any] | None = None  # razonamiento del grafo para el panel (ver `run_view`)
 
 
 def active_strategies(registry: StrategySource) -> list[StrategyHypothesis]:
     """Estrategias que el Sintetizador puede instanciar: todas menos las ya evaluadas."""
     return [s for s in registry.get_all() if s.status != StrategyStatus.EVALUATED]
+
+
+def _norm(symbol: str) -> str:
+    return symbol.replace("-", "").replace("/", "").upper()
+
+
+def symbols_for_graph(strategies: Sequence[StrategyHypothesis], symbols: Sequence[str]) -> list[str]:
+    """Simbolos que el grafo tiene que analizar: los que alguna estrategia activa puede operar.
+
+    Una estrategia con `entry_conditions["symbol"]` solo aplica a ese simbolo; una sin `symbol` aplica
+    a todos. El resto se sigue calculando (panel, features) pero no gasta LLM.
+    """
+    wanted: set[str] = set()
+    for s in strategies:
+        sym = s.entry_conditions.get("symbol")
+        if not isinstance(sym, str) or not sym.strip():
+            return list(symbols)
+        wanted.add(_norm(sym))
+    return [sym for sym in symbols if _norm(sym) in wanted]
+
+
+def run_view(final: dict[str, Any]) -> dict[str, Any]:
+    """Lo que razono el grafo, por simbolo, en una forma liviana para el panel (sin features crudos)."""
+    def by_symbol(key: str) -> dict[str, Any]:
+        return {a.symbol: a for a in final.get(key) or []}
+
+    liq, flow = by_symbol("liquidation_analyses"), by_symbol("order_flow_analyses")
+    ctx, news = by_symbol("market_context_analyses"), by_symbol("news_analyses")
+    report = final.get("report")
+    draft = getattr(report, "draft", None)
+    sections = {sec.symbol: sec.text for sec in (draft.sections if draft else [])}
+    debate: dict[str, list[dict[str, Any]]] = {}
+    for turn in final.get("debate_transcript") or []:
+        for arg in turn.arguments:
+            debate.setdefault(arg.symbol, []).append(
+                {"side": turn.side, "round": turn.round, "strength": arg.strength, "text": arg.argument})
+    symbols: dict[str, Any] = {}
+    for sym in final.get("features_by_symbol") or {}:
+        symbols[sym] = {
+            "liquidations": None if sym not in liq else
+                {"confidence": liq[sym].confidence, "text": liq[sym].cluster_summary},
+            "order_flow": None if sym not in flow else
+                {"confidence": flow[sym].confidence, "text": flow[sym].flow_summary},
+            "context": None if sym not in ctx else
+                {"confidence": ctx[sym].confidence, "text": f"{ctx[sym].context_summary} {ctx[sym].regime_commentary}"},
+            "news": None if sym not in news else
+                {"confidence": news[sym].confidence, "tone": news[sym].tone, "text": news[sym].news_summary,
+                 "material_primary_negative": news[sym].material_primary_negative},
+            "debate": debate.get(sym, []),
+            "report": sections.get(sym),
+        }
+    return {
+        "status": getattr(report, "status", None),
+        "title": draft.title if draft else None,
+        "summary": draft.summary if draft else None,
+        "symbols": symbols,
+    }
 
 
 def _feature_summary(fs: FeatureSet) -> str:
@@ -106,6 +164,7 @@ class AnalysisLoop:
         self._clock_ms = clock_ms
         self._news = news
         self.last_result: CycleResult | None = None
+        self.last_ran: CycleResult | None = None  # ultimo ciclo en que corrio el grafo (sobrevive a warmups)
 
     @property
     def graph_enabled(self) -> bool:
@@ -165,7 +224,18 @@ class AnalysisLoop:
                 detail="grafo deshabilitado (falta ANTHROPIC_API_KEY); solo features",
             ))
 
-        state = {"run_id": run_id, "features_by_symbol": features, "allowed_strategies": strategies}
+        graph_symbols = symbols_for_graph(strategies, list(features))
+        if not graph_symbols:
+            return self._finish(CycleResult(
+                run_id, "no_strategies", features,
+                detail="ninguna estrategia activa opera los simbolos configurados; el grafo no corre",
+            ))
+        skipped = [s for s in features if s not in graph_symbols]
+        state = {
+            "run_id": run_id,
+            "features_by_symbol": {s: features[s] for s in graph_symbols},
+            "allowed_strategies": strategies,
+        }
         try:
             final = await self._runner(state, run_id)
         except Exception as exc:  # noqa: BLE001
@@ -176,10 +246,17 @@ class AnalysisLoop:
         hypotheses = final.get("pending_hypotheses") or []
         decisions = final.get("synthesis_decisions") or []
         detail = "; ".join(f"{d.symbol}={d.outcome}" for d in decisions)
+        if skipped:
+            detail += f" (sin estrategia, no pasan por el LLM: {', '.join(skipped)})"
         views = [{"symbol": d.symbol, "outcome": d.outcome, "reason": d.reason, "strategy_id": d.strategy_id}
                  for d in decisions]
+        try:
+            report = run_view(final)
+        except Exception:  # noqa: BLE001 - el resumen para el panel nunca tumba el ciclo
+            log.exception("%s: no se pudo armar el resumen del grafo para el panel", run_id)
+            report = None
         return self._finish(CycleResult(run_id, "ran", features, n_hypotheses=len(hypotheses), detail=detail,
-                                        decisions=views))
+                                        decisions=views, report=report))
 
     def _mark_running(self, strategies: list[StrategyHypothesis]) -> None:
         set_status = getattr(self._registry, "set_status", None)
@@ -202,6 +279,8 @@ class AnalysisLoop:
             result.run_id, result.status, result.n_hypotheses, result.detail,
         )
         self.last_result = result
+        if result.status == "ran":
+            self.last_ran = result
         return result
 
     async def run_forever(self, stop: asyncio.Event) -> None:

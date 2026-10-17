@@ -402,3 +402,14 @@ async def test_interrupted_run_resumes_from_last_successful_node(tmp_path) -> No
     assert result["features_by_symbol"]["BTC-USDT"].heatmap.heatmap_model_id == "liqcluster-v1"
     assert len(result["pending_hypotheses"]) == 2 and len(store) == 2
     assert result["report"].status == "ok"
+
+
+def test_fmt_price_keeps_significant_digits_for_cheap_assets() -> None:
+    from heatsignal.agents._common import fmt_price, render_context
+
+    assert fmt_price(81429.4) == "81,429.40"
+    assert fmt_price(1.3053) == "1.3053"
+    assert fmt_price(0.0005392) == "0.00053920"  # antes '0.00': el LLM no veia la volatilidad de XRP
+    assert fmt_price(None) == "n/d"
+    text = render_context(make_feature_set("XRP-USDT", mark=1.3053, atr=0.0005392))
+    assert "ATR 0.00053920" in text and "mark 1.3053" in text
