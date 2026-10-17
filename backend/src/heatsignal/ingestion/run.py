@@ -18,6 +18,7 @@ Configuracion por variables de entorno (ver `.env.example` en la raiz del repo):
   HEATSIGNAL_MEM_LIQUIDATIONS_S 86400
   HEATSIGNAL_ANALYSIS_INTERVAL_S 900   ciclo features -> grafo -> hipotesis (modo memory; 0 lo apaga)
   HEATSIGNAL_ANALYSIS_WINDOW_S  1800   ventana de features (<= retencion de trades)
+  HEATSIGNAL_GRAPH_ROTATION     2      simbolos sin estrategia que el grafo analiza por turnos en cada ciclo (0 = ninguno)
   HEATSIGNAL_NEWS_INTERVAL_S    300    poll de noticias RSS (news/feeds.py), ventana en memoria de 48 h (0 lo apaga)
   HEATSIGNAL_RECORD             1      guardar agregados por minuto + liquidaciones + noticias (history/), 0 lo apaga
   HEATSIGNAL_HISTORY_DB         data/heatsignal_history.sqlite   base historica privada (respaldo diario a Drive)
@@ -103,6 +104,7 @@ class RunConfig:
     analysis_interval_s: float = 900.0
     analysis_window_s: int = 1800
     news_interval_s: float = 300.0
+    graph_rotation: int = 2
     record: bool = True
     history_db: str = "data/heatsignal_history.sqlite"
     eval_db: str = "data/heatsignal_eval.sqlite"
@@ -181,6 +183,7 @@ class RunConfig:
             analysis_interval_s=_float("HEATSIGNAL_ANALYSIS_INTERVAL_S", 900.0),
             analysis_window_s=int(_float("HEATSIGNAL_ANALYSIS_WINDOW_S", 1800)),
             news_interval_s=_float("HEATSIGNAL_NEWS_INTERVAL_S", 300.0),
+            graph_rotation=int(_float("HEATSIGNAL_GRAPH_ROTATION", 2)),
             record=(_opt("HEATSIGNAL_RECORD") or "1").strip().lower() not in ("0", "false", "no"),
             history_db=_opt("HEATSIGNAL_HISTORY_DB") or "data/heatsignal_history.sqlite",
             eval_db=_opt("HEATSIGNAL_EVAL_DB") or "data/heatsignal_eval.sqlite",
@@ -370,6 +373,7 @@ async def start_analysis(
     loop = AnalysisLoop(
         memory, symbols, registry, graph_runner=runner,
         interval_s=cfg.analysis_interval_s, window_s=cfg.analysis_window_s, news=news, cycle_log=cycle_log,
+        rotation_per_cycle=cfg.graph_rotation,
     )
     task = asyncio.create_task(loop.run_forever(stop), name="analysis")
     return AnalysisHandles(task=task, loop=loop, registry=registry, store=store, news=news, news_task=news_task,

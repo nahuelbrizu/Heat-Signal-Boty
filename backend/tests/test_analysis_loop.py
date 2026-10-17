@@ -192,7 +192,7 @@ async def test_graph_only_sees_symbols_with_strategies_and_last_ran_survives(tmp
     result = await loop.run_cycle()
     assert result.status == "ran" and seen == [[SYM]]
     assert set(result.features) == {SYM, "BTC-USDT"}  # los features se calculan igual (panel)
-    assert "no pasan por el LLM: BTC-USDT" in result.detail
+    assert "sin LLM este ciclo: BTC-USDT" in result.detail
     rep = result.report
     assert rep is not None and rep["status"] == "ok" and list(rep["symbols"]) == [SYM]
     sol = rep["symbols"][SYM]

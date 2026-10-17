@@ -94,6 +94,20 @@ def _history_view(ctx: PanelContext) -> dict[str, Any] | None:
     return {"recorder": ctx.history.stats.as_dict(), "store": cached[1], "summary_age_s": round(time.time() - cached[0], 1)}
 
 
+_PER_SYMBOL_CACHE: dict[int, tuple[float, dict[str, Any]]] = {}
+
+
+def _per_symbol_view(ctx: PanelContext) -> dict[str, Any]:
+    """Ultimo analisis de cada simbolo, desde el historial persistente (cache 30 s)."""
+    if ctx.cycle_log is None:
+        return {}
+    cached = _PER_SYMBOL_CACHE.get(id(ctx.cycle_log))
+    if cached is None or time.time() - cached[0] > HISTORY_SUMMARY_TTL_S:
+        cached = (time.time(), ctx.cycle_log.latest_per_symbol())
+        _PER_SYMBOL_CACHE[id(ctx.cycle_log)] = cached
+    return cached[1]
+
+
 def _hypotheses_view(ctx: PanelContext) -> dict[str, Any]:
     if ctx.registry is None or ctx.store is None:
         return {"available": False, "strategies": [], "hypotheses": [], "pending_count": None}
@@ -188,6 +202,7 @@ def create_panel_app(ctx: PanelContext) -> FastAPI:
                 "last_ran": _cycle_view(ctx.analysis, ran=True),
                 "history": [] if ctx.cycle_log is None else ctx.cycle_log.latest(30),
                 "history_counts": {} if ctx.cycle_log is None else ctx.cycle_log.counts(),
+                "per_symbol": _per_symbol_view(ctx),
             },
             "evaluation": _hypotheses_view(ctx),
             "news": None if ctx.news is None else ctx.news.summary(),

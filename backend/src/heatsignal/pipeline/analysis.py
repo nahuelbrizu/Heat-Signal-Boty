@@ -128,6 +128,18 @@ def run_view(final: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def rotation_pick(others: Sequence[str], per_cycle: int, turn: int) -> list[str]:
+    """Turno `turn` de la rotacion: `per_cycle` simbolos de `others`, en orden circular.
+
+    Con 6 simbolos y 2 por ciclo, cada uno pasa por el grafo 1 de cada 3 ciclos con LLM.
+    """
+    if per_cycle <= 0 or not others:
+        return []
+    n = min(per_cycle, len(others))
+    start = (turn * n) % len(others)
+    return [others[(start + i) % len(others)] for i in range(n)]
+
+
 def _feature_summary(fs: FeatureSet) -> str:
     ctx, of = fs.context, fs.order_flow
     mark = f"{ctx.mark_price:.6g}" if ctx.mark_price is not None else "?"
@@ -152,6 +164,7 @@ class AnalysisLoop:
         clock_ms: Callable[[], int] = lambda: int(time.time() * 1000),
         news: NewsWindow | None = None,
         cycle_log: Any = None,  # pipeline.cycle_log.CycleLog: historial persistente (sobrevive reinicios)
+        rotation_per_cycle: int = 0,
     ) -> None:
         if interval_s <= 0 or window_s <= 0:
             raise ValueError("interval_s y window_s deben ser > 0")
@@ -167,12 +180,21 @@ class AnalysisLoop:
         self.last_result: CycleResult | None = None
         self.last_ran: CycleResult | None = None  # ultimo ciclo en que corrio el grafo (sobrevive a warmups)
         self._cycle_log = cycle_log
+        # Rotacion: ademas de los simbolos con estrategia, cada ciclo con grafo analiza `rotation_per_cycle`
+        # simbolos mas, por turnos, para cubrir todas las criptos sin pagar LLM por todas en cada ciclo.
+        # El turno arranca de la cantidad de ciclos con grafo ya guardados: sigue tras un reinicio.
+        self._rotation_per_cycle = max(0, rotation_per_cycle)
+        self._turn = 0
         if cycle_log is not None:
             try:
                 prev = cycle_log.latest_ran()
             except Exception:  # noqa: BLE001
                 log.exception("no se pudo leer el historial de ciclos")
                 prev = None
+            try:
+                self._turn = int(cycle_log.counts().get("ran", 0))
+            except Exception:  # noqa: BLE001
+                self._turn = 0
             if prev is not None:
                 self.last_ran = CycleResult(prev["run_id"], "ran", {}, prev["n_hypotheses"], prev["detail"],
                                             prev["decisions"], prev["report"])
@@ -235,7 +257,9 @@ class AnalysisLoop:
                 detail="grafo deshabilitado (falta ANTHROPIC_API_KEY); solo features",
             ))
 
-        graph_symbols = symbols_for_graph(strategies, list(features))
+        with_strategy = symbols_for_graph(strategies, list(features))
+        rotated = rotation_pick([s for s in features if s not in with_strategy], self._rotation_per_cycle, self._turn)
+        graph_symbols = [s for s in features if s in with_strategy or s in rotated]
         if not graph_symbols:
             return self._finish(CycleResult(
                 run_id, "no_strategies", features,
@@ -253,12 +277,15 @@ class AnalysisLoop:
             log.exception("%s: el grafo fallo", run_id)
             return self._finish(CycleResult(run_id, "error", features, detail=f"grafo: {exc!r}"))
 
+        self._turn += 1
         self._mark_running(strategies)
         hypotheses = final.get("pending_hypotheses") or []
         decisions = final.get("synthesis_decisions") or []
         detail = "; ".join(f"{d.symbol}={d.outcome}" for d in decisions)
+        if rotated:
+            detail += f" (turno de rotacion: {', '.join(rotated)})"
         if skipped:
-            detail += f" (sin estrategia, no pasan por el LLM: {', '.join(skipped)})"
+            detail += f" (sin LLM este ciclo: {', '.join(skipped)})"
         views = [{"symbol": d.symbol, "outcome": d.outcome, "reason": d.reason, "strategy_id": d.strategy_id}
                  for d in decisions]
         try:

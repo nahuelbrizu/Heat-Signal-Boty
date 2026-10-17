@@ -90,6 +90,14 @@
   a `.csv.gz` y respaldo con `rclone copy` a la carpeta personal de Drive del usuario
   (`heatsignal-history.timer`, 00:20 UTC). Nada se publica. La ventana en RAM del análisis sigue igual.
 
+- **Siete criptos y análisis del grafo por turnos (2026-10-17).** Símbolos: BTC, SOL, XRP, ETH, XLM, BNB,
+  TRX (los cuatro nuevos verificados como perpetuo USDT en Binance, Bybit, OKX y Hyperliquid). "METAL" no
+  existe como perpetuo en ninguno; MTL (Metal DAO) solo en Binance y Bybit: queda pendiente de confirmar
+  cuál quiso el usuario. Rotación (`HEATSIGNAL_GRAPH_ROTATION`, default 2): cada ciclo con grafo analiza
+  los símbolos con estrategia más 2 del resto por turnos (`rotation_pick`). El turno sigue tras un
+  reinicio porque se cuenta desde `cycle_log`. Con 7 símbolos, cada cripto sin estrategia se analiza cada
+  ~45 min y el costo por ciclo es el de ~3 símbolos. El panel muestra el último análisis de cada cripto.
+
 ## Abiertas
 - ~~Plan de CoinGlass a contratar.~~ **Ya no aplica al core** — la fuente primaria pasó a WS nativos.
   Solo se retomaría si se implementa la fuente BYOK opcional (y ahí el plan lo elige el usuario).

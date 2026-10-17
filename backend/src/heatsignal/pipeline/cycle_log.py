@@ -88,6 +88,17 @@ class CycleLog:
         rows = self._rows("WHERE status = 'ran'", 1)
         return rows[0] if rows else None
 
+    def latest_per_symbol(self, scan: int = 200) -> dict[str, dict[str, Any]]:
+        """Ultimo analisis del grafo de CADA simbolo (con rotacion, cada ciclo cubre solo algunos)."""
+        out: dict[str, dict[str, Any]] = {}
+        for row in self._rows("WHERE status = 'ran' AND report IS NOT NULL", scan):
+            decisions = {d["symbol"]: d for d in row["decisions"]}
+            for sym, analysis in (row["report"] or {}).get("symbols", {}).items():
+                if sym not in out:
+                    out[sym] = {"run_id": row["run_id"], "ts_ms": row["ts_ms"], "decision": decisions.get(sym),
+                                "analysis": analysis}
+        return out
+
     def counts(self) -> dict[str, int]:
         return dict(self._conn.execute("SELECT status, COUNT(*) FROM cycle_log GROUP BY status").fetchall())
 

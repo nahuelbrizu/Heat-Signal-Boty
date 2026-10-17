@@ -70,3 +70,50 @@ async def test_backfill_recovers_runs_from_checkpoints(tmp_path) -> None:
     rows = cl.latest(with_report=True)
     assert [r["ts_ms"] for r in rows] == [1792210342356, 1792206109022]
     assert rows[0]["decisions"][0]["outcome"] == "no_hypothesis" and rows[0]["report"]["symbols"]["XRP-USDT"]
+
+
+def test_rotation_pick_cycles_through_all_symbols() -> None:
+    from heatsignal.pipeline.analysis import rotation_pick
+
+    others = ["BTC", "SOL", "ETH", "BNB", "TRX"]
+    turns = [rotation_pick(others, 2, t) for t in range(5)]
+    assert turns[0] == ["BTC", "SOL"] and turns[1] == ["ETH", "BNB"] and turns[2] == ["TRX", "BTC"]
+    seen = {s for t in turns for s in t}
+    assert seen == set(others)  # en pocos turnos pasan todos
+    assert rotation_pick(others, 0, 3) == [] and rotation_pick([], 2, 1) == []
+    assert rotation_pick(["A"], 3, 7) == ["A"]
+
+
+async def test_rotation_adds_symbols_by_turns_and_continues_after_restart(tmp_path) -> None:
+    clock = Clock(T0)
+    memory = await _filled_memory(clock)
+    strategy = StrategyHypothesis(description="s", entry_conditions={"symbol": SYM}, exit_conditions={"horizon_s": 60},
+                                  author="t")
+    registry = StrategyRegistry(tmp_path / "eval.sqlite")
+    registry.register(strategy)
+    symbols = [SYM, "BTC-USDT", "ETH-USDT", "XLM-USDT"]
+    seen: list[list[str]] = []
+
+    async def runner(state, run_id):
+        syms = list(state["features_by_symbol"])
+        seen.append(syms)
+        return await build_graph(ScriptedChatModel(full_script(syms))).ainvoke(state)
+
+    def make_loop():
+        return AnalysisLoop(memory, symbols, registry, graph_runner=runner, clock_ms=clock,
+                            cycle_log=CycleLog(tmp_path / "eval.sqlite"), rotation_per_cycle=1)
+
+    loop = make_loop()
+    r1 = await loop.run_cycle()
+    clock.ms += 1000
+    await loop.run_cycle()
+    assert seen == [[SYM, "BTC-USDT"], [SYM, "ETH-USDT"]]  # el simbolo con estrategia siempre; el resto por turnos
+    assert "turno de rotacion: BTC-USDT" in r1.detail and "sin LLM este ciclo" in r1.detail
+
+    clock.ms += 1000
+    await make_loop().run_cycle()  # "reinicio": sigue el turno, no vuelve a BTC
+    assert seen[-1] == [SYM, "XLM-USDT"]
+
+    per = CycleLog(tmp_path / "eval.sqlite").latest_per_symbol()
+    assert set(per) == {SYM, "BTC-USDT", "ETH-USDT", "XLM-USDT"}
+    assert per[SYM]["ts_ms"] > per["BTC-USDT"]["ts_ms"] and per["BTC-USDT"]["decision"]["outcome"] == "no_hypothesis"

@@ -151,7 +151,7 @@
 
   <section>
     <div class="row" style="justify-content: space-between; margin-bottom: 10px;">
-      <h2 style="margin:0">Último análisis del grafo</h2>
+      <h2 style="margin:0">Último análisis por cripto</h2>
       <span class="muted" id="ran-meta"></span>
     </div>
     <div id="ran"></div>
@@ -386,8 +386,22 @@ function analystLine(label, a, extra) {
   return el("li", {}, el("b", {}, label), confSpan(a.confidence), extra || null, el("br"), el("span", {}, a.text));
 }
 
-function renderRan(r) {
+function renderRan(r, perSymbol, now) {
   const box = $("ran");
+  const entries = Object.entries(perSymbol || {});
+  if (entries.length) {  // con rotación: el último análisis de CADA cripto, con su hora
+    const key = entries.map(([s, e]) => s + e.run_id).join("|");
+    $("ran-meta").textContent = entries.length + " criptos analizadas · rotación por turnos";
+    if (box.dataset.key === key) {  // solo refrescar las antigüedades
+      box.querySelectorAll("[data-ts]").forEach((n) => { n.textContent = "hace " + ago(Number(n.dataset.ts), now); });
+      return;
+    }
+    box.dataset.key = key;
+    entries.sort((a, b) => b[1].ts_ms - a[1].ts_ms);
+    box.replaceChildren(el("div", { class: "grid", style: "grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));" },
+      entries.map(([sym, e]) => symbolCard(sym, e.analysis, e.decision, e.ts_ms, now))));
+    return;
+  }
   if (!r) {
     $("ran-meta").textContent = "";
     box.replaceChildren(el("p", { class: "empty" },
@@ -400,13 +414,22 @@ function renderRan(r) {
   const key = r.run_id + "|" + (rep.status || "");
   if (box.dataset.key === key) return;  // no redibujar (y no cerrar los <details>) si no cambió
   box.dataset.key = key;
-  const cards = Object.entries(rep.symbols || {}).map(([sym, a]) => {
-    const d = (r.decisions || []).find((x) => x.symbol === sym);
+  const cards = Object.entries(rep.symbols || {}).map(([sym, a]) =>
+    symbolCard(sym, a, (r.decisions || []).find((x) => x.symbol === sym), null, null));
+  box.replaceChildren(...[  // replaceChildren escribe null como texto: se filtran
+    rep.summary ? el("p", { style: "margin:0 0 10px" }, rep.summary) : null,
+    el("div", { class: "grid", style: "grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));" }, cards),
+    rep.status && rep.status !== "ok" ? el("p", { class: "err" }, "reporte: " + rep.status) : null,
+  ].filter(Boolean));
+}
+
+function symbolCard(sym, a, d, ts, now) {
     const [ocls, olabel] = d ? (OUTCOME[d.outcome] || ["", d.outcome]) : ["", "sin decisión"];
     const n = a.news;
     const [tcls, tlabel] = n ? (TONE[n.tone] || ["", n.tone]) : ["", "—"];
     return el("div", { class: "card" },
-      el("h3", {}, sym, " ", el("span", { class: "chip " + ocls }, olabel)),
+      el("h3", {}, sym, " ", el("span", { class: "chip " + ocls }, olabel),
+        ts ? el("span", { class: "muted", style: "font-weight:400", "data-ts": ts }, " hace " + ago(ts, now)) : null),
       d ? el("p", { style: "margin:0 0 8px" }, d.reason) : null,
       el("details", {},
         el("summary", { class: "muted" }, "Analistas, noticias y debate"),
@@ -422,12 +445,6 @@ function renderRan(r) {
           el("span", { class: "muted mono" }, " fuerza " + num(t.strength, 2)), el("br"), t.text))) : null,
         a.report ? el("p", { class: "muted" }, el("b", {}, "Reporte: "), a.report) : null,
       ));
-  });
-  box.replaceChildren(...[  // replaceChildren escribe null como texto: se filtran
-    rep.summary ? el("p", { style: "margin:0 0 10px" }, rep.summary) : null,
-    el("div", { class: "grid", style: "grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));" }, cards),
-    rep.status && rep.status !== "ok" ? el("p", { class: "err" }, "reporte: " + rep.status) : null,
-  ].filter(Boolean));
 }
 
 function bytes(n) {
@@ -490,7 +507,7 @@ async function refreshStatus() {
     renderCycleHistory(s.analysis);
     lastCycle = s.analysis && s.analysis.last_ran;
     renderStrategies(s.evaluation);
-    renderRan(s.analysis && s.analysis.last_ran);
+    renderRan(s.analysis && s.analysis.last_ran, (s.analysis && s.analysis.per_symbol) || {}, s.now_ms);
     renderHistory(s.history, s.now_ms);
     chartState.symbols = s.config.symbols || [];
     chartState.hypotheses = (s.evaluation && s.evaluation.hypotheses) || [];

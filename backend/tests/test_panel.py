@@ -53,7 +53,7 @@ async def test_status_reports_workers_memory_and_strategies(tmp_path) -> None:
     assert sym["last_trade"]["side"] == "sell"
     assert sym["last_liquidation"]["notional_usd"] == 25_000.0
     assert body["analysis"] == {"enabled": True, "graph_enabled": False, "last_cycle": None, "last_ran": None,
-                                "history": [], "history_counts": {}}
+                                "history": [], "history_counts": {}, "per_symbol": {}}
     ev = body["evaluation"]
     assert ev["available"] and len(ev["strategies"]) == 1 and ev["strategies"][0]["horizon_s"] == 3600
     assert ev["hypotheses"] == [] and ev["pending_count"] == 0

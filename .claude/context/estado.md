@@ -21,7 +21,7 @@ Tests: 408 pasando, 1 skipped (`backend/`, `.venv/bin/pytest -q`).
 - GCP e2-small `instance-20261016-191100`, `asia-northeast1-a`, proyecto `vocal-operand-271906`.
   Debian 13, 2 vCPU, 1.9 GB RAM + 2 GB swap, disco 10 GB. Código en `~/heatsignal` (copiado con
   `git archive` + `gcloud compute scp`, no es un clon de git). venv Python 3.13 en `~/heatsignal/backend/.venv`.
-- `heatsignal-ingestion.service`: ingesta Binance + Bybit + OKX + Hyperliquid (BTC, SOL, XRP) en **modo memory**
+- `heatsignal-ingestion.service`: ingesta Binance + Bybit + OKX + Hyperliquid (BTC, SOL, XRP, ETH, XLM, BNB, TRX) en **modo memory**
   (datos de mercado solo en RAM) + ciclo de análisis cada 15 min. `MemoryMax=700M`, `Restart=always`.
 - `heatsignal-eval.timer` → `heatsignal-eval.service` cada 5 min (resolución + evaluación).
 - Persistido: `data/heatsignal_eval.sqlite` (estrategias + hipótesis) y `data/heatsignal_history.sqlite`
@@ -47,7 +47,8 @@ Tests: 408 pasando, 1 skipped (`backend/`, `.venv/bin/pytest -q`).
 - [x] XRP sumado a `HEATSIGNAL_SYMBOLS` en la VM.
 - [x] `xrp-acumulacion-v1` registrada (LONG a 90 días, sin noticias).
 - [ ] `xrp-acumulacion-v2` (v1 + noticias): registrar tras el deploy de noticias.
-- [ ] **Símbolos**: confirmar si se suma ETH (`HEATSIGNAL_SYMBOLS`).
+- [ ] **METAL**: no existe como perpetuo; ¿es MTL (Metal DAO, solo Binance/Bybit) u otro token?
+- [ ] **Motor de reglas** para estrategias: espera los libros y la academia que va a pasar el usuario.
 - [ ] **ToS de Binance/Bybit/OKX**: lectura rápida (`phase-0-blockers.md`, Bloqueante A).
 - [ ] **Push / PR** de la rama `ingestion-binance-bybit`.
 
