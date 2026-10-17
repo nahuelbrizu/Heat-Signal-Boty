@@ -98,6 +98,12 @@
   reinicio porque se cuenta desde `cycle_log`. Con 7 símbolos, cada cripto sin estrategia se analiza cada
   ~45 min y el costo por ciclo es el de ~3 símbolos. El panel muestra el último análisis de cada cripto.
 
+- **Lote 1 del laboratorio → aprobado por el usuario (2026-10-17), ANTES de ver resultados.** Specs en
+  `estrategias-lote1.md`, congeladas por hash: `donchian-ensemble-v1` 86061813c7d1691c; `flujo-apertura-hora-v1` 676f9a08f9af3828; `reversion-flujo-extremo-15m-v1` cd15e9623abe8bfa; `capitulacion-long-v1` 3717fbb833f28a96; `squeeze-short-v1` f146c3d219bc056b; `funding-crowding-xs-v1` 4aa52e735fc55460; `funding-crowding-short-v1` 38869de0fc4bc760; `funding-spread-hl-cex-v1` 09cb4efe470c9fef; `absorcion-flujo-v1` a3768ae5a4adaadd. Cualquier cambio a partir de acá es una versión
+  nueva (`-v2`). Criterios para pasar a paper trading, fijados de antemano en `lab/run.py::CRITERIA`: DSR ≥ 0,95,
+  break-even ≥ 2× el costo esperado, le gana a la canasta, al buy & hold medio y a las entradas al azar (p ≤ 0,05).
+  Holdout: los últimos 3 meses, sellados.
+
 ## Abiertas
 - ~~Plan de CoinGlass a contratar.~~ **Ya no aplica al core** — la fuente primaria pasó a WS nativos.
   Solo se retomaría si se implementa la fuente BYOK opcional (y ahí el plan lo elige el usuario).
