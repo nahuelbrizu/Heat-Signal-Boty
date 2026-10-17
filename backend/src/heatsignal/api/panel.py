@@ -6,18 +6,46 @@ existe en esa RAM. Escucha en 127.0.0.1: se abre con un tunel SSH, nunca se expo
 (decisions.md, "Datos de mercado solo en memoria": los datos no se ven en otro lado).
 
     GET /              pagina HTML (panel.html, sin dependencias externas)
-    GET /api/status    workers, ventana en memoria, ultimo ciclo de analisis, estrategias e hipotesis
+    GET /api/status    TODO junto (compatibilidad con panel.html): workers, ventana, ciclos, estrategias,
+                       ultimas 50 hipotesis, noticias, historia, laboratorio. Pesado: preferir /api/summary
     GET /api/features  FeatureSet calculado AHORA desde la ventana (lo mismo que veria el grafo)
     GET /api/klines    velas de Binance pedidas en el momento y no guardadas (`api/klines.py`)
     GET /static/...    lightweight-charts (TradingView, Apache 2.0) servido local, sin CDN
     GET /health        healthcheck
 
+API de solo lectura para la single page (`api/panel_api.py`; contrato y ejemplos en `api/API.md`):
+
+    GET /api/summary                     estado liviano para el polling frecuente (workers, ventana resumida,
+                                         ultimo ciclo resumido, conteos, build, frescura, LLM, grabacion)
+    GET /api/hypotheses                  todas las hipotesis, filtradas y paginadas (strategy_id, symbol,
+                                         status, win, since, until, order, limit, offset)
+    GET /api/hypotheses/{id}             una hipotesis con su resolucion, su estrategia y el ciclo que la genero
+    GET /api/strategies                  estrategias con track record (n, aciertos, IC Wilson, PnL, alpha, Brier)
+    GET /api/strategies/{id}             spec completo, historial de estados, calibracion e hipotesis
+    GET /api/cycles                      historial de ciclos del grafo (status, limit, offset), sin reportes
+    GET /api/cycles/{run_id}             un ciclo con el razonamiento completo (cycle_log o checkpoint)
+    GET /api/analysis/latest             ultimo analisis del grafo por simbolo
+    GET /api/news                        noticias guardadas + ventana en memoria (symbol, source, primary, q,
+                                         since, until, limit, offset)
+    GET /api/history/summary             que hay guardado en la base historica
+    GET /api/history/bars                barras de bars_1m agregadas a 1m/5m/15m/1h (symbol, exchange, tf,
+                                         since, until, combine)
+    GET /api/history/liquidations        liquidaciones guardadas (symbol, exchange, since, until, min_usd, ...)
+    GET /api/lab                         resumen del laboratorio (lab_summary.json publicado desde la PC)
+    GET /api/lab/{strategy_id}           detalle del laboratorio (lab_detail_<id>.json)
+    GET /api/market/{symbol}             snapshot de mercado desde la ventana en memoria (vista por cripto)
+    GET /api/system                      operacion: uptime, version, tamanos de bases, export/backup, config,
+                                         errores recientes
+
 Los endpoints son `async def` a proposito: corren en el hilo del event loop, el mismo que usa la ingesta,
 asi las conexiones SQLite del registry (no thread-safe) y las deques de la ventana no se tocan desde otro hilo.
+Las lecturas que pueden escanear mucho (base historica, checkpoints del grafo) van a un hilo aparte con una
+conexion SQLite de solo lectura propia, abierta y cerrada en ese hilo.
 """
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 from datetime import timedelta
 import time
@@ -57,6 +85,9 @@ class PanelContext:
     history: Any = None  # history.recorder.MinuteRecorder
     cycle_log: Any = None  # pipeline.cycle_log.CycleLog
     lab_summary_path: Path | None = None  # resumen del laboratorio publicado desde la PC (lab/publish.py)
+    checkpoint_db: Path | None = None  # checkpoints del grafo: respaldo de /api/cycles/{run_id}
+    db_paths: dict[str, Path] = field(default_factory=dict)  # bases para /api/system (eval, history, ...)
+    settings: dict[str, Any] = field(default_factory=dict)  # intervalos y retenciones para /api/system
 
 
 def _cycle_view(analysis: AnalysisLoop | None, *, ran: bool = False) -> dict[str, Any] | None:
@@ -78,25 +109,64 @@ def _cycle_view(analysis: AnalysisLoop | None, *, ran: bool = False) -> dict[str
 
 
 _HISTORY_CACHE: dict[int, tuple[float, dict[str, Any]]] = {}
+_HISTORY_LOCKS: dict[int, asyncio.Lock] = {}
 HISTORY_SUMMARY_TTL_S = 30.0
 
 
-def _history_view(ctx: PanelContext) -> dict[str, Any] | None:
-    """Que se esta guardando. El resumen de la base (COUNTs) se cachea 30 s: la tabla crece mucho."""
+def _history_summary_sync(db_path: Path) -> dict[str, Any]:
+    """COUNTs de la base historica con una conexion de solo lectura propia (corre en otro hilo)."""
+    from ..history.store import open_readonly, summarize
+
+    conn = open_readonly(db_path)
+    try:
+        summary = summarize(conn, db_path)
+    finally:
+        conn.close()
+    exports = sorted((db_path.parent / "export").glob("*/*/*/bars_1m.csv.gz"))
+    summary["last_export_day"] = "-".join(exports[-1].parts[-4:-1]) if exports else None
+    summary["export_days"] = len(exports)
+    return summary
+
+
+async def _history_summary(ctx: PanelContext) -> tuple[float, dict[str, Any]] | None:
+    """(momento del calculo, resumen). Cache 30 s; el COUNT de bars_1m/klines escanea tablas grandes, asi que
+    se calcula en un hilo aparte y no frena la ingesta."""
     if ctx.history is None:
         return None
-    cached = _HISTORY_CACHE.get(id(ctx.history))
-    if cached is None or time.time() - cached[0] > HISTORY_SUMMARY_TTL_S:
-        summary = ctx.history.store.summary()
-        exports = sorted((ctx.history.store.path.parent / "export").glob("*/*/*/bars_1m.csv.gz"))
-        summary["last_export_day"] = "-".join(exports[-1].parts[-4:-1]) if exports else None
-        summary["export_days"] = len(exports)
-        cached = (time.time(), summary)
-        _HISTORY_CACHE[id(ctx.history)] = cached
+    key = id(ctx.history)
+    cached = _HISTORY_CACHE.get(key)
+    if cached is not None and time.time() - cached[0] <= HISTORY_SUMMARY_TTL_S:
+        return cached
+    lock = _HISTORY_LOCKS.setdefault(key, asyncio.Lock())
+    async with lock:  # un solo recalculo a la vez aunque lleguen varios pedidos juntos
+        cached = _HISTORY_CACHE.get(key)
+        if cached is None or time.time() - cached[0] > HISTORY_SUMMARY_TTL_S:
+            cached = (time.time(), await asyncio.to_thread(_history_summary_sync, Path(ctx.history.store.path)))
+            _HISTORY_CACHE[key] = cached
+    return cached
+
+
+async def _history_view(ctx: PanelContext) -> dict[str, Any] | None:
+    """Que se esta guardando: estadisticas del grabador + resumen de la base (cache 30 s)."""
+    cached = await _history_summary(ctx)
+    if cached is None:
+        return None
     return {"recorder": ctx.history.stats.as_dict(), "store": cached[1], "summary_age_s": round(time.time() - cached[0], 1)}
 
 
 _LAB_CACHE: dict[str, tuple[float, Any]] = {}
+
+
+def json_safe(obj: Any) -> Any:
+    """NaN/inf -> None, recursivo. La respuesta JSON se serializa con allow_nan=False: un NaN del
+    laboratorio (p.ej. Sharpe de una regla que no opero) daria un 500 en vez de un null."""
+    if isinstance(obj, float):
+        return obj if obj == obj and obj not in (float("inf"), float("-inf")) else None
+    if isinstance(obj, dict):
+        return {k: json_safe(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [json_safe(v) for v in obj]
+    return obj
 
 
 def _lab_view(ctx: PanelContext) -> Any:
@@ -110,7 +180,7 @@ def _lab_view(ctx: PanelContext) -> Any:
         import json
 
         try:
-            cached = (mtime, json.loads(path.read_text(encoding="utf-8")))
+            cached = (mtime, json_safe(json.loads(path.read_text(encoding="utf-8"))))
         except (OSError, ValueError):
             return {"error": "lab_summary.json ilegible"}
         _LAB_CACHE[str(path)] = cached
@@ -272,7 +342,7 @@ def create_panel_app(ctx: PanelContext) -> FastAPI:
             },
             "evaluation": _hypotheses_view(ctx),
             "news": None if ctx.news is None else ctx.news.summary(),
-            "history": _history_view(ctx),
+            "history": await _history_view(ctx),
             "lab": _lab_view(ctx),
         }
 
@@ -305,4 +375,7 @@ def create_panel_app(ctx: PanelContext) -> FastAPI:
             raise HTTPException(status_code=502, detail=f"Binance: {exc}") from exc
         return {"symbol": symbol, "interval": interval, "source": "binance-futures-last", "candles": candles}
 
+    from .panel_api import register_api
+
+    register_api(app, ctx, build_id)
     return app

@@ -425,6 +425,132 @@ class PendingHypothesisStore:
             ).fetchone()
         return int(row[0])
 
+    # ------------------------------------------------------------------ consultas (panel, solo lectura)
+
+    def query(
+        self,
+        *,
+        strategy_id: UUID | None = None,
+        symbol: str | None = None,
+        status: HypothesisStatus | None = None,
+        win: bool | None = None,
+        since_ts: float | None = None,
+        until_ts: float | None = None,
+        run_id: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+        newest_first: bool = True,
+    ) -> tuple[int, list[HypothesisRecord]]:
+        """Pagina de hipotesis con su resolucion, filtrada. Devuelve (total que cumple el filtro, pagina).
+
+        `since_ts` / `until_ts` filtran por `created_ts` (epoch s, [since, until)). `win` implica resueltas.
+        """
+        where: list[str] = []
+        params: list[Any] = []
+        if strategy_id is not None:
+            where.append("p.strategy_id = ?")
+            params.append(str(strategy_id))
+        if symbol is not None:
+            where.append("p.symbol = ?")
+            params.append(symbol)
+        if status is not None:
+            if status == HypothesisStatus.PENDING:
+                where.append("r.status IS NULL")
+            else:
+                where.append("r.status = ?")
+                params.append(status.value)
+        if win is not None:
+            where.append("r.win = ?")
+            params.append(int(win))
+        if since_ts is not None:
+            where.append("p.created_ts >= ?")
+            params.append(since_ts)
+        if until_ts is not None:
+            where.append("p.created_ts < ?")
+            params.append(until_ts)
+        if run_id is not None:
+            where.append("p.run_id = ?")
+            params.append(run_id)
+        clause = f"WHERE {' AND '.join(where)}" if where else ""
+        base = "FROM pending_hypotheses p LEFT JOIN hypothesis_resolutions r ON r.hypothesis_id = p.hypothesis_id "
+        order = "DESC" if newest_first else "ASC"
+        with self._lock:
+            total = int(self._conn.execute(f"SELECT COUNT(*) {base}{clause}", params).fetchone()[0])
+            rows = self._conn.execute(
+                f"SELECT {', '.join('p.' + c.strip() for c in _HYP_COLUMNS.split(','))}, {_RES_COLUMNS} "
+                f"{base}{clause} ORDER BY p.created_ts {order}, p.hypothesis_id {order} LIMIT ? OFFSET ?",
+                [*params, int(limit), int(offset)],
+            ).fetchall()
+        return total, [self._hydrate_record(row) for row in rows]
+
+    def get_record(self, hypothesis_id: UUID) -> HypothesisRecord | None:
+        """Una hipotesis con su resolucion, o None."""
+        with self._lock:
+            row = self._conn.execute(
+                f"SELECT {', '.join('p.' + c.strip() for c in _HYP_COLUMNS.split(','))}, {_RES_COLUMNS} "
+                "FROM pending_hypotheses p "
+                "LEFT JOIN hypothesis_resolutions r ON r.hypothesis_id = p.hypothesis_id "
+                "WHERE p.hypothesis_id = ?",
+                (str(hypothesis_id),),
+            ).fetchone()
+        return None if row is None else self._hydrate_record(row)
+
+    def stats_by_strategy(self, now_ts: float | None = None) -> dict[str, dict[str, Any]]:
+        """Agregados por estrategia en una sola consulta (track record del panel).
+
+        Brier = media de (confidence - win)^2 sobre las resueltas (todas llevan confidence_score).
+        `due` = pendientes cuya ventana ya vencio (esperan al job de resolucion).
+        """
+        now_ts = datetime.now(timezone.utc).timestamp() if now_ts is None else now_ts
+        with self._lock:
+            rows = self._conn.execute(
+                """
+                SELECT p.strategy_id,
+                       COUNT(*),
+                       SUM(r.status IS NULL),
+                       SUM(r.status IS NULL AND p.due_ts <= ?),
+                       SUM(r.status = 'resolved'),
+                       SUM(r.status = 'expired_no_data'),
+                       SUM(r.win = 1),
+                       AVG(CASE WHEN r.status = 'resolved' THEN r.pnl_pct END),
+                       AVG(r.gross_pnl_pct),
+                       AVG(r.benchmark_pnl_pct),
+                       AVG(r.alpha_pct),
+                       AVG(CASE WHEN r.status = 'resolved'
+                                THEN (p.confidence_score - r.win) * (p.confidence_score - r.win) END),
+                       AVG(CASE WHEN r.status = 'resolved' THEN p.confidence_score END),
+                       MIN(p.created_ts),
+                       MAX(p.created_ts)
+                FROM pending_hypotheses p
+                LEFT JOIN hypothesis_resolutions r ON r.hypothesis_id = p.hypothesis_id
+                GROUP BY p.strategy_id
+                """,
+                (now_ts,),
+            ).fetchall()
+        out: dict[str, dict[str, Any]] = {}
+        for (sid, total, pending, due, resolved, expired, wins, pnl, gross, bench, alpha, brier, conf,
+             first_ts, last_ts) in rows:
+            out[str(sid).lower()] = {
+                "total": int(total), "pending": int(pending or 0), "due": int(due or 0),
+                "resolved": int(resolved or 0), "expired_no_data": int(expired or 0), "wins": int(wins or 0),
+                "mean_pnl_pct": pnl, "mean_gross_pnl_pct": gross, "mean_benchmark_pnl_pct": bench,
+                "mean_alpha_pct": alpha, "brier": brier, "mean_confidence": conf,
+                "first_created_ts": first_ts, "last_created_ts": last_ts,
+            }
+        return out
+
+    def calibration_pairs(self, strategy_id: UUID | None = None) -> list[tuple[float, bool]]:
+        """(confidence_score, win) de las resueltas: insumo de la curva de calibracion."""
+        sql = ("SELECT p.confidence_score, r.win FROM pending_hypotheses p "
+               "JOIN hypothesis_resolutions r ON r.hypothesis_id = p.hypothesis_id WHERE r.status = 'resolved'")
+        params: tuple = ()
+        if strategy_id is not None:
+            sql += " AND p.strategy_id = ?"
+            params = (str(strategy_id),)
+        with self._lock:
+            rows = self._conn.execute(sql, params).fetchall()
+        return [(float(c), bool(w)) for c, w in rows]
+
     # ------------------------------------------------------------------ hidratacion
 
     @staticmethod

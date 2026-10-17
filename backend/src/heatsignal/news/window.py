@@ -122,6 +122,10 @@ class NewsWindow:
 
     # ---- lectura --------------------------------------------------------------------------------
 
+    def items(self) -> list[NewsItem]:
+        """Todo lo que hay en la ventana (copia), del mas nuevo al mas viejo por `published_ms`."""
+        return sorted(self._items.values(), key=lambda it: it.published_ms, reverse=True)
+
     def items_for(self, symbol: str, now_ms: int) -> list[NewsItem]:
         """Noticias que una corrida en `now_ms` podia conocer: del activo primero, luego del mercado."""
         asset = base_asset(symbol)

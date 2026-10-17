@@ -80,3 +80,68 @@ def test_publish_summarizes_latest_run_per_strategy(tmp_path) -> None:
                                                         "verdict": {"pasa": False}}))
     out = summarize(tmp_path / "results")["strategies"]
     assert len(out) == 1 and out[0]["sharpe"] == 0.9 and out[0]["runs"] == 2 and out[0]["hit_rate"] == 0.55
+
+
+def test_report_carries_daily_equity_curves_without_changing_metrics(tmp_path) -> None:
+    data = {"AAAUSDT": _md(80, 1), "BBBUSDT": _md(80, 2)}
+    cfg = RunConfig("absorcion-flujo-v1", list(data), holdout_months=1, train_days=20, test_days=10, n_perm=0)
+    rep = evaluate(cfg, TrialRegistry(tmp_path / "t.sqlite"), data=data)
+    eq = rep["oos"]["equity_daily"]
+    assert eq and all(len(p) == 2 and isinstance(p[0], str) for p in eq)
+    assert abs(eq[-1][1] - rep["oos"]["total_return"]) < 1e-5  # misma convencion que total_return (suma)
+    assert [p[0] for p in eq] == sorted(p[0] for p in eq)
+    beq = rep["baselines"]["equity_daily"]
+    assert set(beq["buy_and_hold"]) == set(data) and beq["basket"] and beq["buy_and_hold_mean"]
+    assert eq[0][0] >= rep["walk_forward"]["oos"][0]
+
+
+def test_publish_writes_detail_per_strategy(tmp_path) -> None:
+    import json
+
+    from heatsignal.lab.publish import cost_curve_rows, write_all
+
+    d = tmp_path / "results" / "s1-v1"
+    d.mkdir(parents=True)
+    old = {"strategy_id": "s1-v1", "oos": {"sharpe": 0.1}}
+    new = {"strategy_id": "s1-v1", "spec_hash": "h", "n_combinations": 3,
+           "walk_forward": {"train_days": 180, "test_days": 30, "windows": 2, "oos": ["2021-01-01", "2021-03-01"],
+                            "chosen": [{"train": ["a", "b"], "test": ["b", "c"], "params": {"k": 1}, "train_sharpe": 1.2}]},
+           "oos": {"sharpe": float("nan"), "breakeven_bps_per_side": 21.0,
+                   "cost_curve": {"cost_bps": {"0": 0.0, "1": 7.0}, "sharpe": {"0": 1.0, "1": 0.8},
+                                  "ann_return": {"0": 0.1, "1": 0.08}},
+                   "breakdown": {"precio": 1.0, "total": 0.9}, "equity_daily": [["2021-01-01", 0.01]]},
+           "baselines": {"basket_sharpe": 0.5, "equity_daily": {"basket": [["2021-01-01", 0.0]],
+                                                                "buy_and_hold_mean": [], "buy_and_hold": {}}},
+           "verdict": {"pasa": False, "checks": {"dsr": False}}}
+    (d / "20260101T000000.json").write_text(json.dumps(old))
+    (d / "20260102T000000.json").write_text(json.dumps(new))
+    (tmp_path / "results" / "viejo").mkdir()
+    (tmp_path / "results" / "viejo" / "1.json").write_text(json.dumps({"strategy_id": "viejo", "oos": {}}))
+    files = write_all(tmp_path)
+    assert {f.name for f in files} == {"lab_summary.json", "lab_detail_s1-v1.json", "lab_detail_viejo.json"}
+    det = json.loads((tmp_path / "lab_detail_s1-v1.json").read_text())  # JSON estricto: sin NaN
+    assert det["oos"]["sharpe"] is None and det["runs"] == ["20260101T000000", "20260102T000000"]
+    assert det["costs"]["cost_curve"] == [{"cost_bps": 0.0, "sharpe": 1.0, "ann_return": 0.1},
+                                          {"cost_bps": 7.0, "sharpe": 0.8, "ann_return": 0.08}]
+    assert det["costs"]["breakeven_vs_expected"] == 3.0 and det["walk_forward"]["chosen"][0]["params"] == {"k": 1}
+    assert det["equity_daily"]["strategy"] == [["2021-01-01", 0.01]] and det["equity_daily"]["basket"]
+    viejo = json.loads((tmp_path / "lab_detail_viejo.json").read_text())
+    assert viejo["equity_daily"] is None and "volver a correr" in viejo["notes"][0]
+    assert cost_curve_rows(None) is None and cost_curve_rows([{"cost_bps": 1}]) == [{"cost_bps": 1}]
+
+
+def test_publish_upload_sends_every_file_to_the_vm_data_dir(tmp_path, monkeypatch) -> None:
+    import json
+
+    from heatsignal.lab import publish
+
+    d = tmp_path / "data"
+    (tmp_path / "results" / "s1-v1").mkdir(parents=True)
+    (tmp_path / "results" / "s1-v1" / "1.json").write_text(json.dumps({"strategy_id": "s1-v1", "oos": {}}))
+    monkeypatch.setenv("HEATSIGNAL_LAB_DIR", str(d))
+    calls = []
+    monkeypatch.setattr(publish.subprocess, "run", lambda cmd, **kw: calls.append(cmd))
+    assert publish.main(["--upload"]) == 0
+    cmd = calls[0]
+    assert cmd[:3] == ["gcloud", "compute", "scp"] and cmd[-1] == f"{publish.VM_HOST}:~/heatsignal/data/"
+    assert {p.rsplit("/", 1)[-1] for p in cmd if p.endswith(".json")} == {"lab_summary.json", "lab_detail_s1-v1.json"}

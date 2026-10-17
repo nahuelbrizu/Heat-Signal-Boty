@@ -24,6 +24,7 @@ from __future__ import annotations
 import logging
 import time
 from collections import deque
+from itertools import islice
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 
@@ -146,6 +147,18 @@ class MemoryWindowSink:
 
     def tickers(self, symbol: str) -> list[TickerEvent]:
         return self._events("ticker", symbol)
+
+    def symbols(self) -> list[str]:
+        """Simbolos con alguna ventana abierta (formato interno, p.ej. 'SOL-USDT')."""
+        return sorted({sym for _, sym in self._buf})
+
+    def tail(self, kind: str, symbol: str, n: int) -> list:
+        """Los ultimos `n` eventos de (tipo, simbolo), del mas nuevo al mas viejo. Sin copiar la ventana entera."""
+        self.prune()
+        buf = self._buf.get((kind, symbol))
+        if not buf or n <= 0:
+            return []
+        return list(islice(reversed(buf), n))
 
     def summary(self) -> dict[str, dict[str, object]]:
         """Vista liviana por simbolo para el panel: conteos y ultimos valores (sin copiar ventanas)."""

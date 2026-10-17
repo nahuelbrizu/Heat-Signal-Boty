@@ -198,27 +198,46 @@ class HistoryStore:
         return row[0]
 
     def summary(self) -> dict[str, Any]:
-        def one(sql: str) -> Any:
-            return self._conn.execute(sql).fetchone()
-
-        bars = one("SELECT COUNT(*), MIN(minute_ms), MAX(minute_ms) FROM bars_1m")
-        liqs = one("SELECT COUNT(*), MAX(ts_ms) FROM liquidations")
-        news = one("SELECT COUNT(*), MAX(fetched_ms) FROM news")
-        klines = self._conn.execute(
-            "SELECT exchange, symbol, interval, COUNT(*), MIN(open_time_ms), MAX(open_time_ms) "
-            "FROM klines GROUP BY exchange, symbol, interval ORDER BY symbol").fetchall()
-        size = sum(p.stat().st_size for p in self.path.parent.glob(self.path.name + "*") if p.exists())
-        return {
-            "path": str(self.path),
-            "size_bytes": size,
-            "bars_1m": {"rows": bars[0], "first_ms": bars[1], "last_ms": bars[2]},
-            "liquidations": {"rows": liqs[0], "last_ms": liqs[1]},
-            "news": {"rows": news[0], "last_ms": news[1]},
-            "klines": [
-                {"exchange": e, "symbol": s, "interval": i, "rows": n, "first_ms": a, "last_ms": b}
-                for e, s, i, n, a, b in klines
-            ],
-        }
+        return summarize(self._conn, self.path)
 
     def close(self) -> None:
         self._conn.close()
+
+
+def open_readonly(path: str | Path, timeout_s: float = 5.0) -> sqlite3.Connection:
+    """Conexion de SOLO lectura a la base historica (modo WAL: no bloquea a la ingesta que escribe).
+
+    Pensada para abrirse y usarse dentro de un hilo aparte (`asyncio.to_thread`): una conexion nueva por
+    consulta, asi las lecturas pesadas del panel no corren en el hilo del event loop.
+    """
+    from urllib.parse import quote
+
+    uri = f"file:{quote(str(Path(path).resolve()))}?mode=ro"
+    return sqlite3.connect(uri, uri=True, timeout=timeout_s, check_same_thread=True)
+
+
+def summarize(conn: sqlite3.Connection, path: str | Path) -> dict[str, Any]:
+    """Resumen de lo guardado (COUNTs por tabla). Escanea tablas grandes: correrlo fuera del event loop."""
+    path = Path(path)
+
+    def one(sql: str) -> Any:
+        return conn.execute(sql).fetchone()
+
+    bars = one("SELECT COUNT(*), MIN(minute_ms), MAX(minute_ms) FROM bars_1m")
+    liqs = one("SELECT COUNT(*), MAX(ts_ms) FROM liquidations")
+    news = one("SELECT COUNT(*), MAX(fetched_ms) FROM news")
+    klines = conn.execute(
+        "SELECT exchange, symbol, interval, COUNT(*), MIN(open_time_ms), MAX(open_time_ms) "
+        "FROM klines GROUP BY exchange, symbol, interval ORDER BY symbol").fetchall()
+    size = sum(p.stat().st_size for p in path.parent.glob(path.name + "*") if p.exists())
+    return {
+        "path": str(path),
+        "size_bytes": size,
+        "bars_1m": {"rows": bars[0], "first_ms": bars[1], "last_ms": bars[2]},
+        "liquidations": {"rows": liqs[0], "last_ms": liqs[1]},
+        "news": {"rows": news[0], "last_ms": news[1]},
+        "klines": [
+            {"exchange": e, "symbol": s, "interval": i, "rows": n, "first_ms": a, "last_ms": b}
+            for e, s, i, n, a, b in klines
+        ],
+    }

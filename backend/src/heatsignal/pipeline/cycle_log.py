@@ -99,6 +99,29 @@ class CycleLog:
                                 "analysis": analysis}
         return out
 
+    def page(self, *, status: str | None = None, limit: int = 50, offset: int = 0) -> tuple[int, list[dict[str, Any]]]:
+        """Pagina del historial (mas nuevo primero) SIN el reporte (pesa): solo `has_report`."""
+        where, params = ("WHERE status = ?", [status]) if status else ("", [])
+        total = int(self._conn.execute(f"SELECT COUNT(*) FROM cycle_log {where}", params).fetchone()[0])
+        rows = self._conn.execute(
+            "SELECT run_id, ts_ms, status, n_hypotheses, detail, decisions, report IS NOT NULL FROM cycle_log "
+            f"{where} ORDER BY ts_ms DESC, run_id DESC LIMIT ? OFFSET ?", [*params, int(limit), int(offset)]).fetchall()
+        return total, [
+            {"run_id": r[0], "ts_ms": r[1], "status": r[2], "n_hypotheses": r[3], "detail": r[4],
+             "decisions": json.loads(r[5]), "has_report": bool(r[6])}
+            for r in rows
+        ]
+
+    def get(self, run_id: str) -> dict[str, Any] | None:
+        """Un ciclo completo (con su reporte), o None."""
+        r = self._conn.execute(
+            "SELECT run_id, ts_ms, status, n_hypotheses, detail, decisions, report FROM cycle_log WHERE run_id = ?",
+            (run_id,)).fetchone()
+        if r is None:
+            return None
+        return {"run_id": r[0], "ts_ms": r[1], "status": r[2], "n_hypotheses": r[3], "detail": r[4],
+                "decisions": json.loads(r[5]), "report": None if r[6] is None else json.loads(r[6])}
+
     def counts(self) -> dict[str, int]:
         return dict(self._conn.execute("SELECT status, COUNT(*) FROM cycle_log GROUP BY status").fetchall())
 

@@ -114,7 +114,19 @@ def upload(out: Path, remote: str | None) -> bool:
         log.error("rclone fallo (rc=%d): %s", res.returncode, res.stderr.strip()[-500:])
         return False
     log.info("subido a %s", remote)
+    _mark_upload(out, remote)
     return True
+
+
+def _mark_upload(out: Path, remote: str) -> None:
+    """Deja constancia del ultimo respaldo OK (lo lee el panel, /api/system). Fuera de `out`: no se sube."""
+    import json
+
+    try:
+        (out.parent / "last_upload.json").write_text(json.dumps(
+            {"ts_ms": int(time.time() * 1000), "remote": remote, "dir": str(out)}))
+    except OSError:
+        log.warning("no se pudo escribir la marca de ultimo respaldo", exc_info=True)
 
 
 def main(argv: Iterable[str] | None = None) -> int:

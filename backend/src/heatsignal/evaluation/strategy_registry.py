@@ -168,6 +168,14 @@ class StrategyRegistry:
         ).fetchall()
         return [self._hydrate(row, self._current_status(UUID(row[0]))) for row in rows]
 
+    def status_history(self, strategy_id: UUID) -> list[tuple[StrategyStatus, datetime]]:
+        """Todas las transiciones de estado de una estrategia, en orden (append-only)."""
+        rows = self._conn.execute(
+            "SELECT status, changed_at FROM strategy_status_events WHERE strategy_id = ? ORDER BY id ASC",
+            (str(strategy_id),),
+        ).fetchall()
+        return [(StrategyStatus(s), datetime.fromisoformat(t)) for s, t in rows]
+
     def _current_status(self, strategy_id: UUID) -> StrategyStatus:
         row = self._conn.execute(
             "SELECT status FROM strategy_status_events WHERE strategy_id = ? ORDER BY id DESC LIMIT 1",

@@ -14,7 +14,8 @@ Procedimiento (plan-laboratorio.md, research/ml4t-metodologia.md):
   4. Cada (combinacion, ventana) se registra en el registro de intentos (append-only). K = combinaciones.
   5. Metricas OOS: Sharpe + IC bootstrap, PSR, DSR (con los Sharpe de todos los intentos), MinTRL, max DD,
      hit rate, descomposicion del PnL, curva de costos y break-even; contra buy & hold, canasta y entradas
-     al azar (p-valor empirico).
+     al azar (p-valor empirico). El reporte trae ademas las curvas de capital diarias OOS (`oos.equity_daily`
+     y `baselines.equity_daily`: canasta, buy & hold medio y por simbolo) solo para graficar.
   6. Veredicto con los criterios del plan. El holdout se abre aparte (`--open-holdout`), una sola vez.
 """
 
@@ -229,8 +230,24 @@ def evaluate(cfg: RunConfig, registry: TrialRegistry | None = None, data: dict[s
                                "p_value": p_random},
         },
     }
+    # Curvas de capital diarias (solo presentacion para el panel; no entran en ninguna metrica ni criterio).
+    # Retorno acumulado = suma de los retornos diarios, la misma convencion que `total_return`.
+    report["oos"]["equity_daily"] = equity_daily(oos)
+    bh_daily = {s: r.daily_returns for s, r in bh.items()}
+    report["baselines"]["equity_daily"] = {
+        "basket": equity_daily(basket.daily_returns),
+        "buy_and_hold_mean": equity_daily(pd.concat(bh_daily, axis=1).mean(axis=1)) if bh_daily else [],
+        "buy_and_hold": {s: equity_daily(r) for s, r in bh_daily.items()},
+    }
     report["verdict"] = verdict(report)
     return report
+
+
+def equity_daily(daily_returns: pd.Series) -> list[list[Any]]:
+    """[[fecha UTC 'YYYY-MM-DD', retorno acumulado al cierre de esa fecha], ...] (suma simple, 6 decimales)."""
+    r = daily_returns.sort_index()
+    r = r[~r.index.duplicated(keep="last")].fillna(0.0)
+    return [[str(pd.Timestamp(ts).date()), round(float(v), 6)] for ts, v in r.cumsum().items()]
 
 
 def stats_pvalue(observed: float, null: list[float]) -> float | None:
