@@ -83,6 +83,23 @@ class MarketContext(BaseModel):
     regime: Regime
 
 
+CoverageState = Literal["ok", "partial", "stale", "missing"]
+
+
+class DataQuality(BaseModel):
+    """Lo mismo que `data_gaps` pero en numeros, para graficar en el panel (el LLM lee `data_gaps`)."""
+
+    bars_closed: int = Field(description="Barras cerradas de la serie usada para ATR/regimen")
+    bar_s: int
+    atr_bars_needed: int
+    regime_bars_needed: int
+    window_s: int
+    warmup_have_s: float | None = Field(default=None, description="Segundos acumulados en memoria (None: sin dato)")
+    coverage: dict[str, dict[str, CoverageState]] = Field(
+        default_factory=dict, description="exchange -> {trades, liquidations, ticker, funding, open_interest}"
+    )
+
+
 class FeatureSet(BaseModel):
     """Todo lo que el grafo de agentes recibe para un simbolo en una corrida."""
 
@@ -99,3 +116,4 @@ class FeatureSet(BaseModel):
         default_factory=list, description="Noticias recientes del simbolo y del mercado (ver schema/news.py)"
     )
     news_model_id: str | None = Field(default=None, description="Version del lector/etiquetado de noticias")
+    quality: DataQuality | None = Field(default=None, description="Calidad de datos estructurada (panel)")

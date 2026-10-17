@@ -142,3 +142,17 @@ async def test_run_forever_stops_promptly(tmp_path) -> None:
     stop.set()
     await asyncio.wait_for(task, timeout=1)
     assert loop.last_result is None  # el primer ciclo espera un intervalo
+
+
+async def test_features_carry_structured_quality_for_the_panel() -> None:
+    clock = Clock(T0)
+    memory = await _filled_memory(clock)
+    loop = AnalysisLoop(memory, [SYM], registry=None, clock_ms=clock)  # type: ignore[arg-type]
+    q = (await loop.build_features(clock.ms))[SYM].quality
+    assert q is not None
+    assert q.warmup_have_s == 3600 and q.window_s == 1800
+    assert q.bars_closed > 0 and q.atr_bars_needed == 15 and q.regime_bars_needed == 21
+    assert q.coverage["binance"]["trades"] == "ok" and q.coverage["binance"]["ticker"] == "ok"
+    assert q.coverage["bybit"]["liquidations"] == "ok"
+    assert q.coverage["okx"] == {"trades": "missing", "liquidations": "missing", "ticker": "missing",
+                                 "funding": "missing", "open_interest": "missing"}

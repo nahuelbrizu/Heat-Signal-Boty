@@ -175,6 +175,10 @@ class MemoryWindowSink:
                         break
         return out
 
+    def accumulated_s(self) -> float:
+        """Segundos desde el arranque: cuanto de la ventana pedida ya se pudo acumular."""
+        return (self._clock_ms() - self.started_at_ms) / 1000
+
     def data_gaps(self, symbol: str, window_s: int) -> list[str]:
         """Huecos de la ventana en memoria, en texto, para `FeatureSet.data_gaps`."""
         now = self._clock_ms()

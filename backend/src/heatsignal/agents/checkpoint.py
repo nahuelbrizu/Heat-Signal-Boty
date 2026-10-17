@@ -40,6 +40,7 @@ def _state_types() -> list[type]:
     from ..evaluation.strategy_registry import StrategyHypothesis, StrategyStatus
     from ..schema.events import Exchange, Side
     from ..schema.features import (
+        DataQuality,
         FeatureSet,
         HeatmapSnapshot,
         LiquidationCluster,
@@ -62,7 +63,7 @@ def _state_types() -> list[type]:
         FeatureSet, HeatmapSnapshot, LiquidationCluster, MarketContext, OrderFlowWindow,
         PendingHypothesis, DebateTurn, SymbolArgument, LiquidationAnalysis,
         MarketContextAnalysis, OrderFlowAnalysis, ReportDraft, RunReport,
-        SymbolReportSection, SymbolDecision, NewsItem, NewsAnalysis,
+        SymbolReportSection, SymbolDecision, NewsItem, NewsAnalysis, DataQuality,
     ]
 
 

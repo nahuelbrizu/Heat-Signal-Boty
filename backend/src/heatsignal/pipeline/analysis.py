@@ -118,6 +118,8 @@ class AnalysisLoop:
                 build_feature_set, sym, liqs, trades, tickers, now_ms, self._window_s
             )
             update: dict = {"data_gaps": [*fs.data_gaps, *self._memory.data_gaps(sym, self._window_s)]}
+            if fs.quality is not None:
+                update["quality"] = fs.quality.model_copy(update={"warmup_have_s": self._memory.accumulated_s()})
             if self._news is not None:
                 update["news"] = self._news.items_for(sym, now_ms)
                 update["news_model_id"] = NEWS_MODEL_ID

@@ -24,7 +24,7 @@ from collections import Counter
 from collections.abc import Iterable, Sequence
 
 from ..schema.events import Coverage, Exchange, LiquidationEvent, TickerEvent, TradeEvent
-from ..schema.features import FeatureSet
+from ..schema.features import DataQuality, FeatureSet
 from ._window import EXCHANGE_ORDER, exchange_rank, select
 from .context import (
     DEFAULT_REGIME_LOOKBACK_BARS,
@@ -200,6 +200,27 @@ def build_feature_set(
     if context.regime == "unknown":
         gaps.append(f"regime: unknown (requiere ATR y {regime_lookback_bars + 1} barras cerradas)")
 
+    partial_set = set(partial)
+    coverage: dict[str, dict[str, str]] = {}
+    for ex in expected_exchanges:
+        if ex not in last_ticker:
+            ticker_state = "missing"
+        elif now_ms - last_ticker[ex] > stale_ticker_s * 1000:
+            ticker_state = "stale"
+        else:
+            ticker_state = "ok"
+        coverage[ex.value] = {
+            "trades": "ok" if ex in tr_sources else "missing",
+            "liquidations": ("partial" if ex.value in partial_set else "ok") if ex in liq_sources else "missing",
+            "ticker": ticker_state,
+            "funding": "ok" if ex in context.funding_rate_by_exchange else "missing",
+            "open_interest": "ok" if ex in oi_sources else "missing",
+        }
+    quality = DataQuality(
+        bars_closed=len(bars), bar_s=bar_s, atr_bars_needed=atr_period + 1,
+        regime_bars_needed=regime_lookback_bars + 1, window_s=window_s, coverage=coverage,
+    )
+
     return FeatureSet(
         symbol=symbol,
         ts_ms=now_ms,
@@ -207,4 +228,5 @@ def build_feature_set(
         order_flow=of,
         context=context,
         data_gaps=gaps,
+        quality=quality,
     )
