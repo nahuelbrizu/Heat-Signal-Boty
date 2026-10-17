@@ -136,6 +136,14 @@
   juntar evidencia.** En cualquier caso, 3 meses no alcanzan para "probar": el paper trading sigue siendo
   necesario.
 
+- **Holdout de `donchian-ensemble-v1` abierto (2026-10-17): NO confirma.** Ventana 2026-07-16 → 2026-10-16
+  (92 días, 24 trades), `target_vol` 0,15 elegido con la regla del walk-forward. Sharpe 1,80 (IC 95% −3,7 a 5,1),
+  retorno +4,3%, max DD 2,0%. Checks: retorno > 0 ✓; Sharpe > canasta ✗ (canasta 1,85, retorno +19,7%); azar
+  ✗ (p 0,86: en un trimestre muy alcista, las entradas long al azar con la misma duración rinden más, mediana 2,43).
+  Lectura: en un mercado que sube fuerte, una estrategia long con volatilidad objetivo 15% queda menos expuesta
+  que la canasta. La muestra es chica (IC enorme), así que el resultado ni confirma ni refuta con fuerza.
+  **Según la regla fijada: no pasa a plata real; puede seguir en paper trading para juntar evidencia.**
+
 ## Abiertas
 - ~~Plan de CoinGlass a contratar.~~ **Ya no aplica al core** — la fuente primaria pasó a WS nativos.
   Solo se retomaría si se implementa la fuente BYOK opcional (y ahí el plan lo elige el usuario).

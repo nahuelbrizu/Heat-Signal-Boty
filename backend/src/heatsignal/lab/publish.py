@@ -60,6 +60,7 @@ def summarize(results_dir: Path) -> dict[str, Any]:
     for _, runs in _latest_runs(results_dir):
         r = json.loads(runs[-1].read_text())
         o, b = r.get("oos", {}), r.get("baselines", {})
+        hold = _holdout(runs[-1].parent)
         out["strategies"].append({
             "strategy_id": r.get("strategy_id"), "spec_hash": r.get("spec_hash"), "run": runs[-1].stem,
             "runs": len(runs), "symbols": r.get("symbols"), "oos_range": r.get("walk_forward", {}).get("oos"),
@@ -71,7 +72,8 @@ def summarize(results_dir: Path) -> dict[str, Any]:
             "basket_sharpe": b.get("basket_sharpe"),
             "random_p": (b.get("random_entries") or {}).get("p_value"),
             "verdict": r.get("verdict"),
-            "holdout": r.get("data", {}).get("holdout"), "holdout_start": r.get("data", {}).get("holdout_start"),
+            "holdout": ("ABIERTO" if hold else r.get("data", {}).get("holdout")),
+            "holdout_result": None if not hold else {"sharpe": hold.get("sharpe"), "total_return": hold.get("total_return"), "trades": hold.get("trades"), "confirma": (hold.get("verdict") or {}).get("confirma"), "checks": (hold.get("verdict") or {}).get("checks")}, "holdout_start": r.get("data", {}).get("holdout_start"),
             "has_detail": bool(r.get("strategy_id")) and SAFE_ID.match(str(r.get("strategy_id"))) is not None,
         })
     return out
@@ -136,6 +138,16 @@ def detail(run: dict[str, Any], run_files: list[Path]) -> dict[str, Any]:
     }
 
 
+def _holdout(strategy_dir: Path) -> dict[str, Any] | None:
+    """Resultado de la apertura del holdout (results/<id>/holdout/*.json), si se abrio. Se abre una sola vez."""
+    files = sorted((strategy_dir / "holdout").glob("*.json"))
+    if not files:
+        return None
+    h = json.loads(files[-1].read_text())
+    return {"window": h.get("window"), "days": h.get("days"), "selected_params": h.get("selected_params"),
+            **(h.get("holdout") or {}), "baselines": h.get("baselines"), "verdict": h.get("verdict")}
+
+
 def write_all(home: Path) -> list[Path]:
     """Escribe lab_summary.json y un lab_detail_<id>.json por estrategia en `home`. Devuelve los archivos."""
     from datetime import datetime, timezone
@@ -153,6 +165,7 @@ def write_all(home: Path) -> list[Path]:
             print(f"strategy_id invalido para archivo, se omite el detalle: {sid!r}")
             continue
         d = detail(run, runs)
+        d["holdout"] = _holdout(runs[-1].parent)
         d["generated_at"] = generated_at
         path = home / f"lab_detail_{sid}.json"
         path.write_text(json.dumps(_nan_to_null(d), ensure_ascii=False, separators=(",", ":")))
