@@ -67,6 +67,8 @@ Ver `.claude/context/agents.md`.
 | `.claude/context/phase-3-evaluation.md` | Evaluador, benchmark, calibración, modo shadow |
 | `.claude/context/phase-4-product.md` | Dashboard, API pública, reporte diario |
 | `.claude/context/decisions.md` | Decisiones abiertas y su estado (ADR liviano) |
+| `.claude/context/plan-laboratorio.md` | Plan de etapas 1b–3: historia, laboratorio de backtest, lote de estrategias, Freqtrade |
+| `.claude/context/research/` | Investigaciones: datos de Binance, ML4T, catálogo de hipótesis, motores de backtest |
 | `.claude/context/historial.md` | Registro cronológico de sesiones y avances — actualizar al cierre de cada sesión relevante |
 
 ## Reglas para Claude Code en este repo
