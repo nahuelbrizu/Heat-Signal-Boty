@@ -111,6 +111,21 @@
   el ciclo queda `error`. Verificado contra la API real: el grafo completo corre solo con Gemini en ~47 s.
   Gemini da confianzas más altas que Claude (0,85–0,95 contra ~0,5): mirar la calibración (Brier) por proveedor.
 
+- **Resultados del lote 1 del laboratorio (2026-10-17).** Walk-forward OOS del 2021-03-13 al 2026-07-15 (1.950 días),
+  holdout del 2026-07-15 en adelante **sellado**. Comparación: canasta Sharpe 0,63; buy & hold medio 0,02.
+  - **Pasa sus criterios pre-registrados: solo `donchian-ensemble-v1`.** Sharpe 1,08 (IC 95% 0,10–2,01), retorno
+    +43% con max DD 9,8%, 635 trades, acierto 21% (pocas ganancias grandes), break-even 77 bps por lado, p contra
+    azar 0,0099, DSR 0,994 con K = sus 3 variantes. PnL: precio +0,53, funding −0,05, costos −0,04.
+  - **PERO con el ajuste estricto de todo el programa (K = 20 variantes del lote, varianza de sus Sharpe)**: SR0 anual
+    ≈ 2,67 y DSR ≈ 0. Ni el mejor Sharpe de desarrollo (1,40) supera lo esperable por azar entre 20 intentos tan
+    dispares. **Conclusión: candidata, no probada.** El siguiente paso es evidencia fresca: holdout (una vez)
+    y paper trading hacia adelante.
+  - **No pasan (7):** `flujo-apertura-hora` (Sharpe −1,93), `reversion-flujo-extremo-15m` (−0,87),
+    `capitulacion-long` (−0,18; 61 trades), `squeeze-short` (−0,40; 37 trades), `funding-crowding-xs` (−1,30; los
+    costos −0,68 se comen el funding cobrado +0,08), `funding-crowding-short` (−0,78) y el control
+    `absorcion-flujo` (−4,99, falló como se esperaba: el laboratorio no inventa ganancias). Varias tienen bruto
+    positivo y mueren por comisiones y slippage (break-even de 0,4–3,4 bps contra 7 bps de costo).
+
 ## Abiertas
 - ~~Plan de CoinGlass a contratar.~~ **Ya no aplica al core** — la fuente primaria pasó a WS nativos.
   Solo se retomaría si se implementa la fuente BYOK opcional (y ahí el plan lo elige el usuario).
