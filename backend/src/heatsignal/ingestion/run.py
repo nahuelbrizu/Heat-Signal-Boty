@@ -400,6 +400,7 @@ async def start_panel(
         memory=_memory_sink(sinks),
         history=_recorder(sinks),
         cycle_log=analysis.cycle_log if analysis else None,
+        lab_summary_path=Path(cfg.eval_db).parent / "lab_summary.json",
         analysis=analysis.loop if analysis else None,
         registry=analysis.registry if analysis else None,
         store=analysis.store if analysis else None,

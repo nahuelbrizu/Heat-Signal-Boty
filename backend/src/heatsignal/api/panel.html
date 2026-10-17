@@ -171,6 +171,13 @@
   </section>
 
   <section>
+    <h2>Laboratorio (backtest) <span class="muted" id="lab-meta"></span></h2>
+    <div class="table-wrap"><table id="lab"></table></div>
+    <p class="muted" style="font-size:12px;margin:8px 0 0">Walk-forward fuera de muestra con costos y funding reales; holdout de 3 meses sellado.
+      Para pasar a paper trading tiene que cumplir todos los criterios.</p>
+  </section>
+
+  <section>
     <h2>Hipótesis <span class="muted" id="hyp-count"></span></h2>
     <div class="table-wrap"><table id="hypotheses"></table></div>
   </section>
@@ -447,6 +454,32 @@ function symbolCard(sym, a, d, ts, now) {
       ));
 }
 
+const CHECK_LABEL = { opera: "opera", dsr: "DSR", breakeven: "costos", le_gana_a_la_canasta: "canasta",
+  le_gana_al_buy_and_hold_medio: "B&H", le_gana_al_azar: "azar" };
+function renderLab(lab) {
+  if (!lab || !lab.strategies) {
+    $("lab-meta").textContent = "";
+    table($("lab"), [["Estado"]], [], "Todavía no se publicaron resultados (python -m heatsignal.lab.publish --upload en la PC).");
+    return;
+  }
+  $("lab-meta").textContent = "· " + lab.strategies.length + " estrategias · publicado " + new Date(lab.generated_at).toLocaleString("es-AR");
+  const f = (v, d = 2) => v === null || v === undefined || Number.isNaN(v) ? "—" : num(v, d);
+  table($("lab"), [["Estrategia"], ["Sharpe OOS", "num"], ["IC 95%", "num"], ["DSR", "num"], ["Trades", "num"],
+    ["Acierto", "num"], ["Break-even", "num"], ["Canasta", "num"], ["p azar", "num"], ["Criterios"]],
+    lab.strategies.map((s) => {
+      const ch = (s.verdict && s.verdict.checks) || {};
+      const chips = Object.entries(ch).map(([k, ok]) => el("span", { class: "chip " + (ok ? "ok" : "bad"), style: "margin:1px" },
+        (ok ? "✓ " : "✗ ") + (CHECK_LABEL[k] || k)));
+      const pass = s.verdict && s.verdict.pasa;
+      return [[el("span", {}, el("b", {}, s.strategy_id), el("br"), el("span", { class: "muted mono" }, (s.oos_range || []).join(" → ")))],
+        [f(s.sharpe), "num"], [s.sharpe_ci95 ? f(s.sharpe_ci95[0]) + " / " + f(s.sharpe_ci95[1]) : "—", "num"],
+        [f(s.dsr, 3), "num"], [f(s.trades, 0), "num"], [s.hit_rate === null || s.hit_rate === undefined ? "—" : pct(s.hit_rate * 100, 0), "num"],
+        [s.breakeven_bps === null || s.breakeven_bps === undefined ? "—" : f(s.breakeven_bps, 1) + " bps", "num"],
+        [f(s.basket_sharpe), "num"], [f(s.random_p, 3), "num"],
+        [el("span", {}, el("span", { class: "chip " + (pass ? "ok" : "warn") }, pass ? "pasa a paper" : "no pasa"), el("br"), ...chips)]];
+    }), "Sin resultados.");
+}
+
 function bytes(n) {
   if (n === null || n === undefined) return "—";
   const u = ["B", "KB", "MB", "GB"]; let i = 0;
@@ -509,6 +542,7 @@ async function refreshStatus() {
     renderStrategies(s.evaluation);
     renderRan(s.analysis && s.analysis.last_ran, (s.analysis && s.analysis.per_symbol) || {}, s.now_ms);
     renderHistory(s.history, s.now_ms);
+    renderLab(s.lab);
     chartState.symbols = s.config.symbols || [];
     chartState.hypotheses = (s.evaluation && s.evaluation.hypotheses) || [];
     renderChartControls();

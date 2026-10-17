@@ -55,6 +55,7 @@ class PanelContext:
     news: Any = None  # news.window.NewsWindow
     history: Any = None  # history.recorder.MinuteRecorder
     cycle_log: Any = None  # pipeline.cycle_log.CycleLog
+    lab_summary_path: Path | None = None  # resumen del laboratorio publicado desde la PC (lab/publish.py)
 
 
 def _cycle_view(analysis: AnalysisLoop | None, *, ran: bool = False) -> dict[str, Any] | None:
@@ -92,6 +93,27 @@ def _history_view(ctx: PanelContext) -> dict[str, Any] | None:
         cached = (time.time(), summary)
         _HISTORY_CACHE[id(ctx.history)] = cached
     return {"recorder": ctx.history.stats.as_dict(), "store": cached[1], "summary_age_s": round(time.time() - cached[0], 1)}
+
+
+_LAB_CACHE: dict[str, tuple[float, Any]] = {}
+
+
+def _lab_view(ctx: PanelContext) -> Any:
+    """Resumen del laboratorio (se relee solo si el archivo cambio)."""
+    path = ctx.lab_summary_path
+    if path is None or not path.exists():
+        return None
+    mtime = path.stat().st_mtime
+    cached = _LAB_CACHE.get(str(path))
+    if cached is None or cached[0] != mtime:
+        import json
+
+        try:
+            cached = (mtime, json.loads(path.read_text(encoding="utf-8")))
+        except (OSError, ValueError):
+            return {"error": "lab_summary.json ilegible"}
+        _LAB_CACHE[str(path)] = cached
+    return cached[1]
 
 
 _PER_SYMBOL_CACHE: dict[int, tuple[float, dict[str, Any]]] = {}
@@ -207,6 +229,7 @@ def create_panel_app(ctx: PanelContext) -> FastAPI:
             "evaluation": _hypotheses_view(ctx),
             "news": None if ctx.news is None else ctx.news.summary(),
             "history": _history_view(ctx),
+            "lab": _lab_view(ctx),
         }
 
     @app.get("/api/features")

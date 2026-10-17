@@ -124,3 +124,17 @@ async def test_page_is_never_cached_and_status_carries_build_id(tmp_path) -> Non
     assert len(build) == 12 and (await client.get("/api/status")).json()["build"] == build
     ctx.started_at += 1  # otro proceso (deploy/reinicio) -> otro build: la pagina abierta se recarga
     assert (await _client(ctx).get("/api/status")).json()["build"] != build
+
+
+async def test_lab_summary_is_served_when_published(tmp_path) -> None:
+    import json
+
+    ctx = await _ctx(tmp_path, with_analysis=False)
+    client = _client(ctx)
+    assert (await client.get("/api/status")).json()["lab"] is None  # sin archivo -> nada
+    path = tmp_path / "lab_summary.json"
+    path.write_text(json.dumps({"generated_at": "2026-10-17T00:00:00Z", "strategies": [{"strategy_id": "x", "dsr": 0.5}]}))
+    ctx.lab_summary_path = path
+    lab = (await client.get("/api/status")).json()["lab"]
+    assert lab["strategies"][0]["strategy_id"] == "x"
+    assert "renderLab" in (await client.get("/")).text

@@ -66,3 +66,17 @@ def test_rule_that_never_trades_is_reported_not_crashed(tmp_path) -> None:
     rep = evaluate(cfg, TrialRegistry(tmp_path / "t.sqlite"), data={"AAAUSDT": md})
     assert rep["oos"]["trades"] == 0 and rep["oos"]["dsr"] is None
     assert rep["verdict"]["checks"]["opera"] is False and rep["verdict"]["pasa"] is False
+
+
+def test_publish_summarizes_latest_run_per_strategy(tmp_path) -> None:
+    import json
+
+    from heatsignal.lab.publish import summarize
+
+    d = tmp_path / "results" / "s1"
+    d.mkdir(parents=True)
+    (d / "20260101T000000.json").write_text(json.dumps({"strategy_id": "s1", "oos": {"sharpe": 0.1}}))
+    (d / "20260102T000000.json").write_text(json.dumps({"strategy_id": "s1", "oos": {"sharpe": 0.9, "hit_rate": {"hit_rate": 0.55}},
+                                                        "verdict": {"pasa": False}}))
+    out = summarize(tmp_path / "results")["strategies"]
+    assert len(out) == 1 and out[0]["sharpe"] == 0.9 and out[0]["runs"] == 2 and out[0]["hit_rate"] == 0.55
