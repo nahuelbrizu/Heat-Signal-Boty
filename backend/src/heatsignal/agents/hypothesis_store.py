@@ -34,6 +34,10 @@ class InMemoryPendingHypothesisStore:
             raise DuplicateHypothesisError(f"hypothesis_id {h.hypothesis_id} ya existe")
         self._items.append(h)
 
+    def open_positions(self) -> set[tuple[str, str]]:
+        """En memoria nada se resuelve: toda hipotesis cuenta como abierta."""
+        return {(str(h.strategy_id).lower(), h.symbol) for h in self._items}
+
     def all(self) -> list[PendingHypothesis]:
         return list(self._items)
 

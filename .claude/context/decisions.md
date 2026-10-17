@@ -38,6 +38,14 @@
   datos guardados. Los features agregados (no los eventos crudos) se envían al proveedor LLM cuando corre
   el grafo. El modo `persistent` (compose) queda en el código, apagado. Fecha: 2026-10-17.
 
+- **Una hipótesis abierta por estrategia y símbolo.** El Sintetizador no abre otra hipótesis de la misma
+  estrategia en el mismo símbolo mientras haya una sin resolver: queda `no_hypothesis` con motivo "ya hay
+  una hipótesis abierta". El candado está en código (`apply_proposals(open_positions=...)`, que lee
+  `PendingHypothesisStore.open_positions()`), no en el prompt. Al LLM se le listan las abiertas solo como
+  información. Por qué: con un ciclo cada 15 min, una estrategia de horizonte largo abriría cientos de
+  hipótesis casi iguales sobre el mismo movimiento, contaría una sola apuesta como n aciertos e inflaría el
+  intervalo de confianza. También ordena las estrategias de horas. Fecha: 2026-10-17.
+
 ## Abiertas
 - ~~Plan de CoinGlass a contratar.~~ **Ya no aplica al core** — la fuente primaria pasó a WS nativos.
   Solo se retomaría si se implementa la fuente BYOK opcional (y ahí el plan lo elige el usuario).
@@ -50,7 +58,12 @@
   proveedor no toca el grafo. Pendiente: confirmar proveedor + presupuesto, y validar con una API key
   real (no hay key en la máquina de desarrollo; todo está testeado con modelos falsos). El grafo ya
   está cableado en la VM y arranca solo cuando aparezca `ANTHROPIC_API_KEY` en su `.env`.
-- **Símbolos iniciales.** Corriendo BTCUSDT + SOLUSDT; propuesta sumar ETHUSDT. Falta confirmación.
+- **Símbolos iniciales.** Corriendo BTCUSDT + SOLUSDT. El usuario pidió sumar XRPUSDT (para la estrategia de
+  largo plazo `xrp-acumulacion-v1`); falta aplicarlo en el `.env` de la VM. ETHUSDT sigue como propuesta.
+- **Estrategias de largo plazo (meses).** Borrador `strategies/xrp-acumulacion-v1.json`, a 90 días. Antes de
+  publicar un número: el evaluador no descuenta funding (en un perpetuo a 90 días pesa mucho), así que se
+  evalúa como spot. Además, con una hipótesis abierta a la vez salen como mucho unas 4 por año: el n es
+  chico por construcción y el intervalo de confianza va a ser ancho durante años.
 - **Supuesto de costos publicado.** 10 bps round-trip (taker 5 bps × 2, sin slippage ni funding). Decidir
   si se publica así o se modela slippage/funding antes de mostrar números.
 - **Umbral de régimen (`regime-v1`).** 2 ATR de desplazamiento en 20 barras de 60 s; calibrar con datos

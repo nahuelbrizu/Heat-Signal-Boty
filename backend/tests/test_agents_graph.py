@@ -27,7 +27,7 @@ from heatsignal.agents.liquidation_analyst import LiquidationAnalysisBatch
 from heatsignal.agents.market_context_analyst import MarketContextAnalysisBatch
 from heatsignal.agents.order_flow_analyst import OrderFlowAnalysisBatch
 from heatsignal.agents.redactor import ReportDraft
-from heatsignal.agents.synthesizer import StrategyProposal, SynthesisBatch
+from heatsignal.agents.synthesizer import StrategyProposal, SynthesisBatch, apply_proposals
 from heatsignal.evaluation.strategy_registry import StrategyHypothesis
 from heatsignal.schema.signals import Direction
 
@@ -172,6 +172,38 @@ async def test_synthesizer_emits_hypothesis_with_code_entry_price_and_registered
     # el prompt lista las estrategias permitidas y NO menciona un precio de entrada a elegir
     synth_prompt = prompt_text(fake.calls_for(SynthesisBatch)[0])
     assert str(strategy.strategy_id) in synth_prompt
+
+
+async def test_synthesizer_does_not_overlap_open_hypotheses() -> None:
+    strategy = _strategy(horizon_s=90 * 86400)
+    store = InMemoryPendingHypothesisStore()
+    first = await build_graph(
+        ScriptedChatModel(full_script(SYMBOLS, strategy_id=str(strategy.strategy_id))), hypothesis_store=store
+    ).ainvoke(_input(strategies=[strategy], run_id="run-1"))
+    assert len(first["pending_hypotheses"]) == 2
+
+    fake = ScriptedChatModel(full_script(SYMBOLS, strategy_id=str(strategy.strategy_id)))
+    second = await build_graph(fake, hypothesis_store=store).ainvoke(_input(strategies=[strategy], run_id="run-2"))
+    assert second["pending_hypotheses"] == [] and len(store) == 2
+    assert {d.outcome for d in second["synthesis_decisions"]} == {"no_hypothesis"}
+    assert all("abierta" in d.reason for d in second["synthesis_decisions"])
+    # el LLM ve cuales estan abiertas
+    assert f"strategy_id={str(strategy.strategy_id).lower()} symbol=BTC-USDT" in prompt_text(
+        fake.calls_for(SynthesisBatch)[0]
+    )
+
+
+def test_apply_proposals_allows_one_per_strategy_and_symbol_within_a_batch() -> None:
+    strategy = _strategy(horizon_s=3600)
+    proposal = StrategyProposal(
+        symbol="BTC-USDT", decision="hypothesis", strategy_id=str(strategy.strategy_id),
+        direction="LONG", confidence=0.6, rationale="clusters similares reaccionaron en 55% de los casos",
+    )
+    hyps, decisions = apply_proposals(
+        [proposal, proposal], {"BTC-USDT": make_feature_set("BTC-USDT")}, [strategy], run_id="r"
+    )
+    assert len(hyps) == 1
+    assert [d.outcome for d in decisions] == ["hypothesis", "no_hypothesis"]
 
 
 async def test_synthesizer_rejects_unknown_strategy_id_and_logs(caplog) -> None:

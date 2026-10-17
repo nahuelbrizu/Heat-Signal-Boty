@@ -1,0 +1,16 @@
+{
+  "description": "xrp-acumulacion-v1: LONG de largo plazo en XRP cuando el apalancamiento se esta lavando (funding no positivo y OI cayendo). Solo XRP-USDT, solo LONG. Horizonte 90 dias. Se evalua como posicion spot (sin funding) contra mantener XRP los mismos 90 dias: solo aporta si el momento de entrada le gana a comprar y mantener.",
+  "entry_conditions": {
+    "symbol": "XRP-USDT",
+    "direction": "LONG",
+    "context.funding_rate_by_exchange": "todos los exchanges que informan <= 0",
+    "context.oi_change_pct_lte": -2.0,
+    "context.regime_not": "trend_down",
+    "si_no_se_cumple_todo": "no_hypothesis"
+  },
+  "exit_conditions": {
+    "horizon_s": 7776000,
+    "salida": "cierre al vencer el horizonte (sin stop ni take profit)"
+  },
+  "author": "nahue"
+}

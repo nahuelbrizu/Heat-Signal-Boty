@@ -78,3 +78,35 @@ async def test_index_serves_html(tmp_path) -> None:
     r = (await client.get("/"))
     assert r.status_code == 200 and "HeatSignal" in r.text
     assert "http" not in r.text.split("<script>")[0].lower().replace("http-equiv", "")  # sin recursos externos
+
+
+async def test_klines_passthrough_validates_and_reports_upstream_errors(tmp_path) -> None:
+    calls: list[str] = []
+
+    def fake_get(url: str, timeout_s: float) -> tuple[int, bytes]:
+        calls.append(url)
+        if "limit=2" in url:
+            return 200, b'[[1792108800000,"1.3343","1.3528","1.2884","1.3109","474559415.8",0,"0",1,"0","0","0"]]'
+        return 503, b"mantenimiento"
+
+    ctx = await _ctx(tmp_path, with_analysis=False)
+    ctx.http_get = fake_get
+    client = _client(ctx)
+
+    r = await client.get("/api/klines", params={"symbol": "SOL-USDT", "interval": "1d", "limit": 2})
+    assert r.status_code == 200
+    assert r.json()["candles"] == [{"t": 1792108800, "o": 1.3343, "h": 1.3528, "l": 1.2884, "c": 1.3109, "v": 474559415.8}]
+    assert "symbol=SOLUSDT" in calls[0] and "interval=1d" in calls[0]
+
+    assert (await client.get("/api/klines", params={"symbol": "ETHUSDT"})).status_code == 400  # no configurado
+    assert (await client.get("/api/klines", params={"symbol": "SOLUSDT", "interval": "3m"})).status_code == 400
+    assert (await client.get("/api/klines", params={"symbol": "SOLUSDT", "limit": 1501})).status_code == 422
+    assert (await client.get("/api/klines", params={"symbol": "SOLUSDT", "limit": 5})).status_code == 502
+    assert len(calls) == 2  # lo invalido no llega a Binance
+
+
+async def test_charts_library_is_served_locally(tmp_path) -> None:
+    client = _client(await _ctx(tmp_path, with_analysis=False))
+    r = await client.get("/static/lightweight-charts.js")
+    assert r.status_code == 200 and "Lightweight Charts" in r.text[:300]
+    assert '<script src="/static/lightweight-charts.js">' in (await client.get("/")).text

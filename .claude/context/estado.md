@@ -13,8 +13,8 @@
 | 3 — Evaluación | Implementado; timer cada 5 min en la VM, sin hipótesis todavía | `phase-3-evaluation.md` |
 | 4 — Producto | Panel **interno** listo (no público); dashboard/API pública/reporte no iniciados | `phase-4-product.md` |
 
-Código: rama `ingestion-binance-bybit` (último commit con el cableado end-to-end), **sin push** a GitHub.
-Tests: 379 pasando, 1 skipped (`backend/`, `.venv/bin/pytest -q`).
+Código: rama `ingestion-binance-bybit`, pusheada a GitHub (sin PR).
+Tests: 389 pasando, 1 skipped (`backend/`, `.venv/bin/pytest -q`).
 
 ## Qué corre hoy (VM de prueba)
 
@@ -26,22 +26,25 @@ Tests: 379 pasando, 1 skipped (`backend/`, `.venv/bin/pytest -q`).
 - `heatsignal-eval.timer` → `heatsignal-eval.service` cada 5 min (resolución + evaluación).
 - Único archivo persistido: `~/heatsignal/data/heatsignal_eval.sqlite` (estrategias + hipótesis). Con API
   key se suma `heatsignal_checkpoints.sqlite` (checkpoints del grafo).
-- Estado actual de cada ciclo: `no_strategies` (todavía no hay estrategias pre-registradas) y el grafo
-  deshabilitado por falta de `ANTHROPIC_API_KEY`.
+- `ANTHROPIC_API_KEY` cargada en `~/heatsignal/.env` (2026-10-17): grafo habilitado. Con la primera
+  estrategia registrada (`xrp-acumulacion-v1`) el grafo corre cada 15 min y gasta LLM.
 - Logs: `sudo journalctl -u heatsignal-ingestion -f`, `sudo journalctl -u heatsignal-eval -n 50`.
 - **Panel interno** (`api/panel.py` + `panel.html`): dentro del proceso de ingesta, escucha solo en
-  `127.0.0.1:8000` de la VM (sin puerto abierto en el firewall). Abrir con túnel SSH desde la PC:
+  `127.0.0.1:8000` de la VM (sin puerto abierto en el firewall). Incluye gráfico de velas (Binance REST
+  pedido al abrir, no se guarda) con hipótesis y clusters encima. Abrir con túnel SSH desde la PC:
   `gcloud compute ssh --zone asia-northeast1-a instance-20261016-191100 --project vocal-operand-271906 -- -N -L 8000:localhost:8000`
   y después `http://localhost:8000`. Muestra exchanges, ventana en memoria, último ciclo, features en
   vivo, estrategias e hipótesis. Solo lectura.
 
 ## Pendientes — los define el usuario (bloquean el modo shadow)
 
-- [ ] **Confirmar Anthropic como proveedor LLM** y cargar `ANTHROPIC_API_KEY` en `~/heatsignal/.env` de la
-      VM (nunca en git ni en el chat). Definir presupuesto: ~670 llamadas/día con ciclo de 15 min.
+- [ ] **Rotar la `ANTHROPIC_API_KEY`**: la actual se pegó en el chat. Generar otra y cargarla a mano en el
+      `.env` de la VM. Definir presupuesto: ~670 llamadas/día con ciclo de 15 min.
 - [ ] **Pre-registrar las primeras estrategias** con
       `python -m heatsignal.evaluation.register_strategy archivo.json` — antes de ver resultados.
-- [ ] **Símbolos**: confirmar si se suma ETH a BTC y SOL (`HEATSIGNAL_SYMBOLS`).
+- [ ] **XRP**: sumar `XRPUSDT` a `HEATSIGNAL_SYMBOLS` en el `.env` de la VM y revisar la RAM en el panel.
+- [ ] **`xrp-acumulacion-v1`** (borrador en `strategies/`, LONG a 90 días): revisar y registrar.
+- [ ] **Símbolos**: confirmar si se suma ETH (`HEATSIGNAL_SYMBOLS`).
 - [ ] **ToS de Binance/Bybit/OKX**: lectura rápida (`phase-0-blockers.md`, Bloqueante A).
 - [ ] **Push / PR** de la rama `ingestion-binance-bybit`.
 

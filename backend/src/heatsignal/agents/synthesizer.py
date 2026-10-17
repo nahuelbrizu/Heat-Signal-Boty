@@ -14,6 +14,9 @@ Reglas (anti-p-hacking, ver CLAUDE.md y `phase-2-agents.md`):
   - Cada simbolo termina con una decision explicita: `hypothesis`,
     `no_hypothesis` (con motivo) o `rejected` (con motivo). Un simbolo que el LLM
     omite queda como `no_hypothesis` con motivo "omitido".
+  - Una hipotesis abierta por (estrategia, simbolo): si el store informa una sin resolver, la
+    propuesta nueva queda como `no_hypothesis` (no se solapan ventanas sobre el mismo movimiento,
+    que inflarian n). El store lo expone con `open_positions()`; sin ese metodo no hay candado.
   - Las hipotesis aceptadas se persisten via `PendingHypothesisStore.add`.
 """
 
@@ -147,9 +150,14 @@ def apply_proposals(
     *,
     run_id: str | None,
     default_horizon_s: int = DEFAULT_HORIZON_S,
+    open_positions: set[tuple[str, str]] | None = None,
 ) -> tuple[list[PendingHypothesis], list[SymbolDecision]]:
-    """Validacion pura (sin LLM ni I/O): propuestas -> hipotesis + decisiones por simbolo."""
+    """Validacion pura (sin LLM ni I/O): propuestas -> hipotesis + decisiones por simbolo.
+
+    `open_positions`: pares (strategy_id en minusculas, symbol) con hipotesis sin resolver.
+    """
     allowed = {str(s.strategy_id).lower(): s for s in allowed_strategies}
+    open_keys = set(open_positions or ())
     hypotheses: list[PendingHypothesis] = []
     decisions: list[SymbolDecision] = []
     seen: set[str] = set()
@@ -172,6 +180,15 @@ def apply_proposals(
                 SymbolDecision(symbol=p.symbol, outcome="rejected", reason=result, strategy_id=p.strategy_id)
             )
             continue
+        key = (str(result.strategy_id).lower(), result.symbol)
+        if key in open_keys:
+            reason = "ya hay una hipotesis abierta de esta estrategia en este simbolo (sin solapamiento)"
+            logger.info("synthesizer: %s %s: %s", p.symbol, result.strategy_id, reason)
+            decisions.append(
+                SymbolDecision(symbol=p.symbol, outcome="no_hypothesis", reason=reason, strategy_id=str(result.strategy_id))
+            )
+            continue
+        open_keys.add(key)
         hypotheses.append(result)
         decisions.append(
             SymbolDecision(
@@ -214,8 +231,13 @@ def make_synthesizer_node(
                 ],
             }
 
+        open_fn = getattr(hypothesis_store, "open_positions", None)
+        open_positions: set[tuple[str, str]] = open_fn() if callable(open_fn) else set()
+        open_lines = "\n".join(f"- strategy_id={sid} symbol={sym}" for sid, sym in sorted(open_positions))
         prompt = (
             f"# Estrategias pre-registradas permitidas\n{render_allowed_strategies(allowed)}\n\n"
+            "# Hipotesis abiertas (no se puede abrir otra de la misma estrategia en el mismo simbolo)\n"
+            f"{open_lines or '(ninguna)'}\n\n"
             f"# Salidas de los analistas\n{render_analyst_digest(state)}\n\n"
             f"# Debate\n{render_transcript(state.get('debate_transcript') or [])}"
         )
@@ -228,6 +250,7 @@ def make_synthesizer_node(
             allowed,
             run_id=state.get("run_id"),
             default_horizon_s=default_horizon_s,
+            open_positions=open_positions,
         )
         if hypothesis_store is not None:
             for h in hypotheses:

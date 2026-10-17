@@ -347,3 +347,20 @@ def test_run_key_unique_at_engine_level(tmp_path: Path) -> None:
             (str(uuid4()), str(h.hypothesis_id)),
         )
     raw.close()
+
+
+def test_open_positions_tracks_unresolved_per_strategy_and_symbol(tmp_path: Path) -> None:
+    _, store, s = _setup(tmp_path)
+    assert store.open_positions() == set()
+    a = _hyp(s.strategy_id)
+    b = _hyp(s.strategy_id, symbol="XRP-USDT")
+    store.add(a)
+    store.add(b)
+    sid = str(s.strategy_id).lower()
+    assert store.open_positions() == {(sid, "BTC-USDT"), (sid, "XRP-USDT")}
+    store.resolve(_resolved(a))
+    assert store.open_positions() == {(sid, "XRP-USDT")}
+    store.resolve(
+        Resolution(hypothesis_id=b.hypothesis_id, status=HypothesisStatus.EXPIRED_NO_DATA, resolved_at=due_at(b))
+    )
+    assert store.open_positions() == set()

@@ -8,6 +8,8 @@ existe en esa RAM. Escucha en 127.0.0.1: se abre con un tunel SSH, nunca se expo
     GET /              pagina HTML (panel.html, sin dependencias externas)
     GET /api/status    workers, ventana en memoria, ultimo ciclo de analisis, estrategias e hipotesis
     GET /api/features  FeatureSet calculado AHORA desde la ventana (lo mismo que veria el grafo)
+    GET /api/klines    velas de Binance pedidas en el momento y no guardadas (`api/klines.py`)
+    GET /static/...    lightweight-charts (TradingView, Apache 2.0) servido local, sin CDN
     GET /health        healthcheck
 
 Los endpoints son `async def` a proposito: corren en el hilo del event loop, el mismo que usa la ingesta,
@@ -21,16 +23,19 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import HTMLResponse
+from fastapi import FastAPI, HTTPException, Query
+from fastapi.responses import FileResponse, HTMLResponse
 
 from ..evaluation.pending_store import PendingHypothesisStore
+from ..evaluation.price_source import HttpGet, to_binance_symbol
 from ..evaluation.strategy_registry import StrategyRegistry
 from ..ingestion.health import HealthRegistry
 from ..pipeline.analysis import AnalysisLoop
 from ..storage.memory import MemoryWindowSink
+from .klines import INTERVALS, MAX_LIMIT, KlinesError, fetch_klines
 
 _HTML_PATH = Path(__file__).with_name("panel.html")
+_CHARTS_JS = Path(__file__).with_name("static") / "lightweight-charts.standalone.production.js"
 MAX_HYPOTHESES = 50
 
 
@@ -45,6 +50,7 @@ class PanelContext:
     store: PendingHypothesisStore | None = None
     config: dict[str, Any] = field(default_factory=dict)
     started_at: float = field(default_factory=time.time)
+    http_get: HttpGet | None = None  # inyectable en tests (sin red)
 
 
 def _cycle_view(analysis: AnalysisLoop | None) -> dict[str, Any] | None:
@@ -147,5 +153,26 @@ def create_panel_app(ctx: PanelContext) -> FastAPI:
         now_ms = int(time.time() * 1000)
         fs = await ctx.analysis.build_features(now_ms)
         return {"ts_ms": now_ms, "features": {s: f.model_dump(mode="json") for s, f in fs.items()}}
+
+    @app.get("/static/lightweight-charts.js")
+    async def charts_js() -> FileResponse:
+        return FileResponse(_CHARTS_JS, media_type="application/javascript")
+
+    @app.get("/api/klines")
+    async def klines(
+        symbol: str,
+        interval: str = Query("1h"),
+        limit: int = Query(500, ge=1, le=MAX_LIMIT),
+    ) -> dict[str, Any]:
+        allowed = {to_binance_symbol(s) for s in ctx.config.get("symbols", [])}
+        if to_binance_symbol(symbol) not in allowed:
+            raise HTTPException(status_code=400, detail=f"simbolo no configurado: {symbol!r}")
+        if interval not in INTERVALS:
+            raise HTTPException(status_code=400, detail=f"interval debe ser uno de {list(INTERVALS)}")
+        try:
+            candles = await fetch_klines(symbol, interval, limit, http_get=ctx.http_get)
+        except KlinesError as exc:
+            raise HTTPException(status_code=502, detail=f"Binance: {exc}") from exc
+        return {"symbol": symbol, "interval": interval, "source": "binance-futures-last", "candles": candles}
 
     return app

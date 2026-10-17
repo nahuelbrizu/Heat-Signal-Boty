@@ -402,6 +402,20 @@ class PendingHypothesisStore:
             ).fetchall()
         return [UUID(r[0]) for r in rows]
 
+    def open_positions(self) -> set[tuple[str, str]]:
+        """Pares (strategy_id, symbol) con al menos una hipotesis sin resolucion.
+
+        El Sintetizador no abre otra hipotesis de la misma estrategia en el mismo simbolo mientras
+        haya una abierta: hipotesis solapadas sobre el mismo movimiento inflarian n y el intervalo
+        de confianza (decisions.md, "Una hipotesis abierta por estrategia y simbolo").
+        """
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT DISTINCT p.strategy_id, p.symbol FROM pending_hypotheses p WHERE NOT EXISTS "
+                "(SELECT 1 FROM hypothesis_resolutions r WHERE r.hypothesis_id = p.hypothesis_id)"
+            ).fetchall()
+        return {(str(sid).lower(), sym) for sid, sym in rows}
+
     def pending_count(self) -> int:
         """Cantidad de hipotesis sin resolucion (vencidas o no)."""
         with self._lock:

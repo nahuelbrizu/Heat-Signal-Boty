@@ -69,6 +69,12 @@
   .empty { color: var(--muted); font-style: italic; }
   .err { color: var(--bad); }
   footer { color: var(--muted); font-size: 12px; margin: 8px 0 24px; }
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+  .seg button { border: 0; border-radius: 0; border-right: 1px solid var(--line); padding: 4px 10px; }
+  .seg button:last-child { border-right: 0; }
+  .seg button.on { background: var(--chip); font-weight: 600; }
+  #chart { height: 440px; margin-top: 10px; }
+  .legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12px; margin-top: 8px; }
 </style>
 </head>
 <body>
@@ -91,6 +97,24 @@
   <section>
     <h2>Mercado (ventana en memoria)</h2>
     <div class="table-wrap"><table id="market"></table></div>
+  </section>
+
+  <section>
+    <div class="row" style="justify-content: space-between;">
+      <h2 style="margin:0">Velas</h2>
+      <div class="row">
+        <div class="seg" id="chart-sym"></div>
+        <div class="seg" id="chart-int"></div>
+        <span class="muted" id="chart-ts"></span>
+      </div>
+    </div>
+    <div id="chart"></div>
+    <div class="legend muted">
+      <span>Velas de Binance Futures (último precio), pedidas al abrir y no guardadas.</span>
+      <span><span class="buy">▲</span>/<span class="sell">▼</span> hipótesis LONG/SHORT · ● resultado · línea punteada = entrada de las pendientes</span>
+      <span>líneas finas = clusters de liquidaciones de la ventana (<span class="sell">longs</span> / <span class="buy">shorts</span> liquidados)</span>
+    </div>
+    <p class="err" id="chart-err"></p>
   </section>
 
   <section>
@@ -122,6 +146,7 @@
   <footer id="footer"></footer>
 </main>
 
+<script src="/static/lightweight-charts.js"></script>
 <script>
 "use strict";
 const $ = (id) => document.getElementById(id);
@@ -293,6 +318,10 @@ async function refreshStatus() {
     renderMarket(s.memory, s.now_ms);
     renderCycle(s.analysis);
     renderStrategies(s.evaluation);
+    chartState.symbols = s.config.symbols || [];
+    chartState.hypotheses = (s.evaluation && s.evaluation.hypotheses) || [];
+    renderChartControls();
+    drawOverlays();
     if (s.memory) {
       const st = s.memory.stats;
       $("footer").textContent = "memoria · escritos " + num(st.written, 0) + " · vencidos " + num(st.expired, 0) +
@@ -352,6 +381,8 @@ async function refreshFeatures() {
     if (!r.ok) throw new Error("HTTP " + r.status);
     const data = await r.json();
     box.replaceChildren(...Object.values(data.features).map(featureCard));
+    chartState.features = data.features;
+    drawOverlays();
     $("feat-ts").textContent = "calculado " + time(data.ts_ms);
   } catch (e) {
     box.replaceChildren(el("p", { class: "err" }, "No se pudieron calcular: " + e.message));
@@ -360,11 +391,163 @@ async function refreshFeatures() {
   }
 }
 
+// ---- velas ---------------------------------------------------------------------------------------
+
+const INTERVALS = [["15m", 500], ["1h", 500], ["4h", 500], ["1d", 500], ["1w", 300]];
+const norm = (s) => (s || "").replace(/[-/]/g, "").toUpperCase();
+const chartState = {
+  symbol: null, interval: "1h", symbols: [], hypotheses: [], features: {}, candles: [],
+  chart: null, series: null, lines: [], seq: 0,
+};
+try {
+  const saved = JSON.parse(localStorage.getItem("hs-chart") || "{}");
+  if (saved.symbol) chartState.symbol = saved.symbol;
+  if (saved.interval && INTERVALS.some(([iv]) => iv === saved.interval)) chartState.interval = saved.interval;
+} catch (e) { /* sin storage: valores por defecto */ }
+
+function saveChartPrefs() {
+  try { localStorage.setItem("hs-chart", JSON.stringify({ symbol: chartState.symbol, interval: chartState.interval })); }
+  catch (e) { /* sin storage */ }
+}
+
+function cssVar(name) { return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }
+
+function chartColors() {
+  return { bg: cssVar("--panel"), ink: cssVar("--muted"), line: cssVar("--line"),
+           up: cssVar("--buy"), down: cssVar("--sell") };
+}
+
+function applyChartTheme() {
+  const k = chartColors();
+  chartState.chart.applyOptions({
+    layout: { background: { color: k.bg }, textColor: k.ink },
+    grid: { vertLines: { color: k.line }, horzLines: { color: k.line } },
+    rightPriceScale: { borderColor: k.line }, timeScale: { borderColor: k.line },
+  });
+  chartState.series.applyOptions({ upColor: k.up, downColor: k.down, borderUpColor: k.up,
+    borderDownColor: k.down, wickUpColor: k.up, wickDownColor: k.down });
+}
+
+function ensureChart() {
+  if (chartState.chart || !window.LightweightCharts) return;
+  chartState.chart = LightweightCharts.createChart($("chart"), {
+    autoSize: true,
+    layout: { fontFamily: "system-ui, sans-serif" },
+    timeScale: { timeVisible: true },
+    localization: { locale: "es-AR" },
+  });
+  chartState.series = chartState.chart.addCandlestickSeries({});
+  applyChartTheme();
+  window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => { applyChartTheme(); drawOverlays(); });
+}
+
+function renderChartControls() {
+  const syms = chartState.symbols;
+  if (!syms.length) return;
+  if (!chartState.symbol || !syms.some((s) => norm(s) === norm(chartState.symbol))) {
+    chartState.symbol = syms[0];
+    loadCandles(true);
+  } else if (!chartState.candles.length && !chartState.seq) {
+    loadCandles(true);
+  }
+  const symBox = $("chart-sym"), intBox = $("chart-int");
+  const key = syms.join(",") + "|" + chartState.symbol + "|" + chartState.interval;
+  if (symBox.dataset.key === key) return;
+  symBox.dataset.key = key;
+  symBox.replaceChildren(...syms.map((s) => {
+    const b = el("button", { class: norm(s) === norm(chartState.symbol) ? "on" : "" }, s);
+    b.addEventListener("click", () => { chartState.symbol = s; saveChartPrefs(); renderChartControls(); loadCandles(true); });
+    return b;
+  }));
+  intBox.replaceChildren(...INTERVALS.map(([iv]) => {
+    const b = el("button", { class: iv === chartState.interval ? "on" : "" }, iv);
+    b.addEventListener("click", () => { chartState.interval = iv; saveChartPrefs(); renderChartControls(); loadCandles(true); });
+    return b;
+  }));
+}
+
+async function loadCandles(fit = false) {
+  if (!chartState.symbol) return;
+  ensureChart();
+  if (!chartState.series) { $("chart-err").textContent = "No cargó la librería de gráficos."; return; }
+  const seq = ++chartState.seq;
+  const limit = (INTERVALS.find(([iv]) => iv === chartState.interval) || [null, 500])[1];
+  try {
+    const r = await fetch("/api/klines?symbol=" + encodeURIComponent(chartState.symbol) +
+      "&interval=" + chartState.interval + "&limit=" + limit, { cache: "no-store" });
+    const data = await r.json();
+    if (seq !== chartState.seq) return;  // llegó tarde: ya se cambió de símbolo o intervalo
+    if (!r.ok) throw new Error(data.detail || "HTTP " + r.status);
+    chartState.candles = data.candles;
+    const last = data.candles[data.candles.length - 1];
+    const prec = last ? Math.max(2, Math.min(6, 5 - Math.floor(Math.log10(last.c)))) : 2;
+    chartState.series.applyOptions({ priceFormat: { type: "price", precision: prec, minMove: Math.pow(10, -prec) } });
+    chartState.series.setData(data.candles.map((k) => ({ time: k.t, open: k.o, high: k.h, low: k.l, close: k.c })));
+    if (fit) chartState.chart.timeScale().fitContent();
+    $("chart-err").textContent = "";
+    $("chart-ts").textContent = "actualizado " + time(Date.now());
+    drawOverlays();
+  } catch (e) {
+    if (seq === chartState.seq) $("chart-err").textContent = "No se pudieron traer las velas: " + e.message;
+  }
+}
+
+// Las marcas tienen que caer sobre una vela existente: van a la última con apertura <= t.
+function snapToCandle(tSec) {
+  const cs = chartState.candles;
+  if (!cs.length || tSec < cs[0].t) return null;
+  let lo = 0, hi = cs.length - 1;
+  while (lo < hi) { const mid = (lo + hi + 1) >> 1; if (cs[mid].t <= tSec) lo = mid; else hi = mid - 1; }
+  return cs[lo].t;
+}
+
+function drawOverlays() {
+  const series = chartState.series;
+  if (!series || !chartState.candles.length) return;
+  const c = chartColors();
+  for (const l of chartState.lines) series.removePriceLine(l);
+  chartState.lines = [];
+  const sym = norm(chartState.symbol);
+
+  const markers = [];
+  for (const h of chartState.hypotheses.filter((x) => norm(x.symbol) === sym)) {
+    const isLong = h.direction === "LONG";
+    const created = Date.parse(h.created_at) / 1000;
+    const t = snapToCandle(created);
+    if (t !== null) {
+      markers.push({ time: t, position: isLong ? "belowBar" : "aboveBar", color: isLong ? c.up : c.down,
+        shape: isLong ? "arrowUp" : "arrowDown", text: h.direction + " " + num(h.confidence, 2) });
+    }
+    if (h.status === "pending") {
+      chartState.lines.push(series.createPriceLine({ price: Number(h.entry), color: isLong ? c.up : c.down,
+        lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: "entrada " + h.direction }));
+    } else if (h.exit !== null) {
+      const te = snapToCandle(created + h.horizon_s);
+      if (te !== null) markers.push({ time: te, position: "inBar", color: h.win ? c.up : c.down, shape: "circle",
+        text: h.pnl_pct === null ? "" : pct(h.pnl_pct) });
+    }
+  }
+  markers.sort((a, b) => a.time - b.time);
+  series.setMarkers(markers);
+
+  const fs = Object.values(chartState.features).find((f) => norm(f.symbol) === sym);
+  if (fs) {
+    const top = [...fs.heatmap.clusters].sort((a, b) => b.notional_usd - a.notional_usd).slice(0, 5);
+    for (const cl of top) {
+      chartState.lines.push(series.createPriceLine({
+        price: cl.price_mid, color: (cl.dominant_side || "").toLowerCase() === "sell" ? c.down : c.up,
+        lineWidth: 1, lineStyle: 0, axisLabelVisible: false, title: "liq " + usd(cl.notional_usd),
+      }));
+    }
+  }
+}
+
 $("feat-btn").addEventListener("click", refreshFeatures);
 refreshStatus();
 refreshFeatures();
 setInterval(refreshStatus, 5000);
 setInterval(refreshFeatures, 30000);
+setInterval(() => loadCandles(false), 30000);
 </script>
 </body>
 </html>
