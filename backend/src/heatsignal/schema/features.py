@@ -83,7 +83,7 @@ class MarketContext(BaseModel):
     regime: Regime
 
 
-CoverageState = Literal["ok", "partial", "stale", "missing"]
+CoverageState = Literal["ok", "partial", "stale", "missing", "na"]  # na: el exchange no lo publica
 
 
 class DataQuality(BaseModel):

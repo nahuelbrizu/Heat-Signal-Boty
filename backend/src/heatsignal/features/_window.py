@@ -17,7 +17,11 @@ from ..schema.events import Exchange
 E = TypeVar("E")
 
 # Orden canonico de exchanges para desempates y listas ordenadas (deterministico).
-EXCHANGE_ORDER: tuple[Exchange, ...] = (Exchange.BINANCE, Exchange.BYBIT, Exchange.OKX)
+EXCHANGE_ORDER: tuple[Exchange, ...] = (Exchange.BINANCE, Exchange.BYBIT, Exchange.OKX, Exchange.HYPERLIQUID)
+
+# Exchanges sin stream publico de liquidaciones (Hyperliquid: solo por usuario). No se esperan
+# liquidaciones de ellos: no se declara "sin eventos" cada ciclo, la cobertura figura como "na".
+NO_PUBLIC_LIQUIDATIONS: frozenset[Exchange] = frozenset({Exchange.HYPERLIQUID})
 
 
 def exchange_rank(ex: Exchange) -> int:

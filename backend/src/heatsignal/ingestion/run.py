@@ -25,7 +25,7 @@ Configuracion por variables de entorno (ver `.env.example` en la raiz del repo):
   HEATSIGNAL_PANEL_PORT         8000   panel interno en 127.0.0.1 (0 lo apaga); abrir con tunel SSH
   HEATSIGNAL_PANEL_HOST         127.0.0.1
   HEATSIGNAL_SYMBOLS            "BTCUSDT,SOLUSDT"   simbolos en formato del exchange (sin guion)
-  HEATSIGNAL_EXCHANGES          "binance,bybit,okx" exchanges a habilitar (okx solo si el modulo existe)
+  HEATSIGNAL_EXCHANGES          "binance,bybit,okx,hyperliquid" exchanges a habilitar
   REDIS_URL                     p.ej. redis://localhost:6379/0     (opcional)
   DATABASE_URL                  p.ej. postgresql://u:p@host/db     (opcional)
   HEATSIGNAL_TICKER_INTERVAL_S  1.0   (0 desactiva el throttle de tickers)
@@ -59,6 +59,7 @@ from ..storage.throttle import ThrottledSink
 from ..storage.timescale import TimescaleSink, _redact
 from .binance_worker import BinanceWorker, _norm_symbol
 from .bybit_worker import BybitWorker
+from .hyperliquid_worker import HyperliquidWorker
 from .health import CountingSink, HealthRegistry, ReconnectLogHandler
 
 log = logging.getLogger("heatsignal.ingestion.run")
@@ -68,6 +69,7 @@ log = logging.getLogger("heatsignal.ingestion.run")
 WORKER_FACTORIES: dict[str, Callable[..., Any]] = {
     "binance": BinanceWorker,
     "bybit": BybitWorker,
+    "hyperliquid": HyperliquidWorker,
 }
 
 # HOOK OKX: `ingestion/okx_worker.py` (misma API de constructor que BybitWorker) se esta escribiendo en
@@ -79,7 +81,7 @@ except ImportError:  # pragma: no cover - depende de si el modulo ya fue mergead
 else:  # pragma: no cover
     WORKER_FACTORIES["okx"] = OkxWorker
 
-KNOWN_EXCHANGES = ("binance", "bybit", "okx")
+KNOWN_EXCHANGES = ("binance", "bybit", "okx", "hyperliquid")
 STORAGE_MODES = ("memory", "persistent")
 SHUTDOWN_TIMEOUT_S = 3.0
 

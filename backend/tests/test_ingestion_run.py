@@ -22,7 +22,7 @@ from heatsignal.storage.throttle import ThrottledSink
 def test_config_defaults() -> None:
     cfg = RunConfig.from_env({})
     assert cfg.symbols == ("BTCUSDT", "SOLUSDT")
-    assert cfg.exchanges == ("binance", "bybit", "okx")
+    assert cfg.exchanges == ("binance", "bybit", "okx", "hyperliquid")
     assert cfg.redis_url is None and cfg.database_url is None
     assert cfg.ticker_interval_s == 1.0
     assert cfg.run_seconds is None

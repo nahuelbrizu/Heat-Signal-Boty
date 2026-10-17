@@ -25,7 +25,7 @@ from collections.abc import Iterable, Sequence
 
 from ..schema.events import Coverage, Exchange, LiquidationEvent, TickerEvent, TradeEvent
 from ..schema.features import DataQuality, FeatureSet
-from ._window import EXCHANGE_ORDER, exchange_rank, select
+from ._window import EXCHANGE_ORDER, NO_PUBLIC_LIQUIDATIONS, exchange_rank, select
 from .context import (
     DEFAULT_REGIME_LOOKBACK_BARS,
     DEFAULT_TREND_ATR_MULT,
@@ -157,7 +157,7 @@ def build_feature_set(
         gaps.append("liquidaciones: 0 eventos en la ventana (sin datos o sin liquidaciones: no distinguible)")
     else:
         for ex in expected_exchanges:
-            if ex not in liq_sources:
+            if ex not in liq_sources and ex not in NO_PUBLIC_LIQUIDATIONS:
                 gaps.append(f"liquidaciones: sin eventos de {ex.value} en la ventana")
     partial = [ex.value for ex in EXCHANGE_ORDER if ex in {e.source for e in liqs_win if e.coverage == Coverage.PARTIAL}]
     if partial:
@@ -211,7 +211,8 @@ def build_feature_set(
             ticker_state = "ok"
         coverage[ex.value] = {
             "trades": "ok" if ex in tr_sources else "missing",
-            "liquidations": ("partial" if ex.value in partial_set else "ok") if ex in liq_sources else "missing",
+            "liquidations": "na" if ex in NO_PUBLIC_LIQUIDATIONS else (
+                ("partial" if ex.value in partial_set else "ok") if ex in liq_sources else "missing"),
             "ticker": ticker_state,
             "funding": "ok" if ex in context.funding_rate_by_exchange else "missing",
             "open_interest": "ok" if ex in oi_sources else "missing",

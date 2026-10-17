@@ -57,6 +57,17 @@
   como datos. Versión `newsrss-v1`. Para medir si las noticias aportan, `xrp-acumulacion-v2` (con
   noticias) corre en paralelo con `v1` (sin noticias). Fecha: 2026-10-17.
 
+- **Hyperliquid como cuarto exchange (solo datos).** Worker `ingestion/hyperliquid_worker.py`, verificado contra
+  la doc oficial y la respuesta real (2026-10-17): `trades` (lado del agresor) + `activeAssetCtx` (mark,
+  funding, OI). El funding de Hyperliquid es **horario** y se guarda multiplicado por 8 (equivalente 8 h)
+  para compararlo con Binance/Bybit/OKX. No hay stream público de liquidaciones (solo por usuario), así que
+  la cobertura figura como `na`, sin hueco repetido en cada ciclo. Los perps cotizan en USD/USDC y se
+  mapean al símbolo interno `XXX-USDT`. Efecto sobre `xrp-acumulacion-v1/v2`: la condición "funding ≤ 0 en
+  todos los exchanges que informan" ahora incluye Hyperliquid y queda más estricta. Se acepta porque
+  todavía no hay hipótesis. El texto de la estrategia no cambia, pero el universo de exchanges sí, y
+  queda anotado acá. Fecha: 2026-10-17.
+- **XRPL DEX: pendiente de decisión del usuario.** Ver `estado.md`.
+
 ## Abiertas
 - ~~Plan de CoinGlass a contratar.~~ **Ya no aplica al core** — la fuente primaria pasó a WS nativos.
   Solo se retomaría si se implementa la fuente BYOK opcional (y ahí el plan lo elige el usuario).

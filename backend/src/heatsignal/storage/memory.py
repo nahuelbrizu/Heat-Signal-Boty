@@ -27,7 +27,7 @@ from collections import deque
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 
-from ..schema.events import IngestEvent, LiquidationEvent, TickerEvent, TradeEvent
+from ..schema.events import Exchange, IngestEvent, LiquidationEvent, TickerEvent, TradeEvent
 
 log = logging.getLogger("heatsignal.storage.memory")
 
@@ -171,7 +171,7 @@ class MemoryWindowSink:
                 for ev in reversed(buf):
                     if ev.mark_price is not None and ev.source.value not in marks:
                         marks[ev.source.value] = ev.mark_price
-                    if len(marks) == 3:
+                    if len(marks) == len(Exchange):
                         break
         return out
 

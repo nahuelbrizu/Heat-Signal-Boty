@@ -14,14 +14,14 @@
 | 4 — Producto | Panel **interno** listo (no público); dashboard/API pública/reporte no iniciados | `phase-4-product.md` |
 
 Código: rama `ingestion-binance-bybit`, pusheada a GitHub (sin PR).
-Tests: 401 pasando, 1 skipped (`backend/`, `.venv/bin/pytest -q`).
+Tests: 408 pasando, 1 skipped (`backend/`, `.venv/bin/pytest -q`).
 
 ## Qué corre hoy (VM de prueba)
 
 - GCP e2-small `instance-20261016-191100`, `asia-northeast1-a`, proyecto `vocal-operand-271906`.
   Debian 13, 2 vCPU, 1.9 GB RAM + 2 GB swap, disco 10 GB. Código en `~/heatsignal` (copiado con
   `git archive` + `gcloud compute scp`, no es un clon de git). venv Python 3.13 en `~/heatsignal/backend/.venv`.
-- `heatsignal-ingestion.service`: ingesta Binance + Bybit + OKX (BTCUSDT, SOLUSDT) en **modo memory**
+- `heatsignal-ingestion.service`: ingesta Binance + Bybit + OKX + Hyperliquid (BTC, SOL, XRP) en **modo memory**
   (datos de mercado solo en RAM) + ciclo de análisis cada 15 min. `MemoryMax=700M`, `Restart=always`.
 - `heatsignal-eval.timer` → `heatsignal-eval.service` cada 5 min (resolución + evaluación).
 - Único archivo persistido: `~/heatsignal/data/heatsignal_eval.sqlite` (estrategias + hipótesis). Con API
@@ -69,6 +69,8 @@ Noticias:
 - [ ] El etiquetado por palabras clave es simple (`newsrss-v1`): medir falsos positivos con lo que se acumule.
 
 Ingesta:
+- [ ] XRPL DEX (spot on-ledger): evaluar si suma. No tiene funding, OI ni liquidaciones; los trades salen
+      parseando la metadata de transacciones.
 - [ ] Open interest de Binance: el stream `markPrice` no lo trae; la suma de OI sale solo de Bybit + OKX
       (declarado en `data_gaps`). Opción: poll REST `openInterest` de Binance.
 - [ ] `reconnects` de health se infiere parseando logs; reemplazar por un hook explícito en los workers.

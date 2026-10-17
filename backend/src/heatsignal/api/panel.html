@@ -260,14 +260,14 @@ function renderMarket(memory, now) {
     const mk = m.mark_by_source || {};
     const t = m.last_trade, l = m.last_liquidation;
     return [
-      [sym], [price(mk.binance), "num"], [price(mk.bybit), "num"], [price(mk.okx), "num"],
+      [sym], [price(mk.binance), "num"], [price(mk.bybit), "num"], [price(mk.okx), "num"], [price(mk.hyperliquid), "num"],
       [t ? el("span", {}, sideSpan(t.side), " ", price(t.price), el("span", { class: "muted" }, " · " + t.source)) : "—"],
       [num(m.counts.trade, 0), "num"], [num(m.counts.ticker, 0), "num"], [num(m.counts.liquidation, 0), "num"],
       [l ? el("span", {}, sideSpan(l.side), " ", usd(l.notional_usd), " @ ", price(l.price),
               el("span", { class: "muted" }, " · " + l.source + " · hace " + ago(l.ts_ms, now))) : "—"],
     ];
   });
-  table($("market"), [["Símbolo"], ["Mark Binance", "num"], ["Mark Bybit", "num"], ["Mark OKX", "num"],
+  table($("market"), [["Símbolo"], ["Mark Binance", "num"], ["Mark Bybit", "num"], ["Mark OKX", "num"], ["Mark Hyperliquid", "num"],
     ["Último trade"], ["Trades", "num"], ["Tickers", "num"], ["Liqs", "num"], ["Última liquidación"]],
     rows, memory ? "La ventana todavía está vacía." : "Modo memory apagado: no hay ventana para mostrar.");
 }
@@ -367,7 +367,7 @@ function featureCard(fs) {
     el("dl", { class: "kv" },
       el("dt", {}, "mark"), el("dd", {}, price(ctx.mark_price)),
       el("dt", {}, "ATR (60s, 14)"), el("dd", {}, ctx.atr === null ? "—" : price(ctx.atr) + " · " + pct(ctx.atr_pct, 3)),
-      el("dt", {}, "funding"), el("dd", {}, funding),
+      el("dt", {}, "funding (tasa 8 h)"), el("dd", {}, funding),
       el("dt", {}, "open interest"), el("dd", {}, usd(ctx.open_interest_usd) + (ctx.oi_change_pct === null ? "" : " · " + pct(ctx.oi_change_pct))),
       el("dt", {}, "compra / venta taker"), el("dd", {}, usd(of.buy_volume_usd) + " / " + usd(of.sell_volume_usd)),
       el("dt", {}, "CVD"), el("dd", { class: of.cvd_usd >= 0 ? "buy" : "sell" }, usd(of.cvd_usd)),
@@ -398,7 +398,8 @@ function progress(label, have, need, unit, doneText) {
 
 const COV_COLS = [["trades", "Trades"], ["liquidations", "Liqs"], ["ticker", "Ticker"], ["funding", "Funding"], ["open_interest", "OI"]];
 const COV_CELL = { ok: ["✓", "ok", "con datos"], partial: ["parcial", "warn", "llega muestreado: subestima el total"],
-                   stale: ["viejo", "warn", "el último dato es viejo"], missing: ["—", "muted", "sin datos"] };
+                   stale: ["viejo", "warn", "el último dato es viejo"], missing: ["—", "muted", "sin datos"],
+                   na: ["n/a", "muted", "el exchange no lo publica"] };
 
 function qualityBlock(q) {
   if (!q) return null;

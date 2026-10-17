@@ -154,5 +154,6 @@ async def test_features_carry_structured_quality_for_the_panel() -> None:
     assert q.bars_closed > 0 and q.atr_bars_needed == 15 and q.regime_bars_needed == 21
     assert q.coverage["binance"]["trades"] == "ok" and q.coverage["binance"]["ticker"] == "ok"
     assert q.coverage["bybit"]["liquidations"] == "ok"
+    assert q.coverage["hyperliquid"]["liquidations"] == "na"  # no publica liquidaciones: no es un hueco
     assert q.coverage["okx"] == {"trades": "missing", "liquidations": "missing", "ticker": "missing",
                                  "funding": "missing", "open_interest": "missing"}

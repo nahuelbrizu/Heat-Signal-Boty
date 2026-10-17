@@ -32,6 +32,7 @@ class Exchange(str, Enum):
     BINANCE = "binance"
     BYBIT = "bybit"
     OKX = "okx"
+    HYPERLIQUID = "hyperliquid"  # perps on-chain; sin stream publico de liquidaciones
 
 
 class LiquidationEvent(BaseModel):
