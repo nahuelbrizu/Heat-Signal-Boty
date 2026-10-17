@@ -49,7 +49,7 @@ def _nan_to_null(obj: Any) -> Any:
 
 
 def _latest_runs(results_dir: Path) -> Iterable[tuple[Path, list[Path]]]:
-    for folder in sorted(p for p in results_dir.glob("*") if p.is_dir()):
+    for folder in sorted(p for p in results_dir.glob("*") if p.is_dir() and not p.name.startswith("_")):
         runs = sorted(folder.glob("*.json"))
         if runs:
             yield folder, runs
@@ -78,7 +78,7 @@ def summarize(results_dir: Path) -> dict[str, Any]:
             **_spec_info(r.get("strategy_id")),
             "runs": len(runs), "symbols": r.get("symbols"), "oos_range": r.get("walk_forward", {}).get("oos"),
             "windows": r.get("walk_forward", {}).get("windows"), "n_combinations": r.get("n_combinations"),
-            "sharpe": o.get("sharpe"), "sharpe_ci95": o.get("sharpe_ci95"), "psr": o.get("psr"), "dsr": o.get("dsr"),
+            "oos_days": o.get("days"), "sharpe": o.get("sharpe"), "sharpe_ci95": o.get("sharpe_ci95"), "psr": o.get("psr"), "dsr": o.get("dsr"),
             "total_return": o.get("total_return"), "max_drawdown": o.get("max_drawdown"), "trades": o.get("trades"),
             "hit_rate": (o.get("hit_rate") or {}).get("hit_rate"), "breakeven_bps": o.get("breakeven_bps_per_side"),
             "breakdown": o.get("breakdown"),
@@ -89,7 +89,62 @@ def summarize(results_dir: Path) -> dict[str, Any]:
             "holdout_result": None if not hold else {"sharpe": hold.get("sharpe"), "total_return": hold.get("total_return"), "trades": hold.get("trades"), "confirma": (hold.get("verdict") or {}).get("confirma"), "checks": (hold.get("verdict") or {}).get("checks")}, "holdout_start": r.get("data", {}).get("holdout_start"),
             "has_detail": bool(r.get("strategy_id")) and SAFE_ID.match(str(r.get("strategy_id"))) is not None,
         })
+    out["benchmark_ta"] = benchmark_ta(results_dir / "_benchmark_ta")
+    out["program"] = program(results_dir.parent / "trials.sqlite", out)
     return out
+
+
+def benchmark_ta(folder: Path) -> dict[str, Any] | None:
+    """Benchmark de estrategias de TA de Freqtrade (ft_benchmark): la corrida de rango mas largo."""
+    best = None
+    for f in folder.glob("summary_*.json"):
+        r = json.loads(f.read_text())
+        res = r.get("results") or []
+        r["results"] = [{"strategy": k, **v} for k, v in res.items()] if isinstance(res, dict) else res
+        span = max((x.get("days") or 0 for x in r["results"]), default=0)
+        if best is None or span > best[0]:
+            best = (span, r)
+    if best is None:
+        return None
+    r = best[1]
+    return {"start": r.get("start"), "end": r.get("end"), "source": r.get("source"), "settings": r.get("settings"),
+            "notes": r.get("notes"),
+            "results": [{k: x.get(k) for k in ("strategy", "run_as", "timeframe", "ok", "error", "compat", "trades", "trades_long",
+                                                "trades_short", "return_total", "sharpe_daily", "max_dd", "win_rate",
+                                                "funding_total", "days", "leverage_max")} for x in r.get("results") or []]}
+
+
+def program(trials_db: Path, summary: dict[str, Any]) -> dict[str, Any] | None:
+    """Liston del programa entero: K = combinaciones registradas en trials + estrategias del benchmark; SR0 =
+    E[max] de K Sharpe ruido con la varianza de los Sharpe OOS observados (lab + benchmark). Agrega a cada
+    estrategia `dsr_program`: su DSR contra ese liston (el DSR de la tabla solo corrige por sus propias combinaciones)."""
+    import math
+    import sqlite3
+
+    from .stats import deflated_sharpe_ratio, expected_max_sharpe
+
+    if not trials_db.exists():
+        return None
+    con = sqlite3.connect(f"file:{trials_db}?mode=ro", uri=True)
+    try:
+        k_lab = con.execute("SELECT COUNT(DISTINCT strategy_id || '|' || params) FROM lab_trials "
+                            "WHERE split != 'holdout'").fetchone()[0]
+    finally:
+        con.close()
+    bench = [x for x in ((summary.get("benchmark_ta") or {}).get("results") or []) if x.get("ok")]
+    srs = [s["sharpe"] for s in summary["strategies"] if isinstance(s.get("sharpe"), (int, float))]
+    srs += [x["sharpe_daily"] for x in bench if isinstance(x.get("sharpe_daily"), (int, float))]
+    k = k_lab + len(bench)
+    if len(srs) < 2:
+        return {"k": k, "k_lab": k_lab, "k_benchmark": len(bench), "sr0_annual": None}
+    mean = sum(srs) / len(srs)
+    var_d = sum((x - mean) ** 2 for x in srs) / (len(srs) - 1) / 365
+    for s in summary["strategies"]:
+        sr, n = s.get("sharpe"), s.get("oos_days")
+        s["dsr_program"] = (deflated_sharpe_ratio(sr / math.sqrt(365), int(n), k, var_d)
+                            if isinstance(sr, (int, float)) and n else None)
+    return {"k": k, "k_lab": k_lab, "k_benchmark": len(bench), "n_sharpes": len(srs),
+            "sr0_annual": expected_max_sharpe(k, var_d) * math.sqrt(365)}
 
 
 def cost_curve_rows(curve: Any) -> list[dict[str, Any]] | None:

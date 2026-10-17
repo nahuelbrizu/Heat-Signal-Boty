@@ -161,6 +161,28 @@
   Benchmark de TA común: las 7 estrategias de futuros de freqtrade-strategies sin modificar
   (`lab/ft_benchmark.py`) en la misma ventana OOS 2021-03-13 → 2026-07-15.
 
+- **Resultados del lote 2 y del benchmark de TA (2026-10-18): ninguna pasa.** OOS walk-forward 2021-03-13 →
+  2026-07-15 (1950 días), costo 7 bps por lado:
+  | estrategia | Sharpe | retorno | DD | DSR propio | break-even | falla en |
+  |---|---|---|---|---|---|---|
+  | compresion-breakout-v1 | −0,12 | −4,1% | 13% | 0,21 | 5,8 bps | DSR, costos, canasta, B&H |
+  | momentum-intradia-v1 | −3,92 | −125% (suma simple) | 125% | 0,00 | <0 | todo, incluso azar |
+  | oi-precio-continuacion-v1 | −0,09 | −7,6% | 26% | 0,33 | 6,1 bps | DSR, costos, canasta, B&H |
+  | carry-xs-funding-v1 | −0,05 | −4,4% | 31% | 0,46 | 6,7 bps | DSR, costos, canasta, B&H |
+  | lunes-asia-v1 (observación) | 0,38 | +59% | 38% | 0,82 | 16,5 bps | DSR, canasta, azar |
+  Canasta igual-ponderada: Sharpe 0,63. Lectura: casi todas tienen algo de señal bruta (Sharpe 0,3–0,6 sin
+  costos) pero el break-even queda en 6–7 bps por lado, justo el costo esperado: **la ventaja se la comen las
+  comisiones**. Momentum intradía está mal planteada (pierde contra el azar).
+  Benchmark de Freqtrade (sin reinversión, Sharpe sobre PnL realizado diario): VolatilitySystem +318% Sharpe 0,76
+  (apalancamiento 2×), FSampleStrategy +91% 0,44, TrendFollowing +85% 0,39, FSupertrend +40% 0,30, FAdxSma −14%,
+  FOtt −62%, FReinforced −86%. Ninguna pasa el listón del programa.
+  **Listón del programa:** K = 36 (29 combinaciones del lab + 7 del benchmark); varianza de los 20 Sharpe OOS
+  observados → SR0 ≈ 3,5 anual. DSR del programa ≈ 0 para todas, incluida `donchian-ensemble-v1` (Sharpe 1,08).
+  Aun sacando las dos estrategias rotas (Sharpe < −3) de la varianza, SR0 ≈ 1,6 y el DSR de donchian es 0,11:
+  **no hay evidencia de ventaja real en ninguna estrategia probada hasta ahora.** Se publica en el panel
+  (columna «DSR prog.», listón y tabla del benchmark en Laboratorio).
+  Lote 3 (6 specs, `estrategias-lote3.md`): programado y con tests, PROPUESTO, sin aprobar; K pasaría a 44.
+
 ## Abiertas
 - ~~Plan de CoinGlass a contratar.~~ **Ya no aplica al core** — la fuente primaria pasó a WS nativos.
   Solo se retomaría si se implementa la fuente BYOK opcional (y ahí el plan lo elige el usuario).

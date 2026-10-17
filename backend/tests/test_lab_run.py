@@ -82,6 +82,36 @@ def test_publish_summarizes_latest_run_per_strategy(tmp_path) -> None:
     assert len(out) == 1 and out[0]["sharpe"] == 0.9 and out[0]["runs"] == 2 and out[0]["hit_rate"] == 0.55
 
 
+def test_publish_benchmark_is_not_a_strategy_and_program_bar_counts_all_trials(tmp_path) -> None:
+    import json
+    import sqlite3
+
+    from heatsignal.lab.publish import summarize
+
+    res = tmp_path / "results"
+    for sid, sr in (("s1", 1.0), ("s2", -0.5)):
+        (res / sid).mkdir(parents=True)
+        (res / sid / "20260101T000000.json").write_text(json.dumps({"strategy_id": sid, "oos": {"sharpe": sr, "days": 1000}}))
+    (res / "_benchmark_ta").mkdir()
+    for name, days, sr in (("summary_20240108-20240115.json", 7, 9.0), ("summary_20210313-20260715.json", 1950, 0.4)):
+        (res / "_benchmark_ta" / name).write_text(json.dumps({"start": name[8:16], "results": {
+            "A": {"ok": True, "sharpe_daily": sr, "days": days}, "B": {"ok": False, "error": "x"}}}))
+    (res / "_benchmark_ta" / "config_x.json").write_text("{}")
+    con = sqlite3.connect(tmp_path / "trials.sqlite")
+    con.execute("CREATE TABLE lab_trials (strategy_id TEXT, params TEXT, split TEXT)")
+    con.executemany("INSERT INTO lab_trials VALUES (?, ?, ?)", [("s1", "a", "oos"), ("s1", "a", "oos"), ("s1", "b", "oos"),
+                                                               ("s2", "a", "oos"), ("s2", "a", "holdout")])
+    con.commit()
+    con.close()
+    out = summarize(res)
+    assert [s["strategy_id"] for s in out["strategies"]] == ["s1", "s2"]  # _benchmark_ta no es una estrategia
+    assert out["benchmark_ta"]["start"] == "20210313"  # la corrida mas larga, no la de prueba
+    assert [r["strategy"] for r in out["benchmark_ta"]["results"]] == ["A", "B"]
+    assert out["program"]["k"] == 4 and out["program"]["k_lab"] == 3 and out["program"]["k_benchmark"] == 1
+    assert out["program"]["sr0_annual"] > 0
+    assert 0 <= out["strategies"][1]["dsr_program"] < out["strategies"][0]["dsr_program"] <= 1
+
+
 def test_report_carries_daily_equity_curves_without_changing_metrics(tmp_path) -> None:
     data = {"AAAUSDT": _md(80, 1), "BBBUSDT": _md(80, 2)}
     cfg = RunConfig("absorcion-flujo-v1", list(data), holdout_months=1, train_days=20, test_days=10, n_perm=0)

@@ -19,7 +19,7 @@ lotes 1 y 2 no cambiaron (lo verifica `test_lote1_and_lote2_hashes_unchanged`).
 - **Para pasar a paper trading:** DSR ≥ 0.95, break-even ≥ 2.0× el costo esperado, le gana a la canasta y al
   buy & hold medio, y le gana a las entradas al azar (p ≤ 0.05).
 - **Intentos del lote 3:** 8 combinaciones (tsmom 2, low-vol 1, pares 2, rango 1, reversion-xs 1, prepago 1).
-  **El programa pasa de K = 29 a K = 37 variantes**: el DSR del programa se calcula con K = 37.
+  **El programa pasa de K = 36 (29 combinaciones del lab + 7 del benchmark de Freqtrade) a K = 44**: el DSR del programa se calcula con K = 44.
 
 ## Convención de pesos (estrategias de 2 patas)
 

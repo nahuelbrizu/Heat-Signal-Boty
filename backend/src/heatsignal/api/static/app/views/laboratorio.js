@@ -42,6 +42,33 @@ function holdoutCell(s) {
     el("div", { class: "muted" }, "Sharpe " + fixed(r.sharpe, 2) + " · " + signedFrac(r.total_return) + " · " + int(r.trades) + " trades"));
 }
 
+/** Listón de todo el programa: con K intentos, el mejor Sharpe que daría el puro azar (SR0). */
+function programNote(p) {
+  if (!p || !isNum(p.sr0_annual)) return null;
+  return el("div", { class: "note warn" }, el("b", {}, "Listón del programa: "),
+    "llevamos " + int(p.k) + " intentos (" + int(p.k_lab) + " combinaciones del laboratorio + " + int(p.k_benchmark) + " estrategias del benchmark). " +
+    "Con tantos intentos, el mejor Sharpe que daría el azar ronda " + fixed(p.sr0_annual, 2) + " anual. La columna «DSR prog.» mide cada estrategia contra ese listón; " +
+    "el DSR de la tabla solo corrige por sus propias combinaciones. Un DSR prog. bajo significa que el resultado todavía puede ser suerte.");
+}
+
+/** Benchmark: estrategias de TA públicas de Freqtrade, sin modificar, sobre las mismas monedas y período. */
+function benchmarkCard(b) {
+  if (!b || !(b.results || []).length) return null;
+  const st = b.settings || {};
+  return card("Benchmark: estrategias públicas de Freqtrade", el("span", { class: "small muted" }, String(b.start || "").slice(0, 10) + " → " + String(b.end || "").slice(0, 10)),
+    el("p", { class: "small muted" }, "Estrategias del repo freqtrade-strategies (" + ((b.source || {}).license || "GPL-3.0") + ") corridas sin cambiar parámetros. " +
+      "Sirven de vara: si una estrategia nuestra no le gana a esto, no aporta. Comisión " + fixed((st.fee_per_side || 0) * 1e4, 1) + " bps por lado, funding real, sin reinversión. " +
+      "Ojo: el Sharpe acá es sobre PnL realizado por día de cierre, no exactamente igual al del laboratorio."),
+    table([{ label: "Estrategia" }, { label: "TF" }, { label: "Trades", cls: "n" }, { label: "Long / short", cls: "n" }, { label: "Retorno", cls: "n" },
+      { label: "Sharpe", cls: "n" }, { label: "Máx. DD", cls: "n" }, { label: "Acierto", cls: "n" }, { label: "Funding", cls: "n" }, { label: "Apalanc.", cls: "n" }, { label: "Notas" }],
+    b.results.map((r) => [el("b", {}, r.strategy || r.run_as), r.timeframe, int(r.trades), int(r.trades_long) + " / " + int(r.trades_short),
+      signedFrac(r.return_total), fixed(r.sharpe_daily, 2), frac(r.max_dd), frac(r.win_rate, 0), signedFrac(r.funding_total),
+      isNum(r.leverage_max) ? fixed(r.leverage_max, 1) + "×" : "—",
+      { v: el("div", { class: "small muted", style: { minWidth: "220px" } }, r.ok ? (r.compat || "") : "error: " + (r.error || "?")), cls: "wrap" }]),
+    { empty: "Sin resultados.", label: "Benchmark de Freqtrade" }),
+    (b.notes || []).length ? el("ul", { class: "small muted" }, b.notes.map((n) => el("li", {}, n))) : null);
+}
+
 export async function mount(root, ctx) {
   if (ctx.route.parts[0]) return detail(root, ctx, ctx.route.parts[0]);
   clear(root, loading());
@@ -70,7 +97,7 @@ export async function mount(root, ctx) {
       ", costo de equilibrio ≥ " + fixed(crit.criterios.breakeven_vs_cost_min, 1) + "× el esperado, p contra azar ≤ " + fixed(crit.criterios.p_random_max, 2) +
       ", y ganarle a la canasta y al buy & hold medio.") : null,
     card(null, null, table([{ label: "Estrategia" }, { label: "Veredicto" }, { label: "Sharpe OOS", cls: "n" }, { label: "IC 95 %", cls: "n" },
-      { label: "PSR / DSR", cls: "n" }, { label: "Retorno", cls: "n" }, { label: "Máx. DD", cls: "n" }, { label: "Trades", cls: "n" }, { label: "Acierto", cls: "n" },
+      { label: "PSR / DSR", cls: "n" }, { label: "DSR prog.", cls: "n", title: "DSR contra el listón de todo el programa (todas las combinaciones probadas)" }, { label: "Retorno", cls: "n" }, { label: "Máx. DD", cls: "n" }, { label: "Trades", cls: "n" }, { label: "Acierto", cls: "n" },
       { label: "Break-even", cls: "n", title: "costo por lado que deja el Sharpe en 0" }, { label: "Canasta", cls: "n", title: "Sharpe de la canasta" },
       { label: "p azar", cls: "n" }, { label: "Criterios" }, { label: "Holdout" }],
     items.map((s) => [
@@ -78,12 +105,14 @@ export async function mount(root, ctx) {
         el("div", { class: "small muted mono" }, (s.oos_range || []).join(" → ") + " · " + int(s.windows) + " ventanas · " + int(s.n_combinations) + " comb."),
         el("div", { class: "muted", style: { marginTop: "4px" } }, specBlock(s))), cls: "wrap" },
       verdictChip(s.verdict), fixed(s.sharpe, 2), s.sharpe_ci95 ? fixed(s.sharpe_ci95[0], 2) + " / " + fixed(s.sharpe_ci95[1], 2) : "—",
-      fixed(s.psr, 3) + " / " + fixed(s.dsr, 3), signedFrac(s.total_return), frac(s.max_drawdown), int(s.trades), frac(s.hit_rate, 0),
+      fixed(s.psr, 3) + " / " + fixed(s.dsr, 3), fixed(s.dsr_program, 3), signedFrac(s.total_return), frac(s.max_drawdown), int(s.trades), frac(s.hit_rate, 0),
       isNum(s.breakeven_bps) ? num(s.breakeven_bps, 1) + " bps" : "—", fixed(s.basket_sharpe, 2), fixed(s.random_p, 3),
       { v: el("div", { style: { minWidth: "200px" } }, checkChips(s.verdict && s.verdict.checks)), cls: "wrap" }, holdoutCell(s),
     ]), { empty: "Sin estrategias en el lote.", label: "Lote del laboratorio",
       onRow: (i) => items[i].has_detail && ctx.navigate(ctx.href("laboratorio", [items[i].strategy_id])) }),
     el("p", { class: "small muted", style: { marginTop: "8px" } }, "Sharpe anualizado; retornos y drawdown en fracción del capital inicial; costos en bps por lado. Las que no tienen detalle publicado no son clickeables.")),
+    programNote(d.program),
+    benchmarkCard(d.benchmark_ta),
     card("Pedidos al laboratorio", el("span", { class: "small muted" }, "los corre tu PC (worker); pueden tardar minutos u horas"),
       el("div", { style: { marginBottom: "12px" } }, labRequestAction(ctx, coin ? [coin] : symbols, all, () => reqs.reload())),
       reqs.node),
