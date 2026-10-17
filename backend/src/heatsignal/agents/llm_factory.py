@@ -76,8 +76,12 @@ def _model_name(m: Any) -> str:
 # siguiente. El 2026-10-17 los dos Flash de Gemini dieron 503 "high demand" a la vez y el ciclo se perdio.
 # Los definitivos (sin credito, modelo inexistente, request invalido) pasan al siguiente sin esperar.
 TRANSIENT_MARKERS = ("503", "429", "UNAVAILABLE", "RESOURCE_EXHAUSTED", "overloaded", "Overloaded", "high demand",
-                     "timeout", "Timeout", "temporarily")
+                     "timeout", "Timeout", "temporarily", "RateLimit", "rate limit", "quota")
 RETRY_DELAYS_S = (10.0, 30.0)
+# Enfriamiento: un modelo que agoto sus reintentos por saturacion/rate limit se saltea por este tiempo, asi los
+# pedidos siguientes del mismo ciclo van directo al que responde (antes cada nodo perdia ~40 s reintentandolo).
+COOLDOWN_S = 600.0
+_cooldown_until: dict[str, float] = {}
 
 
 def is_transient(exc: BaseException) -> bool:
@@ -93,8 +97,14 @@ class _FallbackStructured:
     async def ainvoke(self, messages: Any, config: Any = None, **kwargs: Any) -> Any:
         import asyncio
 
+        import time
+
         errors: list[str] = []
         for i, (name, runnable) in enumerate(self.pairs):
+            until = _cooldown_until.get(name, 0.0)
+            if until > time.monotonic() and i < len(self.pairs) - 1:
+                errors.append(f"{name}: en enfriamiento ({until - time.monotonic():.0f}s)")
+                continue
             for attempt in range(len(self.retry_delays) + 1):
                 try:
                     out = await runnable.ainvoke(messages, config, **kwargs)
@@ -109,6 +119,9 @@ class _FallbackStructured:
                         logger.warning("LLM: %s saturado (%s); reintento en %.0fs", name, type(exc).__name__, delay)
                         await asyncio.sleep(delay)
                         continue
+                    if is_transient(exc):
+                        _cooldown_until[name] = time.monotonic() + COOLDOWN_S
+                        logger.warning("LLM: %s en enfriamiento %.0fs", name, COOLDOWN_S)
                     logger.warning("LLM: fallo %s (%s); paso al siguiente", name, type(exc).__name__)
                     break
         raise AllProvidersFailedError("fallaron todos los modelos -> " + " | ".join(errors))

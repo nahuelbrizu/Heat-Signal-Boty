@@ -179,3 +179,36 @@ async def test_transient_errors_retry_same_model_definitive_errors_skip() -> Non
     out = await structured.ainvoke(["x"])
     # claude: definitivo -> 1 intento; gemini: 2 transitorios y responde al 3er intento
     assert out.symbol == "XRP-USDT" and calls == ["claude", "gemini", "gemini", "gemini"]
+
+
+
+async def test_model_in_cooldown_is_skipped_after_exhausting_retries() -> None:
+    from langchain_core.runnables import RunnableLambda
+
+    from heatsignal.agents import llm_factory
+    from heatsignal.agents.debate import SymbolArgument
+    from heatsignal.agents.llm_factory import FallbackChatModel
+
+    llm_factory._cooldown_until.clear()
+    calls: list[str] = []
+
+    class M:
+        def __init__(self, name, fail):
+            self.model, self.fail = name, fail
+
+        def with_structured_output(self, schema, **kw):
+            def run(msgs):
+                calls.append(self.model)
+                if self.fail:
+                    raise RuntimeError("GoogleRateLimitError 429 RESOURCE_EXHAUSTED")
+                return schema(symbol="XRP-USDT", argument="ok", strength=0.5)
+            return RunnableLambda(run)
+
+    fm = FallbackChatModel(M("g35", True), M("g38", False))
+    for _ in range(2):
+        st = fm.with_structured_output(SymbolArgument)
+        st.retry_delays = (0.0, 0.0)
+        assert (await st.ainvoke(["x"])).symbol == "XRP-USDT"
+    # 1er pedido: g35 x3 (reintentos) -> enfriamiento -> g38; 2do pedido: g35 salteado, directo a g38
+    assert calls == ["g35", "g35", "g35", "g38", "g38"]
+    llm_factory._cooldown_until.clear()
