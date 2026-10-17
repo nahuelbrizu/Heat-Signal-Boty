@@ -366,18 +366,31 @@ function renderStrategies(evaln) {
                          el("span", { class: "muted" }, d.reason.length > 260 ? d.reason.slice(0, 259) + "…" : d.reason))
                      : el("span", { class: "muted" }, "—");
       return [[s.description], [strategyChip(s.status)],
-        [h.total + (h.pending ? " (" + h.pending + " abiertas)" : ""), "num"], [last], [dur(s.horizon_s), "num"],
+        [el("span", {}, h.total + (h.pending ? " (" + h.pending + " abiertas)" : ""),
+          s.track_record ? el("span", { class: "muted" }, el("br"), "acertó " + s.track_record.wins + "/" + s.track_record.resolved +
+            " (" + pct(s.track_record.rate * 100, 0) + ")") : null), "num"], [last], [dur(s.horizon_s), "num"],
         [new Date(s.registered_at).toLocaleString("es-AR")], [el("span", { class: "mono muted" }, s.strategy_id.slice(0, 8))]];
     }),
     "Ninguna todavía. Registrala con: python -m heatsignal.evaluation.register_strategy archivo.json");
-  $("hyp-count").textContent = "· " + evaln.total_hypotheses + " en total, " + evaln.pending_count + " pendientes";
+  const rs = evaln.resolved || {};
+  $("hyp-count").textContent = "· " + evaln.total_hypotheses + " en total, " + evaln.pending_count + " pendientes" +
+    (rs.n ? " · resueltas " + rs.n + ": acertó " + rs.wins + " (" + pct(rs.rate * 100, 0) +
+      (rs.ci95 ? ", IC 95% " + pct(rs.ci95[0] * 100, 0) + "–" + pct(rs.ci95[1] * 100, 0) : "") + ")" +
+      " · PnL neto medio " + pct(rs.mean_pnl_pct) +
+      (rs.mean_alpha_pct === null || rs.mean_alpha_pct === undefined ? "" : " · contra mantener " + pct(rs.mean_alpha_pct)) : "");
+  const signed = (v) => v === null || v === undefined ? "—" : el("span", { class: v > 0 ? "buy" : v < 0 ? "sell" : "" }, (v > 0 ? "+" : "") + pct(v));
+  const verdictCell = (h) => h.status === "pending"
+    ? el("span", { class: "muted" }, "vence " + new Date(h.due_at).toLocaleString("es-AR"))
+    : h.win === null ? el("span", { class: "chip warn" }, "sin dato de precio")
+    : el("span", { class: "chip " + (h.win ? "ok" : "bad") }, h.win ? "✓ acertó" : "✗ falló");
   table($("hypotheses"), [["Creada"], ["Símbolo"], ["Dir."], ["Conf.", "num"], ["Entrada", "num"],
-    ["Horizonte", "num"], ["Estado"], ["Salida", "num"], ["PnL neto", "num"], ["Justificación"]],
+    ["Horizonte", "num"], ["¿Acertó?"], ["Precio real al vencer", "num"], ["Movimiento real", "num"],
+    ["PnL neto", "num"], ["vs mantener", "num"], ["Justificación"]],
     evaln.hypotheses.map((h) => [[new Date(h.created_at).toLocaleString("es-AR")], [h.symbol],
       [el("span", { class: h.direction === "LONG" ? "buy" : "sell" }, h.direction)], [num(h.confidence, 2), "num"],
-      [price(Number(h.entry)), "num"], [dur(h.horizon_s), "num"], [chip(h.status)],
-      [h.exit === null ? "—" : price(Number(h.exit)), "num"],
-      [h.pnl_pct === null ? "—" : el("span", { class: h.pnl_pct > 0 ? "buy" : "sell" }, pct(h.pnl_pct)), "num"],
+      [price(Number(h.entry)), "num"], [dur(h.horizon_s), "num"], [verdictCell(h)],
+      [h.exit === null ? "—" : price(Number(h.exit)), "num"], [signed(h.real_move_pct), "num"],
+      [signed(h.pnl_pct), "num"], [signed(h.alpha_pct), "num"],
       [h.rationale]]),
     hypEmptyText);
 }

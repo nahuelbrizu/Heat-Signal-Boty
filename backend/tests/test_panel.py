@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import httpx
+import pytest
 
 from heatsignal.api.panel import PanelContext, create_panel_app
 from heatsignal.evaluation.pending_store import PendingHypothesisStore
@@ -138,3 +139,39 @@ async def test_lab_summary_is_served_when_published(tmp_path) -> None:
     lab = (await client.get("/api/status")).json()["lab"]
     assert lab["strategies"][0]["strategy_id"] == "x"
     assert "renderLab" in (await client.get("/")).text
+
+
+async def test_resolved_hypothesis_shows_real_outcome_and_track_record(tmp_path) -> None:
+    from datetime import datetime, timedelta, timezone
+    from decimal import Decimal
+
+    from heatsignal.evaluation.pending_store import ResolutionMetrics
+    from heatsignal.schema.hypotheses import HypothesisStatus, PendingHypothesis, Resolution
+    from heatsignal.schema.signals import Direction
+
+    ctx = await _ctx(tmp_path)
+    sid = ctx.registry.get_all()[0].strategy_id
+    t0 = datetime(2026, 10, 1, tzinfo=timezone.utc)
+    win = PendingHypothesis(strategy_id=sid, symbol=SYM, created_at=t0, direction=Direction.LONG, confidence_score=0.6,
+                            entry_reference_price=Decimal("100"), horizon_s=3600, rationale="r")
+    loss = PendingHypothesis(strategy_id=sid, symbol=SYM, created_at=t0 + timedelta(hours=2), direction=Direction.SHORT,
+                             confidence_score=0.6, entry_reference_price=Decimal("100"), horizon_s=3600, rationale="r")
+    for h in (win, loss):
+        ctx.store.add(h)
+    due = lambda h: h.created_at + timedelta(seconds=h.horizon_s)  # noqa: E731
+    ctx.store.resolve(Resolution(hypothesis_id=win.hypothesis_id, status=HypothesisStatus.RESOLVED, resolved_at=due(win),
+                                 exit_price=Decimal("102"), pnl_pct=1.9, win=True),
+                      ResolutionMetrics(gross_pnl_pct=2.0, cost_bps=10, benchmark_pnl_pct=2.0, alpha_pct=-0.1,
+                                        exit_price_ts=due(win)))
+    ctx.store.resolve(Resolution(hypothesis_id=loss.hypothesis_id, status=HypothesisStatus.RESOLVED, resolved_at=due(loss),
+                                 exit_price=Decimal("103"), pnl_pct=-3.1, win=False),
+                      ResolutionMetrics(gross_pnl_pct=-3.0, cost_bps=10, benchmark_pnl_pct=3.0, alpha_pct=-6.1,
+                                        exit_price_ts=due(loss)))
+    ev = (await _client(ctx).get("/api/status")).json()["evaluation"]
+    w = next(h for h in ev["hypotheses"] if h["hypothesis_id"] == str(win.hypothesis_id))
+    assert w["win"] is True and w["real_move_pct"] == pytest.approx(2.0) and w["alpha_pct"] == pytest.approx(-0.1)
+    assert w["due_at"].startswith("2026-10-01T01:00")
+    r = ev["resolved"]
+    assert r["n"] == 2 and r["wins"] == 1 and r["rate"] == 0.5 and r["mean_pnl_pct"] == pytest.approx(-0.6)
+    assert 0 < r["ci95"][0] < 0.5 < r["ci95"][1] < 1
+    assert ev["strategies"][0]["track_record"] == {"resolved": 2, "wins": 1, "rate": 0.5, "ci95": r["ci95"]}

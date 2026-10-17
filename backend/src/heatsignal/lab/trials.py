@@ -57,7 +57,7 @@ class TrialRegistry:
     """Persistencia append-only de intentos sobre SQLite."""
 
     def __init__(self, db_path: str | Path) -> None:
-        self._conn = sqlite3.connect(str(db_path))
+        self._conn = sqlite3.connect(str(db_path), timeout=60)  # varias corridas en paralelo
         self._ensure_schema()
 
     def _ensure_schema(self) -> None:

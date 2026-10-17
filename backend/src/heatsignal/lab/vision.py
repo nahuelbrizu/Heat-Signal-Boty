@@ -233,6 +233,57 @@ def _convert(dataset: str, rows: list[list[str]]) -> pd.DataFrame:
             "funding": funding_frame}[dataset](rows)
 
 
+def repair_month(dataset: str, symbol: str, month: str, root: Path) -> int:
+    """Completa con archivos DIARIOS los dias que faltan en un mes cerrado de klines/premium.
+
+    Binance publico algunos mensuales incompletos (p.ej. 2022-02 y 2022-04 de SOL/XRP/XLM/TRX les faltan
+    2-3 dias; verificado 2026-10-17). Devuelve cuantas filas agrego.
+    """
+    path = root / dataset / symbol / f"{month}.parquet"
+    df = pd.read_parquet(path)
+    days_have = set(pd.to_datetime(df["open_time"], unit="ms", utc=True).dt.strftime("%Y-%m-%d"))
+    y, m = map(int, month.split("-"))
+    first_day = date(y, m, 1)
+    listed = LISTED.get(symbol, "2020-01")
+    sub = {"klines": f"klines/{symbol}/1m/{symbol}-1m", "premium": f"premiumIndexKlines/{symbol}/1m/{symbol}-1m"}[dataset]
+    extra = []
+    for d in _days_of(month, date(y + (m == 12), m % 12 + 1, 1) - timedelta(days=1)):
+        if d in days_have or (month == listed and d < f"{first_day}" ):
+            continue
+        rows = fetch_csv(f"{BASE}/daily/{sub}-{d}.zip")
+        if rows:
+            extra.append(_convert(dataset, rows))
+    if not extra:
+        return 0
+    full = pd.concat([df, *extra], ignore_index=True)
+    full = full.drop_duplicates(full.columns[0]).sort_values(full.columns[0], ignore_index=True)
+    tmp = path.with_suffix(".parquet.tmp")
+    full.to_parquet(tmp, index=False)
+    tmp.replace(path)
+    return len(full) - len(df)
+
+
+def repair(symbols: Iterable[str], root: Path, today: date) -> int:
+    """Revisa todos los meses cerrados de klines/premium y completa los que tienen dias faltantes."""
+    added = 0
+    current = f"{today:%Y-%m}"
+    for ds in ("klines", "premium"):
+        for sym in symbols:
+            listed = LISTED.get(sym, "2020-01")
+            for path in sorted((root / ds / sym).glob("*.parquet")):
+                month = path.stem
+                if month == current or month == listed:
+                    continue  # mes en curso (diarios) y mes de lanzamiento (empieza a mitad de mes)
+                n_rows = len(pd.read_parquet(path, columns=[pd.read_parquet(path).columns[0]]))
+                y, m = map(int, month.split("-"))
+                minutes = (date(y + (m == 12), m % 12 + 1, 1) - date(y, m, 1)).days * 1440
+                if n_rows < minutes:
+                    n = repair_month(ds, sym, month, root)
+                    log.info("reparado %s %s %s: +%d filas (%d de %d minutos)", ds, sym, month, n, n_rows + n, minutes)
+                    added += n
+    return added
+
+
 def main(argv: Iterable[str] | None = None) -> int:
     p = argparse.ArgumentParser(description="Historia de Binance USDS-M desde data.binance.vision a parquet.")
     p.add_argument("--symbols", default=",".join(DEFAULT_SYMBOLS))
@@ -240,6 +291,7 @@ def main(argv: Iterable[str] | None = None) -> int:
     p.add_argument("--since", help="YYYY-MM: no bajar antes de este mes")
     p.add_argument("--workers", type=int, default=8)
     p.add_argument("--dir", default=None, help="por defecto $HEATSIGNAL_LAB_DIR o ~/heatsignal-lab/data")
+    p.add_argument("--repair", action="store_true", help="completar meses incompletos desde archivos diarios")
     args = p.parse_args(list(argv) if argv is not None else None)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 
@@ -264,6 +316,8 @@ def main(argv: Iterable[str] | None = None) -> int:
                 errors += 1
                 log.error("fallo: %s", exc)
     log.info("listo: %d meses, %d errores", done, errors)
+    if args.repair:
+        log.info("reparacion: +%d filas", repair([s.strip().upper() for s in args.symbols.split(",") if s.strip()], root, today))
     return 1 if errors else 0
 
 

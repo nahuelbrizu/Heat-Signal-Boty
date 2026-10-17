@@ -19,6 +19,7 @@ asi las conexiones SQLite del registry (no thread-safe) y las deques de la venta
 from __future__ import annotations
 
 import hashlib
+from datetime import timedelta
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -130,17 +131,53 @@ def _per_symbol_view(ctx: PanelContext) -> dict[str, Any]:
     return cached[1]
 
 
+def wilson(k: int, n: int, z: float = 1.959964) -> list[float] | None:
+    """IC 95% de Wilson para una proporcion (sin dependencias: el panel corre en la VM sin pandas)."""
+    if n <= 0:
+        return None
+    p = k / n
+    den = 1 + z * z / n
+    c = (p + z * z / (2 * n)) / den
+    h = z * ((p * (1 - p) / n + z * z / (4 * n * n)) ** 0.5) / den
+    return [max(0.0, c - h), min(1.0, c + h)]
+
+
+def _resolved_summary(records: list) -> dict[str, Any]:
+    """Track record global: cuantas resueltas, cuantas acerto (IC de Wilson), retorno neto y alpha medios."""
+    res = [r for r in records if r.resolution is not None and r.resolution.win is not None]
+    n = len(res)
+    wins = sum(int(r.resolution.win) for r in res)
+    alphas = [r.metrics.alpha_pct for r in res if r.metrics is not None]
+    return {
+        "n": n, "wins": wins, "rate": wins / n if n else None, "ci95": wilson(wins, n),
+        "mean_pnl_pct": sum(r.resolution.pnl_pct for r in res) / n if n else None,
+        "mean_alpha_pct": sum(alphas) / len(alphas) if alphas else None,
+        "expired_no_data": sum(1 for r in records if r.status.value == "expired_no_data"),
+    }
+
+
 def _hypotheses_view(ctx: PanelContext) -> dict[str, Any]:
     if ctx.registry is None or ctx.store is None:
         return {"available": False, "strategies": [], "hypotheses": [], "pending_count": None}
-    counts: dict[str, dict[str, int]] = {}
+    records = []
     for sid in ctx.store.strategy_ids():
-        recs = ctx.store.list_by_strategy(sid)
-        counts[str(sid)] = {
-            "total": len(recs),
-            "pending": sum(1 for r in recs if r.status.value == "pending"),
-            "wins": sum(1 for r in recs if r.resolution is not None and r.resolution.win),
-        }
+        records.extend(ctx.store.list_by_strategy(sid))
+    records.sort(key=lambda r: r.hypothesis.created_at, reverse=True)
+    counts: dict[str, dict[str, int]] = {}
+    for r in records:
+        c = counts.setdefault(str(r.hypothesis.strategy_id), {"total": 0, "pending": 0, "wins": 0})
+        c["total"] += 1
+        c["pending"] += int(r.status.value == "pending")
+        c["wins"] += int(r.resolution is not None and bool(r.resolution.win))
+    per_strategy: dict[str, dict[str, Any]] = {}
+    for rec in records:
+        if rec.resolution is None or rec.resolution.win is None:
+            continue
+        st = per_strategy.setdefault(str(rec.hypothesis.strategy_id), {"resolved": 0, "wins": 0})
+        st["resolved"] += 1
+        st["wins"] += int(rec.resolution.win)
+    for st in per_strategy.values():
+        st["rate"], st["ci95"] = st["wins"] / st["resolved"], wilson(st["wins"], st["resolved"])
     strategies = [
         {
             "strategy_id": str(s.strategy_id),
@@ -151,16 +188,13 @@ def _hypotheses_view(ctx: PanelContext) -> dict[str, Any]:
             "symbol": s.entry_conditions.get("symbol"),
             "horizon_s": s.exit_conditions.get("horizon_s"),
             "hypotheses": counts.get(str(s.strategy_id), {"total": 0, "pending": 0, "wins": 0}),
+            "track_record": per_strategy.get(str(s.strategy_id)),
         }
         for s in ctx.registry.get_all()
     ]
-    records = []
-    for sid in ctx.store.strategy_ids():
-        records.extend(ctx.store.list_by_strategy(sid))
-    records.sort(key=lambda r: r.hypothesis.created_at, reverse=True)
     hypotheses = []
     for rec in records[:MAX_HYPOTHESES]:
-        h, res = rec.hypothesis, rec.resolution
+        h, res, met = rec.hypothesis, rec.resolution, rec.metrics
         hypotheses.append({
             "hypothesis_id": str(h.hypothesis_id),
             "strategy_id": str(h.strategy_id),
@@ -175,12 +209,21 @@ def _hypotheses_view(ctx: PanelContext) -> dict[str, Any]:
             "exit": None if res is None or res.exit_price is None else str(res.exit_price),
             "pnl_pct": None if res is None else res.pnl_pct,
             "win": None if res is None else res.win,
+            "due_at": (h.created_at + timedelta(seconds=h.horizon_s)).isoformat(),
+            "resolved_at": None if res is None else res.resolved_at.isoformat(),
+            # comparacion con la realidad: cuanto se movio el precio, que dio mantener la moneda y la diferencia
+            "real_move_pct": None if res is None or res.exit_price is None
+            else float((res.exit_price / h.entry_reference_price - 1) * 100),
+            "gross_pnl_pct": None if met is None else met.gross_pnl_pct,
+            "benchmark_pnl_pct": None if met is None else met.benchmark_pnl_pct,
+            "alpha_pct": None if met is None else met.alpha_pct,
         })
     return {
         "available": True,
         "strategies": strategies,
         "hypotheses": hypotheses,
         "total_hypotheses": len(records),
+        "resolved": _resolved_summary(records),
         "pending_count": ctx.store.pending_count(),
     }
 
