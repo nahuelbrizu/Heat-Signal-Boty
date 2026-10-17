@@ -1,0 +1,4 @@
+-r requirements-dev.txt
+# Laboratorio de backtest (solo en la PC, no en la VM)
+pandas>=2.2
+pyarrow>=17
