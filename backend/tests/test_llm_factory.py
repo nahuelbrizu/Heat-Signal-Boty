@@ -107,7 +107,7 @@ def test_gemini_only_and_fallback_routing(monkeypatch) -> None:
     solo = make_llms()
     assert solo.providers == ("gemini", "gemini-backup")
     assert solo.cheap.models[0].model.endswith("gemini-3.5-flash-lite") and solo.strong.models[0].model.endswith("gemini-3.5-flash")
-    assert solo.strong.models[1].model.endswith("gemini-2.5-flash")
+    assert solo.strong.models[1].model.endswith("gemini-3.8-flash") and solo.cheap.models[1].model.endswith("gemini-3.1-flash-lite")
 
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test-no-real")
     both = make_llms()
@@ -125,7 +125,7 @@ async def test_fallback_uses_second_model_when_first_fails() -> None:
 
     class Fake:
         def __init__(self, name: str, fail: bool) -> None:
-            self.name, self.fail = name, fail
+            self.name, self.fail, self.model = name, fail, name
 
         def with_structured_output(self, schema, **kw):
             def run(msgs):
@@ -142,6 +142,9 @@ async def test_fallback_uses_second_model_when_first_fails() -> None:
     assert out.symbol == "XRP-USDT" and calls == ["anthropic", "gemini"]
 
     calls.clear()
-    with pytest.raises(RuntimeError, match="credit"):
+    from heatsignal.agents.llm_factory import AllProvidersFailedError
+
+    with pytest.raises(AllProvidersFailedError) as err:
         await FallbackChatModel(Fake("a", True), Fake("b", True)).with_structured_output(SymbolArgument).ainvoke(["x"])
     assert calls == ["a", "b"]  # si fallan todos, el error se propaga (ciclo = error, no silencio)
+    assert "a: RuntimeError" in str(err.value) and "b: RuntimeError" in str(err.value)  # el de CADA proveedor

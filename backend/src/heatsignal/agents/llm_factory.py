@@ -24,12 +24,15 @@ usa ese proveedor solo. `ModelRouting.providers` dice cual es el orden, para el 
 
 from __future__ import annotations
 
+import logging
 import os
 from dataclasses import dataclass
 from functools import lru_cache
 from typing import Any
 
 from langchain_core.language_models import BaseChatModel
+
+logger = logging.getLogger("heatsignal.agents.llm")
 
 DEFAULT_CHEAP_MODEL = "claude-haiku-5-5"
 DEFAULT_STRONG_MODEL = "claude-sonnet-5-5"
@@ -38,8 +41,10 @@ DEFAULT_GEMINI_CHEAP = "gemini-3.5-flash-lite"
 DEFAULT_GEMINI_STRONG = "gemini-3.5-flash"
 # Segundo escalon dentro de Gemini: los modelos nuevos devuelven 503 "high demand" en picos (visto el
 # 2026-10-17); los 2.5 son estables. Vacio en la variable de entorno = sin segundo escalon.
-DEFAULT_GEMINI_CHEAP_BACKUP = "gemini-2.5-flash-lite"
-DEFAULT_GEMINI_STRONG_BACKUP = "gemini-2.5-flash"
+# Los 2.5 dejaron de estar disponibles para cuentas nuevas (404, verificado el 2026-10-17 desde la VM);
+# respaldos verificados: gemini-3.1-flash-lite y gemini-3.8-flash.
+DEFAULT_GEMINI_CHEAP_BACKUP = "gemini-3.1-flash-lite"
+DEFAULT_GEMINI_STRONG_BACKUP = "gemini-3.8-flash"
 
 
 class MissingApiKeyError(RuntimeError):
@@ -57,11 +62,38 @@ class ModelRouting:
     providers: tuple[str, ...] = ("anthropic",)
 
 
+class AllProvidersFailedError(RuntimeError):
+    """Fallaron todos los modelos de la cadena; el mensaje trae el error de CADA uno."""
+
+
+def _model_name(m: Any) -> str:
+    return str(getattr(m, "model", None) or getattr(m, "model_name", None) or type(m).__name__)
+
+
+class _FallbackStructured:
+    def __init__(self, pairs: list[tuple[str, Any]]) -> None:
+        self.pairs = pairs
+
+    async def ainvoke(self, messages: Any, config: Any = None, **kwargs: Any) -> Any:
+        errors: list[str] = []
+        for i, (name, runnable) in enumerate(self.pairs):
+            try:
+                out = await runnable.ainvoke(messages, config, **kwargs)
+                if i > 0:
+                    logger.warning("LLM: respondio el fallback %s (fallaron antes: %s)", name, "; ".join(errors))
+                return out
+            except Exception as exc:  # noqa: BLE001 - cualquier falla pasa al siguiente proveedor
+                errors.append(f"{name}: {type(exc).__name__}: {str(exc)[:200]}")
+                logger.warning("LLM: fallo %s (%s); paso al siguiente", name, type(exc).__name__)
+        raise AllProvidersFailedError("fallaron todos los modelos -> " + " | ".join(errors))
+
+
 class FallbackChatModel:
     """Lo minimo que usan los nodos (`with_structured_output(schema).ainvoke(msgs)`), con fallback.
 
-    El primario se intenta primero; ante CUALQUIER excepcion el pedido se repite con el siguiente modelo.
-    Si todos fallan, se propaga el error del ultimo (el ciclo queda `error`, sin fallos silenciosos).
+    El primario se intenta primero; ante CUALQUIER excepcion el pedido se repite con el siguiente modelo y la
+    falla queda en el log. Si fallan todos, se lanza `AllProvidersFailedError` con el error de cada uno (antes
+    solo se veia el del primero, y eso escondio que el respaldo de Gemini no existia).
     """
 
     def __init__(self, *models: Any) -> None:
@@ -70,8 +102,7 @@ class FallbackChatModel:
         self.models = models
 
     def with_structured_output(self, schema: Any, **kwargs: Any) -> Any:
-        first, *rest = [m.with_structured_output(schema, **kwargs) for m in self.models]
-        return first.with_fallbacks(rest) if rest else first
+        return _FallbackStructured([(_model_name(m), m.with_structured_output(schema, **kwargs)) for m in self.models])
 
 
 @lru_cache(maxsize=1)
