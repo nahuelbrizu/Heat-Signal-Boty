@@ -69,7 +69,11 @@ def asof(left_index: pd.DatetimeIndex, right: pd.DataFrame | pd.Series, *,
     un dato mas viejo que eso queda NaN (hueco declarado, no arrastre infinito).
     """
     frame = right.to_frame() if isinstance(right, pd.Series) else right
-    left = pd.DataFrame(index=left_index)
+    # misma precision en ambos indices: con datos reales unos vienen en ms y otros en us, y pandas 3 no los une
+    frame = frame.copy()
+    frame.index = pd.DatetimeIndex(frame.index).as_unit("ns")
+    left_index_ns = pd.DatetimeIndex(left_index).as_unit("ns")
+    left = pd.DataFrame(index=left_index_ns)
     merged = pd.merge_asof(left, frame.sort_index(), left_index=True, right_index=True, direction="backward",
                            tolerance=tolerance)
     merged.index = left_index

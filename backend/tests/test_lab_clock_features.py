@@ -114,3 +114,11 @@ def test_update_current_funding_writes_month_and_loads(tmp_path) -> None:
     assert "startTime=1790812800000" in calls[0]  # inicio del mes UTC
     s = load_funding("XRPUSDT", root=tmp_path)
     assert s.index[0] == pd.Timestamp(1792195200000, unit="ms", tz="UTC") and s.iloc[0] == pytest.approx(-0.00004226)
+
+
+def test_asof_accepts_indexes_with_different_time_units() -> None:
+    """Con datos reales las velas vienen en ms y los snapshots en us: asof tiene que unirlos igual."""
+    right = pd.Series([1.0, 2.0], index=pd.DatetimeIndex([T0, T0 + pd.Timedelta("10min")]).as_unit("us"), name="x")
+    left = pd.DatetimeIndex([T0 + pd.Timedelta("5min"), T0 + pd.Timedelta("12min")]).as_unit("ms")
+    got = asof(left, right)
+    assert list(got) == [1.0, 2.0] and got.index.equals(left)
