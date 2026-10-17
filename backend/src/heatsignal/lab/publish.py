@@ -55,6 +55,18 @@ def _latest_runs(results_dir: Path) -> Iterable[tuple[Path, list[Path]]]:
             yield folder, runs
 
 
+def _spec_info(strategy_id: str | None) -> dict[str, Any]:
+    """Descripcion y ficha de la estrategia (del catalogo congelado), para mostrar junto al resultado."""
+    from .strategies import CATALOG
+
+    if strategy_id not in CATALOG:
+        return {"description": None}
+    spec, _ = CATALOG[strategy_id]
+    return {"description": spec.description, "family": spec.family, "timeframe": spec.timeframe,
+            "direction": spec.direction, "horizon": spec.horizon, "params": spec.params, "grid": spec.grid,
+            "source": spec.source}
+
+
 def summarize(results_dir: Path) -> dict[str, Any]:
     out: dict[str, Any] = {"strategies": []}
     for _, runs in _latest_runs(results_dir):
@@ -63,6 +75,7 @@ def summarize(results_dir: Path) -> dict[str, Any]:
         hold = _holdout(runs[-1].parent)
         out["strategies"].append({
             "strategy_id": r.get("strategy_id"), "spec_hash": r.get("spec_hash"), "run": runs[-1].stem,
+            **_spec_info(r.get("strategy_id")),
             "runs": len(runs), "symbols": r.get("symbols"), "oos_range": r.get("walk_forward", {}).get("oos"),
             "windows": r.get("walk_forward", {}).get("windows"), "n_combinations": r.get("n_combinations"),
             "sharpe": o.get("sharpe"), "sharpe_ci95": o.get("sharpe_ci95"), "psr": o.get("psr"), "dsr": o.get("dsr"),
@@ -166,6 +179,7 @@ def write_all(home: Path) -> list[Path]:
             continue
         d = detail(run, runs)
         d["holdout"] = _holdout(runs[-1].parent)
+        d["spec"] = _spec_info(sid)
         d["generated_at"] = generated_at
         path = home / f"lab_detail_{sid}.json"
         path.write_text(json.dumps(_nan_to_null(d), ensure_ascii=False, separators=(",", ":")))
