@@ -98,6 +98,9 @@ Ambas en versión 0.1.x: fijar la versión exacta. Si pesan demasiado, DSR, PSR 
   laboratorio no "encuentre" ganancias falsas).
 - **En observación, sin capital:** noticias, estacionalidad, lead-lag y premium entre exchanges.
 - **Las dos XRP de 90 días** siguen como están.
+- **Benchmark de TA común:** las 7 estrategias de futuros de `freqtrade-strategies`, corridas tal cual y sin
+  re-optimizar (ver `research/freqtrade-strategies.md`). Las 4 de `lookahead_bias/` son casos de prueba del detector de
+  look-ahead: tienen que dar positivo.
 
 ## Etapa 3: simulado con Freqtrade
 
