@@ -12,8 +12,11 @@ liquidación propios, señales de order flow, snapshots de ticker) y evaluar **q
 mayor tasa de acierto histórica**. CoinGlass API v4 queda como fuente **BYOK opcional** a futuro (el
 usuario pone su propia clave/plan), no como dependencia del core — ver `.claude/context/decisions.md`.
 
-El producto final es un dashboard con señales rankeadas por win-rate calibrado y honesto — no un bot de
-ejecución. La integridad estadística del ranking es el núcleo del producto, no un detalle.
+**Objetivo (cambiado el 2026-10-17):** herramienta **personal** que analiza semana a semana y mes a mes,
+acumula datos propios, simula estrategias contra la realidad (velas 1m–1h) y, cuando una estrategia lo
+demuestra fuera de muestra, opera por el usuario con límites de riesgo (bots propios y/o Hummingbot). Plan
+por etapas en `decisions.md`. La integridad estadística sigue siendo el núcleo: nada opera con plata real
+sin haber pasado simulación, cuenta de prueba y comparación con la realidad.
 
 ## Principios de trabajo (leer antes de escribir cualquier código)
 
