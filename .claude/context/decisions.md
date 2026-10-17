@@ -66,7 +66,9 @@
   todos los exchanges que informan" ahora incluye Hyperliquid y queda más estricta. Se acepta porque
   todavía no hay hipótesis. El texto de la estrategia no cambia, pero el universo de exchanges sí, y
   queda anotado acá. Fecha: 2026-10-17.
-- **XRPL DEX: pendiente de decisión del usuario.** Ver `estado.md`.
+- **XRPL DEX → postergado hasta la etapa de ejecución.** Como fuente de datos aporta poco: es spot, no tiene
+  funding, OI ni liquidaciones, el volumen es chico y los trades salen de parsear la metadata del ledger.
+  Se retoma si se arma el plan de bots, donde Hummingbot ya tiene conector `xrpl`. Fecha: 2026-10-17.
 
 ## Abiertas
 - ~~Plan de CoinGlass a contratar.~~ **Ya no aplica al core** — la fuente primaria pasó a WS nativos.

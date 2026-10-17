@@ -69,8 +69,6 @@ Noticias:
 - [ ] El etiquetado por palabras clave es simple (`newsrss-v1`): medir falsos positivos con lo que se acumule.
 
 Ingesta:
-- [ ] XRPL DEX (spot on-ledger): evaluar si suma. No tiene funding, OI ni liquidaciones; los trades salen
-      parseando la metadata de transacciones.
 - [ ] Open interest de Binance: el stream `markPrice` no lo trae; la suma de OI sale solo de Bybit + OKX
       (declarado en `data_gaps`). Opción: poll REST `openInterest` de Binance.
 - [ ] `reconnects` de health se infiere parseando logs; reemplazar por un hook explícito en los workers.
@@ -82,6 +80,10 @@ Producto (Fase 4):
 - [ ] Endpoints públicos FastAPI (reportes `public_view()` por estrategia).
 - [ ] Dashboard Next.js.
 - [ ] Reporte diario anclado en UTC.
+
+Ejecución (sin plan todavía, ver `decisions.md`):
+- [ ] Si se decide operar: plan por etapas shadow → paper → dinero chico → escalar. XRPL DEX entra acá
+      (Hummingbot `xrpl`).
 
 Operación:
 - [ ] Reloj de la WSL de desarrollo adelantado ~1.9 s (`sudo hwclock -s`); la VM está bien (NTP).
