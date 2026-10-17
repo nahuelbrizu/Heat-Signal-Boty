@@ -59,6 +59,7 @@ log = logging.getLogger("heatsignal.ingestion.binance")
 
 # Ruta "market" de Binance USDⓈ-M Futures (aggTrade, markPrice, forceOrder).
 MARKET_STREAM_URL = "wss://fstream.binance.com/market"
+SUBSCRIBE_BATCH = 50  # streams por mensaje SUBSCRIBE (limite: 10 mensajes/s por conexion)
 
 
 def _now_ms() -> int:
@@ -194,13 +195,27 @@ class BinanceWorker:
 
     # ---- ciclo de vida / suscripciones --------------------------------------
 
-    def _subscribe_all(self, client: UMFuturesWebsocketClient) -> None:
-        """(Re)suscribir todos los streams para todos los simbolos."""
+    def stream_names(self) -> list[str]:
+        streams: list[str] = []
         for sym in self._symbols:
-            client.liquidation_order(symbol=sym)      # <symbol>@forceOrder
-            client.agg_trade(symbol=sym)              # <symbol>@aggTrade
-            client.mark_price(symbol=sym, speed=1)    # <symbol>@markPrice@1s
-        log.info("suscripto a %d simbolos x 3 streams", len(self._symbols))
+            s = sym.lower()
+            streams += [f"{s}@forceOrder", f"{s}@aggTrade", f"{s}@markPrice@1s"]
+        return streams
+
+    def _subscribe_all(self, client: UMFuturesWebsocketClient) -> None:
+        """(Re)suscribir todos los streams en UN mensaje SUBSCRIBE por tanda.
+
+        Binance USDS-M corta la conexion si recibe mas de 10 mensajes por segundo (y puede banear la IP si
+        se repite). Los helpers del conector (`agg_trade`, `mark_price`, ...) mandan un mensaje por stream:
+        con 7 simbolos x 3 streams eran 21 mensajes de golpe -> desconexion inmediata en bucle. `params`
+        acepta una lista de streams; se mandan tandas de SUBSCRIBE_BATCH (muy por debajo del maximo de
+        streams por conexion).
+        """
+        streams = self.stream_names()
+        for i in range(0, len(streams), SUBSCRIBE_BATCH):
+            client.subscribe(stream=streams[i:i + SUBSCRIBE_BATCH])
+        log.info("suscripto a %d simbolos x 3 streams en %d mensaje(s)", len(self._symbols),
+                 -(-len(streams) // SUBSCRIBE_BATCH))
 
     def _open_client(self) -> UMFuturesWebsocketClient:
         # on_close marca la conexion como muerta para gatillar reconexion.

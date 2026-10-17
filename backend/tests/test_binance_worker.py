@@ -150,3 +150,21 @@ async def test_watchdog_does_not_fire_while_messages_keep_arriving() -> None:
     await asyncio.wait_for(watchdog_task, timeout=1.0)
 
     assert not worker._connection_dead.is_set()
+
+
+def test_subscribes_all_streams_in_few_messages() -> None:
+    """Binance corta la conexion con >10 mensajes/s: 7 simbolos x 3 streams deben ir en un solo SUBSCRIBE."""
+
+    class FakeClient:
+        def __init__(self) -> None:
+            self.calls: list[list[str]] = []
+
+        def subscribe(self, stream, id=None):
+            self.calls.append(list(stream))
+
+    syms = ["BTCUSDT", "SOLUSDT", "XRPUSDT", "ETHUSDT", "XLMUSDT", "BNBUSDT", "TRXUSDT"]
+    worker = BinanceWorker(symbols=syms, sink=BufferedSink())
+    client = FakeClient()
+    worker._subscribe_all(client)  # type: ignore[arg-type]
+    assert len(client.calls) == 1 and len(client.calls[0]) == 21
+    assert {"btcusdt@forceOrder", "trxusdt@aggTrade", "xrpusdt@markPrice@1s"} <= set(client.calls[0])
