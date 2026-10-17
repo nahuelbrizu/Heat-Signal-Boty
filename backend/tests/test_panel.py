@@ -110,3 +110,15 @@ async def test_charts_library_is_served_locally(tmp_path) -> None:
     r = await client.get("/static/lightweight-charts.js")
     assert r.status_code == 200 and "Lightweight Charts" in r.text[:300]
     assert '<script src="/static/lightweight-charts.js">' in (await client.get("/")).text
+
+
+async def test_page_is_never_cached_and_status_carries_build_id(tmp_path) -> None:
+    ctx = await _ctx(tmp_path, with_analysis=False)
+    client = _client(ctx)
+    page = await client.get("/")
+    assert page.headers["cache-control"] == "no-store"
+    assert "location.reload()" in page.text
+    build = (await client.get("/api/status")).json()["build"]
+    assert len(build) == 12 and (await client.get("/api/status")).json()["build"] == build
+    ctx.started_at += 1  # otro proceso (deploy/reinicio) -> otro build: la pagina abierta se recarga
+    assert (await _client(ctx).get("/api/status")).json()["build"] != build

@@ -94,6 +94,7 @@
   <header>
     <h1>HeatSignal · panel interno</h1>
     <span class="muted" id="hdr-meta">cargando…</span>
+    <span id="hdr-fresh"></span>
     <span class="err" id="hdr-err"></span>
   </header>
   <div class="banner">
@@ -162,6 +163,7 @@
 <script>
 "use strict";
 const $ = (id) => document.getElementById(id);
+const live = { build: null, lastOk: 0 };
 
 function el(tag, attrs, ...children) {
   const node = document.createElement(tag);
@@ -323,6 +325,9 @@ async function refreshStatus() {
     const r = await fetch("/api/status", { cache: "no-store" });
     if (!r.ok) throw new Error("HTTP " + r.status);
     const s = await r.json();
+    if (live.build && s.build !== live.build) { location.reload(); return; }  // deploy nuevo: recargar
+    live.build = s.build;
+    live.lastOk = Date.now();
     $("hdr-err").textContent = "";
     $("hdr-meta").textContent = "proceso arriba hace " + dur(s.uptime_s) + " · actualizado " + time(s.now_ms) +
       " · símbolos " + (s.config.symbols || []).join(", ");
@@ -340,7 +345,7 @@ async function refreshStatus() {
         " · expulsados por tope " + num(st.evicted_by_cap, 0) + " · ventana desde " + time(s.memory.started_at_ms);
     }
   } catch (e) {
-    $("hdr-err").textContent = "sin conexión con el proceso (" + e.message + ")";
+    $("hdr-err").textContent = "sin conexión con el proceso (" + e.message + "): reintentando cada 5 s";
   }
 }
 
@@ -606,12 +611,29 @@ function drawOverlays() {
   }
 }
 
+// ---- siempre actualizado ---------------------------------------------------------------------------
+// Estado cada 5 s, features y velas cada 15 s. Si cambia el build (deploy/reinicio) la página se recarga.
+// Al volver a la pestaña (el navegador frena los timers en segundo plano) se refresca todo al instante.
+// El indicador del encabezado muestra la antigüedad del último dato y se pone rojo si se atrasa.
+
+function refreshAll() { refreshStatus(); refreshFeatures(); loadCandles(false); }
+
+function renderFreshness() {
+  const box = $("hdr-fresh");
+  if (!live.lastOk) { box.textContent = ""; return; }
+  const age = Math.round((Date.now() - live.lastOk) / 1000);
+  box.className = "chip " + (age > 20 ? "bad" : "ok");
+  box.textContent = age > 20 ? "datos atrasados " + age + " s" : "en vivo";
+}
+
 $("feat-btn").addEventListener("click", refreshFeatures);
+document.addEventListener("visibilitychange", () => { if (!document.hidden) refreshAll(); });
 refreshStatus();
 refreshFeatures();
 setInterval(refreshStatus, 5000);
-setInterval(refreshFeatures, 30000);
-setInterval(() => loadCandles(false), 30000);
+setInterval(refreshFeatures, 15000);
+setInterval(() => loadCandles(false), 15000);
+setInterval(renderFreshness, 1000);
 </script>
 </body>
 </html>

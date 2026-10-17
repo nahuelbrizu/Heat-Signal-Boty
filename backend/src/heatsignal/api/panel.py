@@ -18,6 +18,7 @@ asi las conexiones SQLite del registry (no thread-safe) y las deques de la venta
 
 from __future__ import annotations
 
+import hashlib
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -115,9 +116,13 @@ def _hypotheses_view(ctx: PanelContext) -> dict[str, Any]:
 def create_panel_app(ctx: PanelContext) -> FastAPI:
     app = FastAPI(title="HeatSignal panel interno", docs_url=None, redoc_url=None, openapi_url=None)
 
+    # Cambia con cada reinicio del proceso (deploy) o cambio del HTML: la pagina abierta lo compara en cada
+    # poll y se recarga sola, asi nunca queda mostrando una version vieja del panel.
+    build_id = hashlib.sha256(_HTML_PATH.read_bytes() + str(ctx.started_at).encode()).hexdigest()[:12]
+
     @app.get("/", response_class=HTMLResponse)
-    async def index() -> str:
-        return _HTML_PATH.read_text(encoding="utf-8")
+    async def index() -> HTMLResponse:
+        return HTMLResponse(_HTML_PATH.read_text(encoding="utf-8"), headers={"Cache-Control": "no-store"})
 
     @app.get("/health")
     async def health() -> dict[str, str]:
@@ -134,6 +139,7 @@ def create_panel_app(ctx: PanelContext) -> FastAPI:
                 "symbols": ctx.memory.summary(),
             }
         return {
+            "build": build_id,
             "now_ms": int(time.time() * 1000),
             "uptime_s": round(time.time() - ctx.started_at, 1),
             "config": ctx.config,
