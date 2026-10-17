@@ -76,6 +76,20 @@
   el grafo: el costo baja a ~1/3. Precios y ATR van a los prompts con cifras significativas
   (`fmt_price`), porque con 2 decimales fijos el ATR de XRP se leía "0.00". Fecha: 2026-10-17.
 
+- **Objetivo del proyecto → herramienta personal que opera por el usuario (2026-10-17).** Reemplaza a
+  "dashboard público, no un bot de ejecución". Plan por etapas: (1) datos guardados, (2) laboratorio de
+  simulación con separación entrenamiento/prueba, en velas 1m/5m/15m/30m/1h, (3) bots en cuentas de prueba
+  (Hummingbot) comparando simulación vs realidad, (4) dinero real chico con límites, (5) escalar. Lo que no
+  cambia: las órdenes las manda código determinista (el LLM filtra y revisa); toda estrategia se versiona
+  y se prueba fuera de muestra antes de operar.
+- **Datos de mercado → se guardan, privados (revierte "solo en memoria", 2026-10-17).** Para entrenar y
+  simular hace falta historia, y la de liquidaciones, flujo por exchange, funding y OI a 1 minuto no existe
+  gratis: solo la que guardemos. `history/`: `MinuteRecorder` (agregados por minuto, exchange y símbolo,
+  más cada liquidación y cada noticia) sobre SQLite en la VM (`data/heatsignal_history.sqlite`). Velas
+  históricas 1m de Binance por REST (`history/klines.py`); 5m–1h se derivan exactas de 1m. Export diario
+  a `.csv.gz` y respaldo con `rclone copy` a la carpeta personal de Drive del usuario
+  (`heatsignal-history.timer`, 00:20 UTC). Nada se publica. La ventana en RAM del análisis sigue igual.
+
 ## Abiertas
 - ~~Plan de CoinGlass a contratar.~~ **Ya no aplica al core** — la fuente primaria pasó a WS nativos.
   Solo se retomaría si se implementa la fuente BYOK opcional (y ahí el plan lo elige el usuario).

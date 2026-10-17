@@ -64,6 +64,7 @@ class NewsWindow:
         http_get: HttpGet | None = None,
         clock_ms: Callable[[], int] = _now_ms,
         timeout_s: float = 15.0,
+        on_new: Callable[[list[NewsItem]], None] | None = None,
     ) -> None:
         self._feeds = list(feeds)
         self._retention_ms = retention_s * 1000
@@ -72,6 +73,7 @@ class NewsWindow:
         self._clock_ms = clock_ms
         self._timeout_s = timeout_s
         self._items: dict[str, NewsItem] = {}
+        self._on_new = on_new
         self.last_ok_ms: dict[str, int] = {}
         self.last_error: dict[str, str] = {}
         self.started_at_ms = clock_ms()
@@ -80,13 +82,13 @@ class NewsWindow:
 
     def ingest(self, items: Sequence[NewsItem]) -> int:
         """Agrega items nuevos (por item_id); devuelve cuantos eran nuevos."""
-        new = 0
-        for it in items:
-            if it.item_id not in self._items:
-                self._items[it.item_id] = it
-                new += 1
+        fresh = [it for it in dict((it.item_id, it) for it in items).values() if it.item_id not in self._items]
+        for it in fresh:
+            self._items[it.item_id] = it
         self.prune()
-        return new
+        if fresh and self._on_new is not None:
+            self._on_new(fresh)
+        return len(fresh)
 
     def prune(self) -> None:
         cutoff = self._clock_ms() - self._retention_ms

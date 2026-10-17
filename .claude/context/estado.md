@@ -24,7 +24,9 @@ Tests: 408 pasando, 1 skipped (`backend/`, `.venv/bin/pytest -q`).
 - `heatsignal-ingestion.service`: ingesta Binance + Bybit + OKX + Hyperliquid (BTC, SOL, XRP) en **modo memory**
   (datos de mercado solo en RAM) + ciclo de análisis cada 15 min. `MemoryMax=700M`, `Restart=always`.
 - `heatsignal-eval.timer` → `heatsignal-eval.service` cada 5 min (resolución + evaluación).
-- Único archivo persistido: `~/heatsignal/data/heatsignal_eval.sqlite` (estrategias + hipótesis). Con API
+- Persistido: `data/heatsignal_eval.sqlite` (estrategias + hipótesis) y `data/heatsignal_history.sqlite`
+  (agregados por minuto, liquidaciones, noticias, velas 1m). `heatsignal-history.timer` (00:20 UTC):
+  velas nuevas + export diario + respaldo a Drive. Con API
   key se suma `heatsignal_checkpoints.sqlite` (checkpoints del grafo).
 - `ANTHROPIC_API_KEY` cargada en `~/heatsignal/.env` (2026-10-17): grafo habilitado. Con la primera
   estrategia registrada (`xrp-acumulacion-v1`) el grafo corre cada 15 min y gasta LLM.

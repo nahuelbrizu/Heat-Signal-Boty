@@ -1,0 +1,24 @@
+# Una vez por dia: baja las velas 1m nuevas, exporta los dias cerrados a data/export y los sube a Drive
+# (HEATSIGNAL_DRIVE_REMOTE en .env). El "-" en ReadWritePaths tolera que rclone no este configurado.
+[Unit]
+Description=HeatSignal history: velas 1m nuevas, export diario y respaldo a Drive
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=nahue
+WorkingDirectory=/home/nahue/heatsignal/backend
+EnvironmentFile=-/home/nahue/heatsignal/.env
+Environment=PYTHONPATH=/home/nahue/heatsignal/backend/src
+Environment=HEATSIGNAL_HISTORY_DB=/home/nahue/heatsignal/data/heatsignal_history.sqlite
+Environment=HEATSIGNAL_EXPORT_DIR=/home/nahue/heatsignal/data/export
+ExecStart=/home/nahue/heatsignal/backend/.venv/bin/python -m heatsignal.history.klines --update
+ExecStart=/home/nahue/heatsignal/backend/.venv/bin/python -m heatsignal.history.export
+MemoryMax=300M
+Nice=10
+ProtectSystem=strict
+# rclone renueva el token de Drive y lo reescribe en su config
+ReadWritePaths=/home/nahue/heatsignal -/home/nahue/.config/rclone
+PrivateTmp=true
+NoNewPrivileges=true

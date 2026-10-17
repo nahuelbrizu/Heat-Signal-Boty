@@ -53,6 +53,7 @@ class PanelContext:
     started_at: float = field(default_factory=time.time)
     http_get: HttpGet | None = None  # inyectable en tests (sin red)
     news: Any = None  # news.window.NewsWindow
+    history: Any = None  # history.recorder.MinuteRecorder
 
 
 def _cycle_view(analysis: AnalysisLoop | None, *, ran: bool = False) -> dict[str, Any] | None:
@@ -71,6 +72,25 @@ def _cycle_view(analysis: AnalysisLoop | None, *, ran: bool = False) -> dict[str
         # el ultimo ciclo con LLM no repite los features (ya van en last_cycle y en /api/features)
         "features": {} if ran else {s: fs.model_dump(mode="json") for s, fs in r.features.items()},
     }
+
+
+_HISTORY_CACHE: dict[int, tuple[float, dict[str, Any]]] = {}
+HISTORY_SUMMARY_TTL_S = 30.0
+
+
+def _history_view(ctx: PanelContext) -> dict[str, Any] | None:
+    """Que se esta guardando. El resumen de la base (COUNTs) se cachea 30 s: la tabla crece mucho."""
+    if ctx.history is None:
+        return None
+    cached = _HISTORY_CACHE.get(id(ctx.history))
+    if cached is None or time.time() - cached[0] > HISTORY_SUMMARY_TTL_S:
+        summary = ctx.history.store.summary()
+        exports = sorted((ctx.history.store.path.parent / "export").glob("*/*/*/bars_1m.csv.gz"))
+        summary["last_export_day"] = "-".join(exports[-1].parts[-4:-1]) if exports else None
+        summary["export_days"] = len(exports)
+        cached = (time.time(), summary)
+        _HISTORY_CACHE[id(ctx.history)] = cached
+    return {"recorder": ctx.history.stats.as_dict(), "store": cached[1], "summary_age_s": round(time.time() - cached[0], 1)}
 
 
 def _hypotheses_view(ctx: PanelContext) -> dict[str, Any]:
@@ -168,6 +188,7 @@ def create_panel_app(ctx: PanelContext) -> FastAPI:
             },
             "evaluation": _hypotheses_view(ctx),
             "news": None if ctx.news is None else ctx.news.summary(),
+            "history": _history_view(ctx),
         }
 
     @app.get("/api/features")

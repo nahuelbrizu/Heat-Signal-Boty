@@ -1,0 +1,9 @@
+[Unit]
+Description=HeatSignal history diario (00:20 UTC)
+
+[Timer]
+OnCalendar=*-*-* 00:20:00 UTC
+Persistent=true
+
+[Install]
+WantedBy=timers.target

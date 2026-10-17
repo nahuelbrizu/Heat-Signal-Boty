@@ -70,11 +70,12 @@ def test_enabled_exchanges_skips_unavailable_okx(monkeypatch, caplog) -> None:
 # ---- sinks ----------------------------------------------------------------------------------------
 
 
-async def test_build_sinks_memory_mode_ignores_redis_and_db(caplog) -> None:
+async def test_build_sinks_memory_mode_ignores_redis_and_db(caplog, tmp_path) -> None:
     cfg = RunConfig.from_env({
         "REDIS_URL": "redis://r:6379/0",
         "DATABASE_URL": "postgresql://x:y@h/db",
         "HEATSIGNAL_MEM_TRADES_S": "600",
+        "HEATSIGNAL_RECORD": "0",
     })
     with caplog.at_level(logging.WARNING):
         throttled, sinks = await build_sinks(cfg)
@@ -83,6 +84,14 @@ async def test_build_sinks_memory_mode_ignores_redis_and_db(caplog) -> None:
     assert "REDIS_URL configurado pero se IGNORA" in caplog.text
     assert "DATABASE_URL configurado pero se IGNORA" in caplog.text
     await throttled.close()
+
+    from heatsignal.history.recorder import MinuteRecorder
+
+    cfg = RunConfig.from_env({"HEATSIGNAL_HISTORY_DB": str(tmp_path / "h.sqlite")})
+    throttled, sinks = await build_sinks(cfg)
+    assert isinstance(sinks[0], MemoryWindowSink) and isinstance(sinks[1], MinuteRecorder)
+    await throttled.close()
+    assert (tmp_path / "h.sqlite").exists()
 
 
 async def test_build_sinks_falls_back_to_console_without_redis_or_db(caplog) -> None:
@@ -133,6 +142,7 @@ async def test_run_wires_workers_and_shuts_down_cleanly(monkeypatch, tmp_path) -
     cfg = RunConfig.from_env({
         "HEATSIGNAL_EXCHANGES": "bybit", "HEATSIGNAL_RUN_SECONDS": "0.2",
         "HEATSIGNAL_EVAL_DB": str(tmp_path / "eval.sqlite"),
+        "HEATSIGNAL_HISTORY_DB": str(tmp_path / "history.sqlite"),
         "HEATSIGNAL_PANEL_PORT": "0",
     })
     await run_mod.run(cfg)

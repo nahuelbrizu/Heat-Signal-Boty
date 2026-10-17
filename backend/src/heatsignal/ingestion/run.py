@@ -18,7 +18,9 @@ Configuracion por variables de entorno (ver `.env.example` en la raiz del repo):
   HEATSIGNAL_MEM_LIQUIDATIONS_S 86400
   HEATSIGNAL_ANALYSIS_INTERVAL_S 900   ciclo features -> grafo -> hipotesis (modo memory; 0 lo apaga)
   HEATSIGNAL_ANALYSIS_WINDOW_S  1800   ventana de features (<= retencion de trades)
-  HEATSIGNAL_NEWS_INTERVAL_S    300    poll de noticias RSS (news/feeds.py), solo en memoria 48 h (0 lo apaga)
+  HEATSIGNAL_NEWS_INTERVAL_S    300    poll de noticias RSS (news/feeds.py), ventana en memoria de 48 h (0 lo apaga)
+  HEATSIGNAL_RECORD             1      guardar agregados por minuto + liquidaciones + noticias (history/), 0 lo apaga
+  HEATSIGNAL_HISTORY_DB         data/heatsignal_history.sqlite   base historica privada (respaldo diario a Drive)
   HEATSIGNAL_EVAL_DB            data/heatsignal_eval.sqlite   estrategias + hipotesis (lo unico persistido)
   HEATSIGNAL_CHECKPOINT_DB      data/heatsignal_checkpoints.sqlite   checkpoints del grafo
   ANTHROPIC_API_KEY             sin key el ciclo solo calcula features (avisa en cada ciclo)
@@ -101,6 +103,8 @@ class RunConfig:
     analysis_interval_s: float = 900.0
     analysis_window_s: int = 1800
     news_interval_s: float = 300.0
+    record: bool = True
+    history_db: str = "data/heatsignal_history.sqlite"
     eval_db: str = "data/heatsignal_eval.sqlite"
     checkpoint_db: str = "data/heatsignal_checkpoints.sqlite"
     panel_port: int = 8000
@@ -177,6 +181,8 @@ class RunConfig:
             analysis_interval_s=_float("HEATSIGNAL_ANALYSIS_INTERVAL_S", 900.0),
             analysis_window_s=int(_float("HEATSIGNAL_ANALYSIS_WINDOW_S", 1800)),
             news_interval_s=_float("HEATSIGNAL_NEWS_INTERVAL_S", 300.0),
+            record=(_opt("HEATSIGNAL_RECORD") or "1").strip().lower() not in ("0", "false", "no"),
+            history_db=_opt("HEATSIGNAL_HISTORY_DB") or "data/heatsignal_history.sqlite",
             eval_db=_opt("HEATSIGNAL_EVAL_DB") or "data/heatsignal_eval.sqlite",
             checkpoint_db=_opt("HEATSIGNAL_CHECKPOINT_DB") or "data/heatsignal_checkpoints.sqlite",
             panel_port=int(_float("HEATSIGNAL_PANEL_PORT", 8000)),
@@ -223,11 +229,22 @@ async def build_sinks(cfg: RunConfig) -> tuple[ThrottledSink, list[EventSink]]:
             "liquidation": cfg.mem_liquidations_s,
         })
         log.info(
-            "modo memory: datos de mercado solo en RAM (trades %.0fs, tickers %.0fs, liquidaciones %.0fs), "
-            "nada se escribe a disco",
+            "modo memory: ventana de analisis en RAM (trades %.0fs, tickers %.0fs, liquidaciones %.0fs)",
             cfg.mem_trades_s, cfg.mem_tickers_s, cfg.mem_liquidations_s,
         )
-        return _throttled(cfg, [memory]), [memory]
+        sinks: list[EventSink] = [memory]
+        if cfg.record:
+            from ..history.recorder import MinuteRecorder
+            from ..history.store import HistoryStore
+
+            try:
+                sinks.append(MinuteRecorder(HistoryStore(cfg.history_db)))
+                log.info("grabando agregados por minuto, liquidaciones y noticias en %s", cfg.history_db)
+            except Exception:  # noqa: BLE001 - sin disco la ingesta y el analisis siguen igual
+                log.exception("!!! no se pudo abrir %s - NO se guarda historia !!!", cfg.history_db)
+        else:
+            log.warning("HEATSIGNAL_RECORD=0: no se guarda historia (solo ventana en RAM)")
+        return _throttled(cfg, sinks), sinks
 
     real: list[EventSink] = []
 
@@ -285,6 +302,12 @@ def _memory_sink(sinks: list[EventSink]) -> MemoryWindowSink | None:
     return next((s for s in sinks if isinstance(s, MemoryWindowSink)), None)
 
 
+def _recorder(sinks: list[EventSink]) -> Any:
+    from ..history.recorder import MinuteRecorder
+
+    return next((s for s in sinks if isinstance(s, MinuteRecorder)), None)
+
+
 async def start_analysis(
     cfg: RunConfig, sinks: list[EventSink], stop: asyncio.Event, stack: contextlib.AsyncExitStack
 ) -> AnalysisHandles | None:
@@ -333,7 +356,8 @@ async def start_analysis(
     if cfg.news_interval_s > 0:
         from ..news.window import NewsWindow
 
-        news = NewsWindow(interval_s=cfg.news_interval_s)
+        recorder = _recorder(sinks)
+        news = NewsWindow(interval_s=cfg.news_interval_s, on_new=recorder.record_news if recorder else None)
         news_task = asyncio.create_task(news.run_forever(stop), name="news")
     else:
         log.info("noticias apagadas (HEATSIGNAL_NEWS_INTERVAL_S=0)")
@@ -364,6 +388,7 @@ async def start_panel(
     ctx = PanelContext(
         health=health,
         memory=_memory_sink(sinks),
+        history=_recorder(sinks),
         analysis=analysis.loop if analysis else None,
         registry=analysis.registry if analysis else None,
         store=analysis.store if analysis else None,
