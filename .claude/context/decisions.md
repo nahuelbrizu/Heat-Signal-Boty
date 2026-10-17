@@ -144,6 +144,16 @@
   que la canasta. La muestra es chica (IC enorme), así que el resultado ni confirma ni refuta con fuerza.
   **Según la regla fijada: no pasa a plata real; puede seguir en paper trading para juntar evidencia.**
 
+- **Paper trading de `donchian-ensemble-v1` con Freqtrade 2026.9 en DRY-RUN (2026-10-17).** Corre en la VM
+  (`heatsignal-freqtrade.service`): wallet simulado de 10.000 USDT, los 7 pares de futuros, velas de 4h, precios
+  reales de Binance, sin API keys de exchange. Estrategia en `freqtrade/user_data/strategies/DonchianEnsembleV1.py`
+  (misma regla congelada, target_vol 0,15). Diferencias con el laboratorio: rebalanceo solo si cambia más del 5%
+  del capital del par; el dry-run no cobra slippage; Freqtrade reinvierte las ganancias.
+  Paridad del backtest (2021-03-13 → 2026-07-15): **635 trades, los mismos que el laboratorio**; +64% (CAGR
+  9,7%), DD 7,4%. Base de trades: `data/freqtrade_dryrun.sqlite`. FreqUI en 127.0.0.1:8081 por túnel
+  (`hs-ft`, `hs-ft-open`, `hs-ft-pass`); las credenciales se generan en la VM (`freqtrade/config.secrets.json`,
+  fuera de git). Próximo: comparar semana a semana el dry-run contra el backtest de las mismas velas.
+
 ## Abiertas
 - ~~Plan de CoinGlass a contratar.~~ **Ya no aplica al core** — la fuente primaria pasó a WS nativos.
   Solo se retomaría si se implementa la fuente BYOK opcional (y ahí el plan lo elige el usuario).
