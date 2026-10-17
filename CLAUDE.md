@@ -68,6 +68,7 @@ Ver `.claude/context/agents.md`.
 | `.claude/context/phase-4-product.md` | Dashboard, API pública, reporte diario |
 | `.claude/context/decisions.md` | Decisiones abiertas y su estado (ADR liviano) |
 | `.claude/context/plan-laboratorio.md` | Plan de etapas 1b–3: historia, laboratorio de backtest, lote de estrategias, Freqtrade |
+| `.claude/context/backlog-ui-datos.md` | Backlog: PnL, métricas y datos de mercado para la UI (análisis, sin implementar) |
 | `.claude/context/research/` | Investigaciones: datos de Binance, ML4T, catálogo de hipótesis, motores de backtest |
 | `.claude/context/historial.md` | Registro cronológico de sesiones y avances — actualizar al cierre de cada sesión relevante |
 
