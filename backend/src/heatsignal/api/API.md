@@ -565,3 +565,138 @@ Snapshot de mercado desde la ventana en memoria (solo símbolos configurados; 40
 - `GET /api/features`: FeatureSet en vivo de todos los símbolos (pesado: calcula features).
 - `GET /api/klines?symbol=&interval=&limit=`: velas de Binance pedidas en el momento (no guardadas).
 - `GET /static/lightweight-charts.js`, `GET /health`, `GET /`.
+- `GET /static/app/{ruta}.js|.css`: módulos ES y estilos de la SPA (`static/app/`, sin build ni CDN; `Cache-Control:
+  no-cache`; lista blanca de nombres, 404 para cualquier otra cosa). El `build` incluye su contenido: cambiar un archivo
+  de la SPA y reiniciar recarga las páginas abiertas.
+
+---
+
+# Acciones (POST)
+
+Son lo único que no es de solo lectura. Todo POST exige:
+
+- header `X-HeatSignal-Action: 1` → si falta, **403** (protección contra requests cruzados: otra página no
+  puede mandar un header propio sin un preflight CORS que el panel no acepta);
+- `Content-Type: application/json` → si no, **415**;
+- cuerpo ≤ 4096 bytes → si no, **413**; JSON ilegible → **400**; campos de más o faltantes → **422**.
+
+Ejemplo desde la SPA:
+
+```js
+fetch("/api/analyze", {method: "POST", headers: {"Content-Type": "application/json", "X-HeatSignal-Action": "1"},
+                       body: JSON.stringify({symbol: "XRPUSDT"})})
+```
+
+Los **429** traen `{"detail", "retry_after_s"}` y el header `Retry-After`.
+
+## `POST /api/analyze` — "Analizar ahora"
+
+Body: `{"symbol": "XRPUSDT"}` (cualquier formato de símbolo; tiene que estar configurado).
+
+Corre un ciclo del grafo LLM **solo para ese símbolo**, fuera de turno, en una tarea asyncio
+(`AnalysisLoop.run_symbols`). Mismas reglas que el ciclo agendado: si la ventana está en calentamiento
+termina `warmup`, sin estrategias activas `no_strategies`. Queda en el historial de ciclos (`/api/cycles`)
+con `run_id` `manual-<ms>` y `detail` que empieza con `"manual: "`. Todas las estrategias activas pasan por
+el Sintetizador; si ninguna aplica al símbolo, la decisión es `no_hypothesis`. No avanza la rotación del
+ciclo agendado. Si justo está corriendo el ciclo agendado, espera a que termine (un grafo a la vez).
+
+**202:**
+```json
+{"run_id": "manual-1792253686223", "symbol": "XRP-USDT", "queued_at": "2026-10-17T16:14:46.223000+00:00",
+ "queued_ms": 1792253686223, "status": "queued"}
+```
+
+Errores:
+- **400**: símbolo no configurado.
+- **429**: ya hay un análisis manual en curso. Responde `{"detail", "retry_after_s": 60, "run_id"}` con el run en curso.
+- **429**: ese símbolo se pidió hace menos de 5 min. `retry_after_s` = lo que falta.
+- **503**: grafo deshabilitado (sin API key) o análisis apagado.
+
+## `GET /api/analyze/{run_id}`
+
+```json
+{"run_id": "manual-1792253686223", "symbol": "XRP-USDT", "status": "ran",
+ "detail": "manual: XRP-USDT=no_hypothesis", "n_hypotheses": 0,
+ "queued_at": "...", "queued_ms": 1792253686223, "started_ms": 1792253686230, "finished_ms": 1792253776000,
+ "cycle_url": "/api/cycles/manual-1792253686223"}
+```
+
+- `status`: `queued`, `running`, o el estado final del ciclo: `ran`, `error`, `warmup`, `no_strategies` o `no_llm`.
+- `cycle_url` es `null` mientras no terminó. Pollear cada 3–5 s mientras esté `queued`/`running`; un ciclo con LLM tarda ~1–2 min.
+- Tras un reinicio del proceso, el estado sale del historial de ciclos (sin `queued_*`).
+- **404** si no existe; **400** si el `run_id` es inválido.
+
+## `POST /api/lab/requests` — "Mandar al laboratorio"
+
+Body:
+```json
+{"strategy_ids": ["donchian-ensemble-v1"], "symbols": ["XRPUSDT"], "note": "ver si aplica a XRP sola"}
+```
+
+- `strategy_ids`: 1–20 ids publicados en `lab_summary.json`, o `["*"]` (todas las publicadas; se expande
+  al crear y la solicitud guarda la lista).
+- `symbols`: 1–10 entre los configurados; se guardan en formato Binance (`XRPUSDT`).
+- `note`: hasta 500 caracteres.
+
+**201:**
+```json
+{"request_id": "3f0c9b2e6a7d4c1e9b8a7f6e5d4c3b2a", "created_ms": 1792253686223, "created_at": "...",
+ "strategy_ids": ["donchian-ensemble-v1"], "symbols": ["XRPUSDT"], "note": "ver si aplica a XRP sola",
+ "origin": "panel", "status": "pending", "status_ms": 1792253686223, "status_at": "...", "worker": null,
+ "error": null, "result": null, "result_url": null}
+```
+
+Errores:
+- **400**: estrategia desconocida (el detalle lista las válidas), `"*"` mezclado con otros ids, o símbolo no configurado.
+- **429**: ya hay 10 pendientes.
+- **503**: no hay `lab_summary.json` publicado, así que no hay contra qué validar las estrategias.
+
+La procesa el worker de la PC (`python -m heatsignal.lab.worker`), así que puede tardar hasta el próximo
+pase del worker más lo que dure el backtest (minutos por estrategia). Cada corrida **cuenta como intentos**
+en el registro anti p-hacking. El holdout nunca se abre desde la cola.
+
+## `GET /api/lab/requests?status=&limit=&offset=`
+
+- `status`: `pending`, `running`, `done` o `error`.
+- `limit`: 1–200 (default 50).
+
+Devuelve una página (más nuevas primero) con la forma del 201, más `pending` (cuántas hay en cola) y `max_pending`.
+
+## `GET /api/lab/requests/{request_id}`
+
+La forma del 201 más `events`, el historial de estados (append-only):
+
+```json
+{"...": "...", "status": "done", "worker": "pc",
+ "result": {"file": "3f0c....json", "strategies": 1, "ok": 1, "errors": 0, "passing": 0},
+ "result_url": "/api/lab/requests/3f0c9b2e6a7d4c1e9b8a7f6e5d4c3b2a/result",
+ "events": [
+   {"status": "pending", "ts_ms": 1792253686223, "ts_at": "...", "worker": null},
+   {"status": "running", "ts_ms": 1792253700000, "ts_at": "...", "worker": "pc"},
+   {"status": "done", "ts_ms": 1792254000000, "ts_at": "...", "worker": "pc", "result": {"...": 0}}
+ ]}
+```
+
+- Con `status: "error"`, `error` trae el motivo. Si fallan todas las estrategias se informa cada una, p.ej.
+  `"donchian-ensemble-v1: faltan datos: sin datos de klines para DOGEUSDT ... (correr lab.vision)"`.
+- **400** si el id no tiene 32 hex; **404** si no existe.
+
+## `GET /api/lab/requests/{request_id}/result`
+
+El archivo que subió el worker (`data/lab_requests/<id>.json`). **404** mientras no esté `done`.
+
+```json
+{"request_id": "3f0c...", "symbols": ["XRPUSDT"], "strategy_ids": ["donchian-ensemble-v1"], "note": "...",
+ "generated_at": "...", "worker": "pc", "n_perm": 100, "holdout": "SELLADO (la cola nunca lo abre)",
+ "strategies": [
+   {"strategy_id": "donchian-ensemble-v1", "status": "ok",
+    "file": "results/donchian-ensemble-v1/symbols-XRPUSDT/20261017T170000.json",
+    "summary": {"sharpe": 0.4, "sharpe_ci95": [-0.5, 1.3], "dsr": 0.6, "psr": 0.7, "total_return": 0.12,
+                "max_drawdown": 0.2, "trades": 90, "hit_rate": 0.3, "breakeven_bps": 20.0,
+                "basket_sharpe": 0.1, "random_p": 0.2, "pasa": false},
+    "detail": {"...": "misma forma que /api/lab/{strategy_id} (walk-forward, costos, equity_daily, veredicto)"}},
+   {"strategy_id": "otra-v1", "status": "error", "error": "faltan datos: ..."}
+ ]}
+```
+
+Con un solo símbolo, `basket` y `buy_and_hold_mean` de `equity_daily` son el buy & hold de esa moneda.

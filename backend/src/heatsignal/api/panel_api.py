@@ -4,7 +4,9 @@ API de solo lectura del panel interno, pensada para una single page que la consu
 Contrato completo con ejemplos de respuesta: `api/API.md`. Resumen de rutas en el docstring de `api/panel.py`.
 
 Convenciones:
-  - Todo es GET y de solo lectura: nada de lo que hay aca escribe en ninguna base.
+  - Todo es GET y de solo lectura, salvo dos acciones POST ("Analizar ahora" y la cola del laboratorio), que
+    exigen el header `X-HeatSignal-Action: 1` (403 sin el: una pagina de otro origen no puede mandarlo sin un
+    preflight CORS que el panel no acepta), `Content-Type: application/json` (415) y cuerpo <= 4 KB (413).
   - Listas paginadas: `{"total", "limit", "offset", "items": [...]}`; `total` = cuantos cumplen el filtro.
   - Tiempos: cada instante va dos veces, `*_ms` (epoch ms UTC) y su ISO 8601 UTC (`*_at` o `t`).
   - Parametros de tiempo (`since`, `until`): epoch ms (solo digitos) o ISO 8601 (`2026-10-17T00:00:00Z`;
@@ -35,7 +37,10 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 from uuid import UUID
 
-from fastapi import FastAPI, HTTPException, Path as PathParam, Query
+from fastapi import FastAPI, HTTPException, Path as PathParam, Query, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from ..schema.hypotheses import HypothesisStatus
 
@@ -56,6 +61,64 @@ RUN_ID = re.compile(r"^[A-Za-z0-9._:-]{1,120}$")
 SUMMARY_TTL_S = 10.0
 CHECKPOINT_TIMEOUT_S = 15.0
 CALIBRATION_BINS = 10
+
+# ---- acciones (POST) ------------------------------------------------------------------------------
+ACTION_HEADER = "x-heatsignal-action"  # exigido en todo POST: una pagina de otro origen no puede mandarlo
+MAX_BODY_BYTES = 4096                  # sin preflight CORS aceptado (el panel no responde CORS)
+ANALYZE_COOLDOWN_S = 300.0             # como maximo 1 analisis manual cada 5 min por simbolo
+ANALYZE_BUSY_RETRY_S = 60              # sugerencia de reintento si ya hay uno en curso
+MAX_ANALYZE_JOBS = 100                 # trabajos recordados en memoria (los viejos se leen del cycle_log)
+MAX_PENDING_LAB_REQUESTS = 10
+LAB_REQUEST_ID = re.compile(r"^[0-9a-f]{32}$")
+
+
+class AnalyzeBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    symbol: str = Field(min_length=1, max_length=30)
+
+
+class LabRequestBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    strategy_ids: list[str] = Field(min_length=1, max_length=20)
+    symbols: list[str] = Field(min_length=1, max_length=10)
+    note: str = Field("", max_length=500)
+
+
+async def action_body(request: Request, model: type[BaseModel]) -> Any:
+    """Valida un POST de accion: header propio (403), JSON (415), tamano (413), forma (400/422)."""
+    if request.headers.get(ACTION_HEADER) != "1":
+        raise HTTPException(status_code=403, detail="falta el header X-HeatSignal-Action: 1")
+    if not request.headers.get("content-type", "").split(";")[0].strip().lower() == "application/json":
+        raise HTTPException(status_code=415, detail="el cuerpo tiene que ser application/json")
+    declared = request.headers.get("content-length")
+    if declared is not None and declared.isdigit() and int(declared) > MAX_BODY_BYTES:
+        raise HTTPException(status_code=413, detail=f"cuerpo demasiado grande (maximo {MAX_BODY_BYTES} bytes)")
+    body = b""
+    async for chunk in request.stream():
+        body += chunk
+        if len(body) > MAX_BODY_BYTES:
+            raise HTTPException(status_code=413, detail=f"cuerpo demasiado grande (maximo {MAX_BODY_BYTES} bytes)")
+    try:
+        data = json.loads(body or b"null")
+    except ValueError:
+        raise HTTPException(status_code=400, detail="JSON invalido") from None
+    try:
+        return model.model_validate(data)
+    except ValidationError as exc:
+        raise RequestValidationError(exc.errors(include_url=False, include_context=False)) from None
+
+
+def binance_symbol(raw: str) -> str:
+    """'xrp-usdt' -> 'XRPUSDT' (formato del laboratorio y de HEATSIGNAL_SYMBOLS)."""
+    return internal_symbol(raw).replace("-", "")
+
+
+def lab_request_json(r: dict[str, Any], events: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+    out = {**r, "created_at": iso(r["created_ms"]), "status_at": iso(r["status_ms"]),
+           "result_url": f"/api/lab/requests/{r['request_id']}/result" if r["status"] == "done" else None}
+    if events is not None:
+        out["events"] = [{**e, "ts_at": iso(e["ts_ms"])} for e in events]
+    return out
 
 
 # ---- utilidades -----------------------------------------------------------------------------------
@@ -925,6 +988,142 @@ def register_api(app: FastAPI, ctx: PanelContext, build_id: str) -> None:  # noq
                   "coverage": cov} for e, s, t, sd, p, qty, n, cov in rows]
         return page(int(agg[0]), limit, offset, items,
                     totals={"n": int(agg[0]), "long_usd": agg[1] or 0.0, "short_usd": agg[2] or 0.0})
+
+    # ---------------------------------------------------------------- acciones: analizar ahora
+
+    analyze_jobs: dict[str, dict[str, Any]] = {}
+    analyze_last: dict[str, float] = {}  # simbolo -> momento del ultimo pedido aceptado
+    analyze_tasks: set[asyncio.Task] = set()
+
+    def _analyze_view(job: dict[str, Any]) -> dict[str, Any]:
+        return {k: job.get(k) for k in ("run_id", "symbol", "status", "detail", "n_hypotheses", "queued_at",
+                                         "queued_ms", "started_ms", "finished_ms")} | {
+            "cycle_url": f"/api/cycles/{job['run_id']}" if job["status"] not in ("queued", "running") else None}
+
+    async def _run_analyze(job: dict[str, Any]) -> None:
+        job["status"], job["started_ms"] = "running", now_ms()
+        try:
+            res = await ctx.analysis.run_symbols([job["symbol"]], reason="manual", run_id=job["run_id"])
+            job.update(status=res.status, detail=res.detail, n_hypotheses=res.n_hypotheses)
+        except Exception as exc:  # noqa: BLE001 - el estado del trabajo lo informa
+            job.update(status="error", detail=f"{type(exc).__name__}: {exc}"[:500])
+        job["finished_ms"] = now_ms()
+
+    @app.post("/api/analyze", status_code=202)
+    async def analyze(request: Request) -> Any:
+        body = await action_body(request, AnalyzeBody)
+        if ctx.analysis is None or not ctx.analysis.graph_enabled:
+            raise HTTPException(status_code=503, detail="el grafo LLM esta deshabilitado (sin API key o analisis apagado)")
+        sym = internal_symbol(body.symbol)
+        if sym not in ctx.analysis.symbols:
+            raise HTTPException(status_code=400, detail=f"simbolo no configurado: {body.symbol!r}")
+        busy = [j for j in analyze_jobs.values() if j["status"] in ("queued", "running")]
+        if busy:
+            return JSONResponse(status_code=429, headers={"Retry-After": str(ANALYZE_BUSY_RETRY_S)}, content={
+                "detail": f"ya hay un analisis manual en curso ({busy[0]['symbol']})",
+                "retry_after_s": ANALYZE_BUSY_RETRY_S, "run_id": busy[0]["run_id"]})
+        wait = ANALYZE_COOLDOWN_S - (time.time() - analyze_last.get(sym, -1e18))
+        if wait > 0:
+            return JSONResponse(status_code=429, headers={"Retry-After": str(math.ceil(wait))}, content={
+                "detail": f"{sym} ya se analizo a mano hace menos de {ANALYZE_COOLDOWN_S / 60:.0f} min",
+                "retry_after_s": math.ceil(wait)})
+        queued = now_ms()
+        run_id = f"manual-{queued}"
+        job = {"run_id": run_id, "symbol": sym, "status": "queued", "detail": None, "n_hypotheses": None,
+               "queued_ms": queued, "queued_at": iso(queued), "started_ms": None, "finished_ms": None}
+        analyze_jobs[run_id] = job
+        analyze_last[sym] = time.time()
+        while len(analyze_jobs) > MAX_ANALYZE_JOBS:
+            analyze_jobs.pop(next(iter(analyze_jobs)))
+        task = asyncio.create_task(_run_analyze(job), name=f"analyze-{sym}")
+        analyze_tasks.add(task)  # referencia fuerte: si no, la tarea puede recolectarse a mitad de camino
+        task.add_done_callback(analyze_tasks.discard)
+        return {"run_id": run_id, "symbol": sym, "queued_at": job["queued_at"], "queued_ms": queued, "status": "queued"}
+
+    @app.get("/api/analyze/{run_id}")
+    async def analyze_status(run_id: str = PathParam(..., max_length=120)) -> dict[str, Any]:
+        if not RUN_ID.match(run_id):
+            raise HTTPException(status_code=400, detail=f"run_id invalido: {run_id!r}")
+        job = analyze_jobs.get(run_id)
+        if job is not None:
+            return _analyze_view(job)
+        row = None if ctx.cycle_log is None else ctx.cycle_log.get(run_id)  # tras un reinicio: del historial
+        if row is None:
+            raise HTTPException(status_code=404, detail=f"analisis {run_id} no existe")
+        return {"run_id": run_id, "symbol": (row["decisions"][0]["symbol"] if row["decisions"] else None),
+                "status": row["status"], "detail": row["detail"], "n_hypotheses": row["n_hypotheses"],
+                "queued_at": None, "queued_ms": None, "started_ms": None, "finished_ms": row["ts_ms"],
+                "cycle_url": f"/api/cycles/{run_id}"}
+
+    # ---------------------------------------------------------------- acciones: cola del laboratorio
+    # (se registran ANTES que /api/lab/{strategy_id}: si no, "requests" se tomaria como un strategy_id)
+
+    def _require_queue() -> Any:
+        if ctx.lab_requests is None:
+            raise HTTPException(status_code=503, detail="cola del laboratorio no disponible")
+        return ctx.lab_requests
+
+    @app.post("/api/lab/requests", status_code=201)
+    async def lab_request_create(request: Request) -> dict[str, Any]:
+        body = await action_body(request, LabRequestBody)
+        queue = _require_queue()
+        lab_view = _lab_view(ctx)
+        if not isinstance(lab_view, dict) or not isinstance(lab_view.get("strategies"), list):
+            raise HTTPException(status_code=503, detail="no hay resumen del laboratorio publicado: no se pueden validar las estrategias")
+        valid = sorted({str(s["strategy_id"]) for s in lab_view["strategies"] if s.get("strategy_id")})
+        ids = list(dict.fromkeys(body.strategy_ids))
+        if "*" in ids:
+            if len(ids) > 1:
+                raise HTTPException(status_code=400, detail='"*" va solo (todas las estrategias publicadas)')
+            ids = valid
+        unknown = [i for i in ids if i not in valid]
+        if unknown:
+            raise HTTPException(status_code=400, detail=f"estrategias desconocidas: {unknown} (validas: {valid})")
+        configured = {binance_symbol(s) for s in ctx.config.get("symbols", [])}
+        syms = list(dict.fromkeys(binance_symbol(s) for s in body.symbols))
+        bad = [s for s in syms if s not in configured]
+        if bad:
+            raise HTTPException(status_code=400, detail=f"simbolos no configurados: {bad}")
+        if queue.count("pending") >= MAX_PENDING_LAB_REQUESTS:
+            return JSONResponse(status_code=429, content={
+                "detail": f"ya hay {MAX_PENDING_LAB_REQUESTS} solicitudes pendientes: esperar a que el worker las procese",
+                "retry_after_s": 300})
+        return lab_request_json(queue.create(ids, syms, body.note.strip()))
+
+    @app.get("/api/lab/requests")
+    async def lab_requests_list(
+        status: Literal["pending", "running", "done", "error"] | None = None,
+        limit: int = Query(50, ge=1, le=200),
+        offset: int = Query(0, ge=0, le=MAX_OFFSET),
+    ) -> dict[str, Any]:
+        queue = _require_queue()
+        total, items = queue.list(status=status, limit=limit, offset=offset)
+        return page(total, limit, offset, [lab_request_json(r) for r in items],
+                    pending=queue.count("pending"), max_pending=MAX_PENDING_LAB_REQUESTS)
+
+    def _request_or_404(request_id: str) -> dict[str, Any]:
+        if not LAB_REQUEST_ID.match(request_id):
+            raise HTTPException(status_code=400, detail=f"request_id invalido: {request_id!r}")
+        r = _require_queue().get(request_id)
+        if r is None:
+            raise HTTPException(status_code=404, detail=f"solicitud {request_id} no existe")
+        return r
+
+    @app.get("/api/lab/requests/{request_id}")
+    async def lab_request_detail(request_id: str = PathParam(..., max_length=64)) -> dict[str, Any]:
+        r = _request_or_404(request_id)
+        return lab_request_json(r, ctx.lab_requests.events(request_id))
+
+    @app.get("/api/lab/requests/{request_id}/result")
+    async def lab_request_result(request_id: str = PathParam(..., max_length=64)) -> Any:
+        r = _request_or_404(request_id)
+        path = ctx.lab_requests.results_dir / f"{request_id}.json"
+        if r["status"] != "done" or not path.is_file():
+            raise HTTPException(status_code=404, detail=f"la solicitud esta {r['status']}: todavia no hay resultado")
+        try:
+            return json_safe(json.loads(path.read_text(encoding="utf-8")))
+        except (OSError, ValueError):
+            raise HTTPException(status_code=500, detail=f"{path.name} ilegible") from None
 
     # ---------------------------------------------------------------- laboratorio
 

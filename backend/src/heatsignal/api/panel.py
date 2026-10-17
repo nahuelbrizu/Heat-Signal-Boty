@@ -5,12 +5,14 @@ Corre dentro del proceso de ingesta (`ingestion/run.py`) porque en modo memory l
 existe en esa RAM. Escucha en 127.0.0.1: se abre con un tunel SSH, nunca se expone a internet
 (decisions.md, "Datos de mercado solo en memoria": los datos no se ven en otro lado).
 
-    GET /              pagina HTML (panel.html, sin dependencias externas)
+    GET /              single page app (panel.html: cascaron; la app vive en static/app/, modulos ES sin build
+                       ni CDN; router por hash: #/mercado/SOL-USDT, #/ciclos/cycle-123, ...)
     GET /api/status    TODO junto (compatibilidad con panel.html): workers, ventana, ciclos, estrategias,
                        ultimas 50 hipotesis, noticias, historia, laboratorio. Pesado: preferir /api/summary
     GET /api/features  FeatureSet calculado AHORA desde la ventana (lo mismo que veria el grafo)
     GET /api/klines    velas de Binance pedidas en el momento y no guardadas (`api/klines.py`)
-    GET /static/...    lightweight-charts (TradingView, Apache 2.0) servido local, sin CDN
+    GET /static/lightweight-charts.js   lightweight-charts 4.2.0 (TradingView, Apache 2.0) servido local, sin CDN
+    GET /static/app/...                 JS/CSS propios de la SPA (solo .js/.css/.svg de static/app/)
     GET /health        healthcheck
 
 API de solo lectura para la single page (`api/panel_api.py`; contrato y ejemplos en `api/API.md`):
@@ -37,6 +39,15 @@ API de solo lectura para la single page (`api/panel_api.py`; contrato y ejemplos
     GET /api/system                      operacion: uptime, version, tamanos de bases, export/backup, config,
                                          errores recientes
 
+Acciones (lo unico que no es de solo lectura; exigen header `X-HeatSignal-Action: 1` y JSON <= 4 KB):
+
+    POST /api/analyze                    {"symbol"}: ciclo del grafo fuera de turno para ese simbolo (202)
+    GET  /api/analyze/{run_id}           estado de ese analisis (queued/running/estado del ciclo)
+    POST /api/lab/requests               {"strategy_ids", "symbols", "note"}: encola un pedido al laboratorio
+    GET  /api/lab/requests               cola (status, limit, offset)
+    GET  /api/lab/requests/{id}          una solicitud con su historial de estados
+    GET  /api/lab/requests/{id}/result   resultado subido por el worker de la PC (lab/worker.py)
+
 Los endpoints son `async def` a proposito: corren en el hilo del event loop, el mismo que usa la ingesta,
 asi las conexiones SQLite del registry (no thread-safe) y las deques de la ventana no se tocan desde otro hilo.
 Las lecturas que pueden escanear mucho (base historica, checkpoints del grafo) van a un hilo aparte con una
@@ -47,6 +58,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import re
 from datetime import timedelta
 import time
 from dataclasses import dataclass, field
@@ -66,6 +78,9 @@ from .klines import INTERVALS, MAX_LIMIT, KlinesError, fetch_klines
 
 _HTML_PATH = Path(__file__).with_name("panel.html")
 _CHARTS_JS = Path(__file__).with_name("static") / "lightweight-charts.standalone.production.js"
+_APP_DIR = Path(__file__).with_name("static") / "app"
+_APP_TYPES = {".js": "application/javascript", ".css": "text/css", ".svg": "image/svg+xml"}
+_APP_PATH_RE = re.compile(r"^[a-z0-9_-]+(/[a-z0-9_-]+)*\.(js|css|svg)$")
 MAX_HYPOTHESES = 50
 
 
@@ -88,6 +103,7 @@ class PanelContext:
     checkpoint_db: Path | None = None  # checkpoints del grafo: respaldo de /api/cycles/{run_id}
     db_paths: dict[str, Path] = field(default_factory=dict)  # bases para /api/system (eval, history, ...)
     settings: dict[str, Any] = field(default_factory=dict)  # intervalos y retenciones para /api/system
+    lab_requests: Any = None  # evaluation.lab_requests.LabRequestStore: cola "Mandar al laboratorio"
 
 
 def _cycle_view(analysis: AnalysisLoop | None, *, ran: bool = False) -> dict[str, Any] | None:
@@ -303,7 +319,13 @@ def create_panel_app(ctx: PanelContext) -> FastAPI:
 
     # Cambia con cada reinicio del proceso (deploy) o cambio del HTML: la pagina abierta lo compara en cada
     # poll y se recarga sola, asi nunca queda mostrando una version vieja del panel.
-    build_id = hashlib.sha256(_HTML_PATH.read_bytes() + str(ctx.started_at).encode()).hexdigest()[:12]
+    # Incluye los archivos de la SPA (static/app/): cambiar un .js tambien recarga las paginas abiertas.
+    digest = hashlib.sha256(_HTML_PATH.read_bytes())
+    for f in sorted(_APP_DIR.rglob("*")) if _APP_DIR.is_dir() else []:
+        if f.is_file():
+            digest.update(f.relative_to(_APP_DIR).as_posix().encode() + b"\0" + f.read_bytes())
+    digest.update(str(ctx.started_at).encode())
+    build_id = digest.hexdigest()[:12]
 
     @app.get("/", response_class=HTMLResponse)
     async def index() -> HTMLResponse:
@@ -357,6 +379,17 @@ def create_panel_app(ctx: PanelContext) -> FastAPI:
     @app.get("/static/lightweight-charts.js")
     async def charts_js() -> FileResponse:
         return FileResponse(_CHARTS_JS, media_type="application/javascript")
+
+    @app.get("/static/app/{path:path}")
+    async def app_static(path: str) -> FileResponse:
+        # Lista blanca de nombres (sin "..", sin mayusculas raras) y verificacion de que quede dentro de static/app.
+        if not _APP_PATH_RE.match(path):
+            raise HTTPException(status_code=404, detail="no existe")
+        f = (_APP_DIR / path).resolve()
+        if not f.is_file() or _APP_DIR.resolve() not in f.parents:
+            raise HTTPException(status_code=404, detail="no existe")
+        # no-cache: el navegador revalida (ETag) en cada carga, asi un deploy nunca deja modulos viejos mezclados
+        return FileResponse(f, media_type=_APP_TYPES[f.suffix], headers={"Cache-Control": "no-cache"})
 
     @app.get("/api/klines")
     async def klines(

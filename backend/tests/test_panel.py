@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import re
+from pathlib import Path
+
 import httpx
 import pytest
 
@@ -120,7 +123,8 @@ async def test_page_is_never_cached_and_status_carries_build_id(tmp_path) -> Non
     client = _client(ctx)
     page = await client.get("/")
     assert page.headers["cache-control"] == "no-store"
-    assert "location.reload()" in page.text
+    main = (await client.get("/static/app/main.js")).text
+    assert "location.reload()" in main and "s.build !== state.build" in main  # la SPA se recarga si cambia el build
     build = (await client.get("/api/status")).json()["build"]
     assert len(build) == 12 and (await client.get("/api/status")).json()["build"] == build
     ctx.started_at += 1  # otro proceso (deploy/reinicio) -> otro build: la pagina abierta se recarga
@@ -138,7 +142,9 @@ async def test_lab_summary_is_served_when_published(tmp_path) -> None:
     ctx.lab_summary_path = path
     lab = (await client.get("/api/status")).json()["lab"]
     assert lab["strategies"][0]["strategy_id"] == "x"
-    assert "renderLab" in (await client.get("/")).text
+    # la vista del laboratorio de la SPA se sirve y consume /api/lab
+    view = await client.get("/static/app/views/laboratorio.js")
+    assert view.status_code == 200 and "/api/lab" in view.text
 
 
 async def test_resolved_hypothesis_shows_real_outcome_and_track_record(tmp_path) -> None:
@@ -175,3 +181,95 @@ async def test_resolved_hypothesis_shows_real_outcome_and_track_record(tmp_path)
     assert r["n"] == 2 and r["wins"] == 1 and r["rate"] == 0.5 and r["mean_pnl_pct"] == pytest.approx(-0.6)
     assert 0 < r["ci95"][0] < 0.5 < r["ci95"][1] < 1
     assert ev["strategies"][0]["track_record"] == {"resolved": 2, "wins": 1, "rate": 0.5, "ci95": r["ci95"]}
+
+
+# ---------------------------------------------------------------------------- SPA: archivos estaticos propios
+
+APP_DIR = Path(__file__).resolve().parents[1] / "src" / "heatsignal" / "api" / "static" / "app"
+
+
+def _app_files() -> list[Path]:
+    return sorted(p for p in APP_DIR.rglob("*") if p.is_file())
+
+
+async def test_spa_shell_loads_local_modules_only(tmp_path) -> None:
+    client = _client(await _ctx(tmp_path, with_analysis=False))
+    page = (await client.get("/")).text
+    assert '<script type="module" src="/static/app/main.js">' in page
+    assert '<link rel="stylesheet" href="/static/app/app.css">' in page
+    assert re.search(r"(src|href)=\"(https?:)?//", page) is None  # ningun recurso externo (sin CDN)
+
+
+async def test_spa_static_files_are_served_with_type_and_revalidation(tmp_path) -> None:
+    client = _client(await _ctx(tmp_path, with_analysis=False))
+    files = _app_files()
+    assert {"main.js", "core.js", "app.css"} <= {f.name for f in files}
+    for f in files:
+        r = await client.get("/static/app/" + f.relative_to(APP_DIR).as_posix())
+        assert r.status_code == 200, f
+        assert r.headers["cache-control"] == "no-cache"
+        expected = {".js": "application/javascript", ".css": "text/css"}[f.suffix]
+        assert r.headers["content-type"].startswith(expected)
+
+
+@pytest.mark.parametrize("path", ["../panel.py", "..%2Fpanel.py", "views/../../panel.html", "main.py", "MAIN.js",
+                                  "nope.js", "views/", "app.css.map", "%2e%2e/panel.py"])
+async def test_spa_static_rejects_traversal_and_unknown_files(tmp_path, path) -> None:
+    client = _client(await _ctx(tmp_path, with_analysis=False))
+    assert (await client.get("/static/app/" + path)).status_code == 404
+
+
+def test_spa_module_imports_resolve() -> None:
+    # Cada import relativo apunta a un archivo que existe y exporta los nombres pedidos (sin build: un error
+    # aca rompe la vista en el navegador).
+    exports: dict[Path, set[str]] = {}
+    for f in _app_files():
+        if f.suffix == ".js":
+            exports[f] = set(re.findall(r"export\s+(?:async\s+)?(?:function|const|class|let)\s+(\w+)", f.read_text()))
+    for f in exports:
+        src = f.read_text()
+        for names, target in re.findall(r'import\s*\{([^}]*)\}\s*from\s*"([^"]+)"', src):
+            t = (f.parent / target).resolve()
+            assert t in exports, f"{f.name}: importa {target} que no existe"
+            for n in (x.strip().split(" as ")[0] for x in names.split(",") if x.strip()):
+                assert n in exports[t], f"{f.name}: {target} no exporta {n}"
+    views = {p.stem for p in (APP_DIR / "views").glob("*.js")}
+    mods = set(re.findall(r'mod: "(\w+)"', (APP_DIR / "main.js").read_text()))
+    assert mods and mods <= views  # cada ruta del router tiene su vista
+
+
+def test_spa_never_injects_html_or_loads_remote_code() -> None:
+    # Texto de terceros (noticias, razonamiento del LLM) siempre como nodos de texto; nada desde un CDN.
+    for f in _app_files():
+        src = f.read_text()
+        assert "innerHTML" not in src and "outerHTML" not in src and "insertAdjacentHTML" not in src, f
+        assert "document.write" not in src and "eval(" not in src, f
+        remote = re.findall(r"https?://[^\s\"'`)]+", src)
+        assert all(u.startswith("http://www.w3.org/") for u in remote), (f, remote)
+
+
+def test_spa_actions_send_the_action_header() -> None:
+    core = (APP_DIR / "core.js").read_text()
+    assert '"X-HeatSignal-Action": "1"' in core and 'method: "POST"' in core
+    actions = (APP_DIR / "actions.js").read_text()
+    assert 'apiPost("/api/analyze"' in actions and 'apiPost("/api/lab/requests"' in actions
+    assert "showModal" in actions  # pedir al laboratorio exige confirmacion
+    polling = re.findall(r"POLL_MS = (\d+)", (APP_DIR / "main.js").read_text())
+    assert polling == ["5000"]
+
+
+async def test_build_id_changes_when_a_spa_file_changes(tmp_path, monkeypatch) -> None:
+    from heatsignal.api import panel
+
+    ctx = await _ctx(tmp_path, with_analysis=False)
+    build = (await _client(ctx).get("/api/status")).json()["build"]
+    fake = tmp_path / "app"
+    (fake / "views").mkdir(parents=True)
+    for f in _app_files():
+        dst = fake / f.relative_to(APP_DIR)
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        dst.write_bytes(f.read_bytes())
+    monkeypatch.setattr(panel, "_APP_DIR", fake)
+    assert (await _client(ctx).get("/api/status")).json()["build"] == build  # mismo contenido -> mismo build
+    (fake / "main.js").write_text((fake / "main.js").read_text() + "\n// cambio\n")
+    assert (await _client(ctx).get("/api/status")).json()["build"] != build  # un .js nuevo recarga las paginas

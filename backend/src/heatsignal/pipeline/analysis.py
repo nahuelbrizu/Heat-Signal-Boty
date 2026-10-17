@@ -18,6 +18,9 @@ Cada ciclo termina con un estado explicito (sin fallos silenciosos):
                      (estado de la estrategia: pending = registrada sin evaluar todavia, running = el
                      ciclo la considera; evaluated = cerrada a mano, ya no entra al grafo).
   - `error`          fallo el grafo o el armado de features; se loguea con traceback.
+
+`run_symbols()` corre un ciclo fuera de turno para algunos simbolos ("Analizar ahora" del panel): mismos
+estados, mismo historial, detalle con el motivo adelante ("manual: ...") y sin avanzar la rotacion.
 """
 
 from __future__ import annotations
@@ -185,6 +188,7 @@ class AnalysisLoop:
         # simbolos mas, por turnos, para cubrir todas las criptos sin pagar LLM por todas en cada ciclo.
         # El turno arranca de la cantidad de ciclos con grafo ya guardados: sigue tras un reinicio.
         self._rotation_per_cycle = max(0, rotation_per_cycle)
+        self._graph_lock = asyncio.Lock()
         self._turn = 0
         if cycle_log is not None:
             try:
@@ -201,12 +205,17 @@ class AnalysisLoop:
                                             prev["decisions"], prev["report"])
 
     @property
+    def symbols(self) -> list[str]:
+        """Simbolos del ciclo (formato interno, p.ej. 'XRP-USDT')."""
+        return list(self._symbols)
+
+    @property
     def graph_enabled(self) -> bool:
         return self._runner is not None
 
-    async def build_features(self, now_ms: int) -> dict[str, FeatureSet]:
+    async def build_features(self, now_ms: int, symbols: Sequence[str] | None = None) -> dict[str, FeatureSet]:
         out: dict[str, FeatureSet] = {}
-        for sym in self._symbols:
+        for sym in self._symbols if symbols is None else symbols:
             # Copia en el hilo del event loop (las deques mutan con cada evento); el calculo, en otro hilo.
             liqs = self._memory.liquidations(sym)
             trades = self._memory.trades(sym)
@@ -225,13 +234,33 @@ class AnalysisLoop:
         return out
 
     async def run_cycle(self) -> CycleResult:
+        """Ciclo agendado: simbolos con estrategia + turno de rotacion."""
+        return await self._run(None)
+
+    async def run_symbols(self, symbols: Sequence[str], *, reason: str = "manual",
+                          run_id: str | None = None) -> CycleResult:
+        """Ciclo fuera de turno SOLO para `symbols` (p.ej. "Analizar ahora" del panel).
+
+        Mismas reglas que el ciclo agendado (warmup, estrategias activas, sin LLM) y se registra igual en el
+        historial, con `reason` al principio del detalle. Los simbolos van al grafo aunque ninguna estrategia
+        los nombre: el Sintetizador decide (no_hypothesis si no aplica). No avanza la rotacion.
+        """
+        wanted = [s for s in self._symbols if s in set(symbols)]
+        unknown = [s for s in symbols if s not in self._symbols]
+        if unknown:
+            raise ValueError(f"simbolos no configurados: {unknown}")
+        return await self._run(wanted, reason=reason, run_id=run_id)
+
+    async def _run(self, only: list[str] | None, *, reason: str | None = None,
+                   run_id: str | None = None) -> CycleResult:
         now_ms = self._clock_ms()
-        run_id = f"cycle-{now_ms}"
+        run_id = run_id or f"cycle-{now_ms}"
+        prefix = f"{reason}: " if reason else ""
         try:
-            features = await self.build_features(now_ms)
+            features = await self.build_features(now_ms, only)
         except Exception as exc:  # noqa: BLE001
             log.exception("%s: fallo el armado de features", run_id)
-            return self._finish(CycleResult(run_id, "error", detail=f"features: {exc!r}"))
+            return self._finish(CycleResult(run_id, "error", detail=f"{prefix}features: {exc!r}"))
 
         for fs in features.values():
             log.info("%s %s", run_id, _feature_summary(fs))
@@ -242,29 +271,34 @@ class AnalysisLoop:
         if warming and self._skip_during_warmup:
             return self._finish(CycleResult(
                 run_id, "warmup", features,
-                detail=f"ventana incompleta tras reinicio para {warming}; el grafo no corre",
+                detail=f"{prefix}ventana incompleta tras reinicio para {warming}; el grafo no corre",
             ))
 
         strategies = active_strategies(self._registry)
         if not strategies:
             return self._finish(CycleResult(
                 run_id, "no_strategies", features,
-                detail="no hay estrategias pre-registradas activas; el grafo no corre",
+                detail=f"{prefix}no hay estrategias pre-registradas activas; el grafo no corre",
             ))
 
         if self._runner is None:
             return self._finish(CycleResult(
                 run_id, "no_llm", features,
-                detail="grafo deshabilitado (falta ANTHROPIC_API_KEY o GOOGLE_API_KEY); solo features",
+                detail=f"{prefix}grafo deshabilitado (falta ANTHROPIC_API_KEY o GOOGLE_API_KEY); solo features",
             ))
 
-        with_strategy = symbols_for_graph(strategies, list(features))
-        rotated = rotation_pick([s for s in features if s not in with_strategy], self._rotation_per_cycle, self._turn)
-        graph_symbols = [s for s in features if s in with_strategy or s in rotated]
+        rotated: list[str] = []
+        if only is None:
+            with_strategy = symbols_for_graph(strategies, list(features))
+            rotated = rotation_pick([s for s in features if s not in with_strategy], self._rotation_per_cycle,
+                                    self._turn)
+            graph_symbols = [s for s in features if s in with_strategy or s in rotated]
+        else:
+            graph_symbols = list(features)
         if not graph_symbols:
             return self._finish(CycleResult(
                 run_id, "no_strategies", features,
-                detail="ninguna estrategia activa opera los simbolos configurados; el grafo no corre",
+                detail=f"{prefix}ninguna estrategia activa opera los simbolos configurados; el grafo no corre",
             ))
         skipped = [s for s in features if s not in graph_symbols]
         state = {
@@ -273,16 +307,18 @@ class AnalysisLoop:
             "allowed_strategies": strategies,
         }
         try:
-            final = await self._runner(state, run_id)
+            async with self._graph_lock:  # un ciclo manual y uno agendado no corren el grafo a la vez
+                final = await self._runner(state, run_id)
         except Exception as exc:  # noqa: BLE001
             log.exception("%s: el grafo fallo", run_id)
-            return self._finish(CycleResult(run_id, "error", features, detail=f"grafo: {exc!r}"))
+            return self._finish(CycleResult(run_id, "error", features, detail=f"{prefix}grafo: {exc!r}"))
 
-        self._turn += 1
+        if only is None:
+            self._turn += 1
         self._mark_running(strategies)
         hypotheses = final.get("pending_hypotheses") or []
         decisions = final.get("synthesis_decisions") or []
-        detail = "; ".join(f"{d.symbol}={d.outcome}" for d in decisions)
+        detail = prefix + "; ".join(f"{d.symbol}={d.outcome}" for d in decisions)
         if rotated:
             detail += f" (turno de rotacion: {', '.join(rotated)})"
         if skipped:

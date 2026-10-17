@@ -397,7 +397,15 @@ async def start_panel(
 
     if cfg.panel_host not in ("127.0.0.1", "localhost", "::1"):
         log.warning("!!! panel interno escuchando en %s: queda expuesto fuera de la maquina !!!", cfg.panel_host)
+    from ..evaluation.lab_requests import LabRequestStore
+
+    try:  # timeout corto: el panel corre en el event loop; la CLI de la cola escribe desde otro proceso
+        lab_requests = LabRequestStore(cfg.eval_db, timeout_s=2.0)
+    except Exception:  # noqa: BLE001 - sin cola el panel sigue
+        log.exception("no se pudo abrir la cola del laboratorio en %s", cfg.eval_db)
+        lab_requests = None
     ctx = PanelContext(
+        lab_requests=lab_requests,
         health=health,
         memory=_memory_sink(sinks),
         history=_recorder(sinks),
