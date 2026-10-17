@@ -652,6 +652,7 @@ def register_api(app: FastAPI, ctx: PanelContext, build_id: str) -> None:  # noq
             },
             "recording": recording,
             "lab": lab_brief,
+            "paper": await app.state.paper_brief(),
         }
 
     # ---------------------------------------------------------------- hipotesis
@@ -1155,6 +1156,114 @@ def register_api(app: FastAPI, ctx: PanelContext, build_id: str) -> None:  # noq
             _lab_detail_cache[strategy_id] = hit
         return hit[1]
 
+    # ---------------------------------------------------------------- paper trading (Freqtrade dry-run)
+
+    paper_cache: dict[str, tuple[float, Any]] = {}
+    paper_locks: dict[str, asyncio.Lock] = {}
+
+    def _paper_sources() -> Any:
+        if ctx.paper is None:
+            raise HTTPException(status_code=503, detail="paper trading no configurado en este proceso")
+        return ctx.paper
+
+    async def _paper_cached(key: str, ttl_s: float, fn: Callable[[], Any]) -> Any:
+        """Lectura en otro hilo (conexion SQLite read-only propia y HTTP a Freqtrade), cache corto y una a la vez."""
+        hit = paper_cache.get(key)
+        if hit is not None and time.time() - hit[0] <= ttl_s:
+            return hit[1]
+        async with paper_locks.setdefault(key, asyncio.Lock()):
+            hit = paper_cache.get(key)
+            if hit is None or time.time() - hit[0] > ttl_s:
+                hit = (time.time(), await asyncio.to_thread(fn))
+                paper_cache[key] = hit
+        return hit[1]
+
+    def _paper_dump(src: Any) -> dict[str, Any]:
+        """Volcado de la base de Freqtrade; 503 claro si Freqtrade no esta (sin base) o la base no se puede leer."""
+        import sqlite3
+
+        from ..paper import freqtrade_db as ftdb
+
+        try:
+            return ftdb.dump(src.db_path)
+        except FileNotFoundError:
+            raise HTTPException(status_code=503, detail=f"Freqtrade no esta: no existe la base del dry-run ({src.db_path})") from None
+        except sqlite3.Error as exc:
+            raise HTTPException(status_code=503, detail=f"no se pudo leer la base de Freqtrade: {exc}") from None
+
+    def _paper_compare_file(src: Any) -> Any:
+        path = src.summary_path
+        if path is None or not Path(path).is_file():
+            return None
+        mtime = Path(path).stat().st_mtime
+        hit = paper_cache.get("compare_file")
+        if hit is None or hit[0] != mtime:
+            try:
+                hit = (mtime, json_safe(json.loads(Path(path).read_text(encoding="utf-8"))))
+            except (OSError, ValueError):
+                hit = (mtime, {"error": f"{Path(path).name} ilegible"})
+            paper_cache["compare_file"] = hit
+        return hit[1]
+
+    def _compare_brief(cmp: Any) -> dict[str, Any] | None:
+        if not isinstance(cmp, dict):
+            return None
+        if "error" in cmp:
+            return {"error": cmp["error"]}
+        latest = cmp.get("latest") or {}
+        tot = latest.get("totals") or {}
+        return {"generated_at": cmp.get("generated_at"), "status": latest.get("status"), "window": latest.get("window"),
+                "paper_total": (tot.get("paper") or {}).get("total"), "sim_total": (tot.get("sim") or {}).get("total"),
+                "diff": tot.get("diff"), "runs": len(cmp.get("history") or [])}
+
+    async def _paper_brief() -> dict[str, Any] | None:
+        """Para /api/summary: conteos de la base (cache 15 s, sin llamar a la API REST)."""
+        if ctx.paper is None:
+            return None
+        src = ctx.paper
+
+        def work() -> dict[str, Any]:
+            from ..paper import freqtrade_db as ftdb
+
+            try:
+                return {"available": True, **ftdb.brief(_paper_dump(src))}
+            except HTTPException as exc:
+                return {"available": False, "error": exc.detail}
+
+        out = await _paper_cached("brief", 15.0, work)
+        return {**out, "compare": _compare_brief(_paper_compare_file(src))}
+
+    app.state.paper_brief = _paper_brief  # lo usa /api/summary (registrado antes; se resuelve al atender el pedido)
+
+    @app.get("/api/paper")
+    async def paper() -> dict[str, Any]:
+        src = _paper_sources()
+
+        def work() -> dict[str, Any]:
+            from ..paper import freqtrade_db as ftdb
+
+            d = _paper_dump(src)
+            api = ftdb.api_snapshot(src.api_url, src.secrets_path, fetch=src.fetch) if src.api_url else \
+                {"ok": False, "url": None, "error": "API de Freqtrade no configurada"}
+            return json_safe(ftdb.paper_state(d, api=api, wallet_start=src.wallet))
+
+        out = await _paper_cached("state", 10.0, work)
+        cmp = _paper_compare_file(src)
+        return {**out, "compare": _compare_brief(cmp),
+                "frequi": {"url": "http://localhost:8081", "tunnel": "hs-ft",
+                           "help": "FreqUI escucha solo en 127.0.0.1:8081 de la VM: abrir el tunel con `hs-ft` en la PC, "
+                                   "despues `hs-ft-open` (o http://localhost:8081); la clave sale con `hs-ft-pass`."}}
+
+    @app.get("/api/paper/compare")
+    async def paper_compare() -> Any:
+        src = _paper_sources()
+        cmp = _paper_compare_file(src)
+        if cmp is None:
+            raise HTTPException(status_code=404, detail="no hay comparacion publicada (python -m heatsignal.lab.paper_compare --upload en la PC)")
+        if isinstance(cmp, dict) and "error" in cmp and len(cmp) == 1:
+            raise HTTPException(status_code=500, detail=cmp["error"])
+        return cmp
+
     # ---------------------------------------------------------------- mercado (ventana en memoria)
 
     @app.get("/api/market/{symbol}")
@@ -1269,6 +1378,10 @@ def register_api(app: FastAPI, ctx: PanelContext, build_id: str) -> None:  # noq
         if ctx.lab_summary_path is not None:
             dbs["lab_summary"] = _file_info(ctx.lab_summary_path)
             dbs["lab_details"] = len(list(ctx.lab_summary_path.parent.glob("lab_detail_*.json")))
+        if ctx.paper is not None:
+            dbs["freqtrade"] = _file_info(Path(ctx.paper.db_path))
+            if ctx.paper.summary_path is not None:
+                dbs["paper_summary"] = _file_info(Path(ctx.paper.summary_path))
         data_dir = next((Path(p).parent for p in ctx.db_paths.values()), None)
         if data_dir is None and ctx.history is not None:
             data_dir = Path(ctx.history.store.path).parent

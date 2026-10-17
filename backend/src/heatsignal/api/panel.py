@@ -36,6 +36,9 @@ API de solo lectura para la single page (`api/panel_api.py`; contrato y ejemplos
     GET /api/lab                         resumen del laboratorio (lab_summary.json publicado desde la PC)
     GET /api/lab/{strategy_id}           detalle del laboratorio (lab_detail_<id>.json)
     GET /api/market/{symbol}             snapshot de mercado desde la ventana en memoria (vista por cripto)
+    GET /api/paper                       paper trading: estado del dry-run de Freqtrade (base read-only + API REST),
+                                         abiertas/cerradas con PnL, equity por operacion, resumen por par
+    GET /api/paper/compare               ultima comparacion paper vs backtest (paper_summary.json) + historial
     GET /api/system                      operacion: uptime, version, tamanos de bases, export/backup, config,
                                          errores recientes
 
@@ -104,6 +107,19 @@ class PanelContext:
     db_paths: dict[str, Path] = field(default_factory=dict)  # bases para /api/system (eval, history, ...)
     settings: dict[str, Any] = field(default_factory=dict)  # intervalos y retenciones para /api/system
     lab_requests: Any = None  # evaluation.lab_requests.LabRequestStore: cola "Mandar al laboratorio"
+    paper: PaperSources | None = None  # paper trading (Freqtrade dry-run): base, API REST y comparacion publicada
+
+
+@dataclass
+class PaperSources:
+    """De donde lee el panel el paper trading. Todo de solo lectura (ver paper/freqtrade_db.py)."""
+
+    db_path: Path                       # base SQLite de Freqtrade (HEATSIGNAL_FREQTRADE_DB)
+    secrets_path: Path | None = None    # config.secrets.json con api_server.username/password (HEATSIGNAL_FREQTRADE_SECRETS)
+    api_url: str | None = None          # API REST de Freqtrade (HEATSIGNAL_FREQTRADE_API; "" = no consultarla)
+    summary_path: Path | None = None    # paper_summary.json subido por lab/paper_compare.py --upload
+    wallet: float = 10_000.0            # dry_run_wallet (si la API no responde)
+    fetch: Any = None                   # inyectable en tests: (url, headers, timeout) -> (status, bytes)
 
 
 def _cycle_view(analysis: AnalysisLoop | None, *, ran: bool = False) -> dict[str, Any] | None:

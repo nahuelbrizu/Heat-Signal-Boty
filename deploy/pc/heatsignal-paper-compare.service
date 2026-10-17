@@ -1,0 +1,21 @@
+# Comparacion semanal paper (Freqtrade dry-run en la VM) vs backtest del laboratorio (PC).
+# Lee la base del dry-run por SSH en modo solo lectura, baja las velas que falten, re-simula y sube
+# compare_<fecha>.json + paper_summary.json a la VM (~/heatsignal/data/, los lee GET /api/paper/compare).
+# Instalar (usuario, no root):
+#   cp deploy/pc/heatsignal-paper-compare.{service,timer} ~/.config/systemd/user/
+#   systemctl --user daemon-reload && systemctl --user enable --now heatsignal-paper-compare.timer
+# A mano: systemctl --user start heatsignal-paper-compare.service   (o el comando de ExecStart)
+# Logs:   journalctl --user -u heatsignal-paper-compare -n 100
+[Unit]
+Description=HeatSignal: comparacion paper trading vs backtest (sube el resultado al panel)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/nahue/criptoBoty/heatsignal/backend
+Environment=PYTHONPATH=/home/nahue/criptoBoty/heatsignal/backend/src
+Environment=PATH=/snap/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/home/nahue/criptoBoty/heatsignal/backend/.venv/bin/python -m heatsignal.lab.paper_compare --upload
+Nice=10
+TimeoutStartSec=2h

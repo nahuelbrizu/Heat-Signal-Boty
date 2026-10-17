@@ -1,0 +1,11 @@
+# Domingos 01:00 hora local de la PC. Persistent: si la PC estaba apagada, corre al prenderla.
+[Unit]
+Description=HeatSignal: comparacion paper vs backtest semanal
+
+[Timer]
+OnCalendar=Sun *-*-* 01:00:00
+Persistent=true
+RandomizedDelaySec=120
+
+[Install]
+WantedBy=timers.target

@@ -15,6 +15,10 @@
   los pedidos esperan. Si un pedido queda colgado en `running`, liberarlo con `python -m heatsignal.evaluation.lab_requests fail ID`.
 - **Paper trading:** `heatsignal-freqtrade.service` en la VM (dry-run de donchian-ensemble-v1). FreqUI con `hs-ft`,
   `hs-ft-open` y `hs-ft-pass`.
+- **Paper vs backtest (2026-10-18, sin desplegar):** `lab/paper_compare.py` (PC) lee la base del dry-run por SSH en
+  solo lectura, re-simula la regla congelada y descompone la diferencia (timing, tamano, fill, comisiones, slippage,
+  funding); sube `paper_summary.json`. Timer semanal en `deploy/pc/` (domingos 01:00, falta instalarlo). Panel: vista
+  `#/paper`, `GET /api/paper` y `GET /api/paper/compare` (requiere deploy del codigo y reinicio de la ingesta).
 - **LLM:** Anthropic (sin crédito) → gemini-3.5 → gemini-3.8-flash / 3.1-flash-lite. Rotar ambas keys (quedaron en el chat).
 - **Laboratorio:** resultados del lote 1 y holdout en `decisions.md`.
 

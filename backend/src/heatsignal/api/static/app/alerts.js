@@ -39,6 +39,8 @@ export function computeAlerts(s) {
   if (h && h.due) push("info", `${int(h.due)} hipótesis vencidas esperan al job de resolución (corre cada 5 min).`, "#/hipotesis?status=pending");
 
   if (s.lab && s.lab.error) push("warn", "Laboratorio: " + s.lab.error, "#/laboratorio");
+  if (s.paper && s.paper.available === false) push("warn", "Paper trading: " + s.paper.error, "#/paper");
+  if (s.paper && s.paper.compare && s.paper.compare.error) push("warn", "Comparación paper vs backtest: " + s.paper.compare.error, "#/paper");
 
   const mem = s.memory;
   if (mem && mem.stats && mem.stats.evicted_by_cap) push("warn", `La ventana en memoria expulsó ${int(mem.stats.evicted_by_cap)} eventos por tope: faltan datos.`);

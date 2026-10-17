@@ -35,6 +35,8 @@ de ingesta, en `127.0.0.1:8000` de la VM (se abre con túnel SSH). Todo es `GET`
 | `/api/history/bars` | **pesado** para rangos largos (ver abajo); en otro hilo | a demanda; no pollear |
 | `/api/history/liquidations` | liviano a medio (en otro hilo) | a demanda |
 | `/api/lab`, `/api/lab/{id}` | lee archivos (se releen solo si cambian) | al abrir; cambian cuando se publica desde la PC |
+| `/api/paper` | lee la base de Freqtrade (read-only) + 4 llamadas a su API REST, en otro hilo; cache 10 s | al abrir la vista; cada 30 s si está abierta |
+| `/api/paper/compare` | lee un archivo (se relee solo si cambia) | al abrir; cambia una vez por semana |
 | `/api/system` | liviano | al abrir la vista de sistema; cada 30–60 s si está abierta |
 | `/api/status` | **pesado** (todo junto, incluye features de todos los símbolos) | solo para el panel viejo; la SPA no lo necesita |
 
@@ -91,7 +93,11 @@ Estado liviano para el polling frecuente.
               "write_errors": 0, "last_flush_ms": 1792253682000},
     "rows": {"bars_1m": 20, "liquidations": 3, "news": 3}, "size_bytes": 152256, "summary_age_s": 12.0
   },
-  "lab": {"generated_at": "2026-10-17T15:00:00+00:00", "strategies": 7, "passing": 1}
+  "lab": {"generated_at": "2026-10-17T15:00:00+00:00", "strategies": 7, "passing": 1},
+  "paper": {"available": true, "open": 1, "closed": 0, "realized": 0.0, "bot_start_ms": 1792255535139,
+            "last_trade_ms": 1792255537487, "read_at_ms": 1792260000000,
+            "compare": {"generated_at": "...", "status": "ok", "window": {"...": "..."}, "paper_total": -1.2,
+                        "sim_total": -0.9, "diff": -0.3, "runs": 1}}
 }
 ```
 
@@ -100,6 +106,9 @@ Estado liviano para el polling frecuente.
 - `recording.status`: `ok` (escribió hace < 120 s), `starting` (recién arrancado), `stale` (no escribe),
   `off` (grabación apagada).
 - `lab`: `null` sin resumen publicado; `{"error": "..."}` si el archivo está roto.
+- `paper`: `null` si el paper trading no está configurado; `{"available": false, "error": "Freqtrade no esta: ..."}`
+  si no existe la base del dry-run. Sale solo de la base (cache 15 s, otro hilo; no llama a la API REST).
+  `open` es el contador del menú. `compare`: `null` sin comparación publicada.
 
 ## `GET /api/hypotheses`
 
@@ -475,6 +484,117 @@ El `lab_summary.json` publicado desde la PC (`python -m heatsignal.lab.publish -
   diarios (la misma convención que `total_return`; 0.43 = +43 % sobre el capital inicial). `null` en
   resultados anteriores a la curva (lo explica `notes`).
 - Sharpe anualizado; `max_drawdown` y retornos en fracción (0.098 = 9,8 %); costos en bps por lado.
+
+## `GET /api/paper`
+
+Paper trading: Freqtrade 2026.9 en **dry-run** de `donchian-ensemble-v1` (dinero simulado). Lee la base SQLite de
+Freqtrade en **solo lectura** (`file:...?mode=ro` + `PRAGMA query_only`, en otro hilo) y, si responde, su API REST
+(`/api/v1/show_config`, `health`, `balance`, `status`) con las credenciales de `config.secrets.json` (nunca se
+devuelven). Cache 10 s. Configuración por entorno del proceso de ingesta:
+
+| Variable | Default |
+|---|---|
+| `HEATSIGNAL_FREQTRADE_DB` | `~/heatsignal/data/freqtrade_dryrun.sqlite` |
+| `HEATSIGNAL_FREQTRADE_SECRETS` | `~/heatsignal/freqtrade/config.secrets.json` (`api_server.username/password`) |
+| `HEATSIGNAL_FREQTRADE_API` | `http://127.0.0.1:8081` (vacío = no consultar la API) |
+| `HEATSIGNAL_PAPER_WALLET` | `10000` (wallet inicial si la API no responde) |
+
+**503** si el paper trading no está configurado o si no existe/no se puede leer la base ("Freqtrade no esta: no
+existe la base del dry-run (...)"). Si la base existe pero la API no responde: 200 con `source.api.ok = false`,
+`unrealized_pnl`/`wallet.unrealized`/`wallet.equity` en `null` y una nota.
+
+```json
+{
+  "source": {"db": "/home/nahue/heatsignal/data/freqtrade_dryrun.sqlite", "read_at_ms": 1792260000000,
+             "read_at": "...", "schema": "freqtrade-2026.9", "api": {"ok": true, "url": "http://127.0.0.1:8081", "error": null}},
+  "bot": {"dry_run": true, "state": "running", "strategy": "DonchianEnsembleV1", "bot_name": "heatsignal-donchian",
+          "version": "2026.9", "timeframe": "4h", "trading_mode": "futures", "max_open_trades": 7,
+          "bot_start_ms": 1792255535139, "bot_start_at": "...", "startup_ms": 1792257552663, "startup_at": "...",
+          "uptime_s": 2447.3, "paper_days": 0.05, "last_process_ms": 1792259990000, "last_process_at": "..."},
+  "wallet": {"start": 10000.0, "total_api": 9999.7, "realized": 0.0, "unrealized": 1.85, "equity": 10001.85,
+             "return": 0.000185, "realized_return": 0.0, "fees": 0.29, "funding": 0.0, "stake_open": 589.83},
+  "totals": {"open": 1, "closed": 0, "wins": 0, "hit_rate": null, "ci95": null, "orders": 1, "adjustments": 0},
+  "open_trades": [{"trade_id": 1, "pair": "TRX/USDT:USDT", "symbol": "TRXUSDT", "direction": "long",
+                   "open_ms": 1792255537487, "open_at": "...", "open_rate": 0.33475, "amount": 1762.0,
+                   "stake_amount": 589.83, "max_stake_amount": 589.83, "leverage": 1.0, "fees": 0.29, "funding": 0.0,
+                   "enter_tag": "donchian", "orders": 1, "adjustments": 0,
+                   "fills": [{"time_ms": 1792255537486, "t": "...", "kind": "entrada", "price": 0.33475, "units": 1762.0,
+                              "notional": 589.83, "fee": 0.29, "tag": "donchian"}],
+                   "current_rate": 0.3358, "unrealized_pnl": 1.85, "unrealized_ratio": 0.0031,
+                   "realized_partial": 0.0, "duration_s": 2462.5, "live": true}],
+  "closed_trades": [{"...": "igual que open_trades", "close_ms": 0, "close_at": "...", "close_rate": 0.0, "pnl": -3.1,
+                     "pnl_ratio": -0.005, "exit_reason": "exit_signal", "duration_s": 86400, "win": false}],
+  "equity": [{"time_ms": 1792255535139, "t": "...", "equity": 10000.0, "pnl": 0.0, "trade_id": null},
+             {"time_ms": 1792260000000, "t": "...", "equity": 10001.85, "pnl": null, "trade_id": null, "mark_to_market": true}],
+  "by_pair": [{"symbol": "TRXUSDT", "pair": "TRX/USDT:USDT", "closed": 0, "wins": 0, "realized": 0.0, "fees": 0.29,
+               "funding": 0.0, "open": true, "stake_open": 589.83, "unrealized": 1.85, "orders": 1, "adjustments": 0,
+               "last_ms": 1792255537487, "hit_rate": null, "ci95": null}],
+  "notes": ["Muestra chica: 0 operaciones cerradas. ..."],
+  "compare": null,
+  "frequi": {"url": "http://localhost:8081", "tunnel": "hs-ft", "help": "..."}
+}
+```
+
+- Montos en US$ (USDT). `funding` positivo = cobrado, negativo = pagado (convención de Freqtrade y del laboratorio).
+- `equity`: wallet inicial + PnL realizado acumulado en cada cierre; el último punto (`mark_to_market`) suma lo no
+  realizado (solo si la API respondió). `realized` incluye salidas parciales de operaciones abiertas.
+- `fills[].kind`: `entrada`, `ajuste+`, `ajuste-` (rebalanceo, solo si el cambio supera 5 % del capital del par) o `salida`.
+- `ci95`: Wilson 95 % de la tasa de acierto. Con menos de 30 cerradas `notes` avisa que la muestra es chica.
+- `compare`: resumen de la última comparación publicada (ver abajo) o `null`.
+
+## `GET /api/paper/compare`
+
+`paper_summary.json` que sube la PC (`python -m heatsignal.lab.paper_compare --upload`, timer semanal
+`deploy/pc/heatsignal-paper-compare.timer`). 404 si no hay; 503 si el paper trading no está configurado; 500 si
+el archivo está roto. Se relee solo si cambia.
+
+```json
+{
+  "generated_at": "2026-10-18T01:00:00+00:00",
+  "latest": {
+    "kind": "paper_compare", "version": 1, "status": "ok", "strategy_id": "donchian-ensemble-v1",
+    "spec_hash": "86061813c7d1691c", "params": {"timeframe": "4h", "channels": [20, 40, 80, 160], "vol_window": 180,
+                                                "target_vol": 0.15, "max_leverage": 1.0},
+    "window": {"start": "...", "end": "...", "start_ms": 0, "end_ms": 0, "days": 7.3, "start_source": "bot_start_time (...)"},
+    "capital": {"sim": 10000, "sim_por_par": 1428.57, "paper_wallet": 10000, "paper_por_par_base": 1414.29,
+                "tradable_balance_ratio": 0.99, "rebalance_min": 0.05},
+    "costs_lab": {"fee_bps": 5.0, "slippage_bps": 2.0},
+    "totals": {"paper": {"precio": 0, "comisiones": 0, "slippage": 0, "funding": 0, "total": 0, "realizado": 0,
+                         "no_realizado": 0, "entradas": 0, "ajustes": 0, "salidas": 0, "ordenes": 0, "retorno": 0},
+               "sim": {"...": "igual"}, "diff": -0.3, "diff_frac": -0.00003},
+    "decomposition": {"timing": 0, "tamano": 0, "precio_fill": 0, "comisiones": 0, "slippage": 0,
+                      "funding_posicion": 0, "funding_contable": 0, "total": -0.3, "residual": 1e-13},
+    "by_pair": [{"symbol": "TRXUSDT", "paper": {"...": "como totals + unidades_inicio/fin, nocional_fin, funding_recalculado"},
+                 "sim": {"...": "..."}, "diff": 0, "decomposition": {"...": "por par"},
+                 "fill_bps": {"n": 1, "mean": 0.4, "median": 0.4, "max_abs": 0.4},
+                 "trades": [{"match": "ambos", "paper_entry": "...", "paper_entry_price": 0.33475, "sim_entry": "...",
+                             "sim_entry_price": 0.3347, "entry_delta_min": -0.4, "entry_delta_bps": 1.5,
+                             "paper_exit": null, "sim_exit": null, "exit_delta_min": null, "exit_delta_bps": null,
+                             "paper_ajustes": 0, "sim_ajustes": 1}],
+                 "target_start_sim": 0.42, "paper_frac_first_entry": 0.417, "funding_events": 1}],
+    "curves": {"freq": "1h", "columns": ["paper", "sim", "canasta", "buy_and_hold_medio"],
+               "points": [["2026-10-17T17:00:00+00:00", 0.0001, 0.0001, 0.002, 0.003]],
+               "basket_return": 0.01, "buy_and_hold_mean_return": 0.012},
+    "design_differences": [{"id": "rebalanceo_5", "componente": "tamano", "texto": "..."}],
+    "data": {"last_kline": "...", "gaps": [], "fills_after_window": 0, "warmup_days": 400},
+    "data_update": {"jobs": 14, "rows": 10080, "errors": []},
+    "notes": ["Ventana corta (...)"]
+  },
+  "history": [{"date": "2026-10-18", "generated_at": "...", "file": "compare_2026-10-18.json", "status": "ok",
+               "window": {"...": "..."}, "paper_total": -1.2, "sim_total": -0.9, "diff": -0.3,
+               "decomposition": {"...": "..."}, "paper_orders": 1, "sim_orders": 2}]
+}
+```
+
+- `status`: `ok` o `sin_datos` (todavía no hay velas 1m en la PC después del inicio del paper; solo trae `notes`).
+- **Descomposición exacta** de `paper − backtest` (`residual` ≈ 0): `timing` (estar en el mercado cuando el otro no),
+  `tamano` (distinto tamaño con los dos posicionados: rebalanceo 5 %, reinversión, ratio 0,99, redondeo),
+  `precio_fill` (fill real vs open de la vela 1m siguiente), `comisiones` (lab − paper), `slippage` (lo que carga el
+  lab, el dry-run no), `funding_posicion` (tasas reales × posiciones del paper − funding del lab), `funding_contable`
+  (lo que asentó Freqtrade − ese recálculo). El PnL de precio se valúa al close de la última vela 1m de la ventana.
+- `design_differences`: diferencias de diseño ya documentadas (decisions.md), con el componente donde caen.
+- `curves`: retorno acumulado sobre el capital (paso horario si la ventana es ≤ 31 días, si no diario).
+- `history`: una fila por fecha de corrida (cada corrida es acumulada desde el inicio del paper).
 
 ## `GET /api/market/{symbol}`
 

@@ -2,7 +2,7 @@
 // laboratorio y alertas. Todo sale de /api/summary (se redibuja con cada poll de 5 s).
 import {
   el, clear, int, dur, pct, frac, price, bytes, ago, when, chip, stat, card, kv, table, pageHead, statusChip, CYCLE_STATUS,
-  OUTCOME, wilson, rateText, ciBar, providersText, loading, isNum,
+  OUTCOME, wilson, rateText, ciBar, providersText, loading, isNum, num,
 } from "../core.js";
 import { computeAlerts } from "../alerts.js";
 
@@ -34,6 +34,9 @@ function view(s, ctx) {
     stat("Track record global", h && h.resolved ? frac(h.wins / h.resolved, 0) : "—", h ? rateText(h.wins, h.resolved, ci) : "—"),
     stat("Laboratorio", s.lab && !s.lab.error ? s.lab.passing + " de " + s.lab.strategies + " pasan" : s.lab && s.lab.error ? "ilegible" : "sin publicar",
       s.lab && s.lab.generated_at ? "publicado " + new Date(s.lab.generated_at).toLocaleString("es-AR") : "python -m heatsignal.lab.publish --upload"),
+    stat("Paper trading", s.paper && s.paper.available ? int(s.paper.open) + " abiertas" : s.paper && s.paper.error ? "no disponible" : "—",
+      s.paper && s.paper.available ? int(s.paper.closed) + " cerradas · realizado " + signedUsd(s.paper.realized) : s.paper ? s.paper.error : "no configurado",
+      s.paper && s.paper.available === false ? "bad-t" : ""),
     stat("Grabación histórica", recChip(rec.status), rec.enabled ? `${int(rec.rows && rec.rows.bars_1m)} barras 1m · ${bytes(rec.size_bytes)}` : "apagada"),
   );
 
@@ -126,6 +129,7 @@ function view(s, ctx) {
     el("div", { class: "grid two" }, exchanges, fresh),
     market,
     el("div", { class: "grid two" }, recCard, labCard(s.lab)),
+    el("div", { class: "grid two" }, paperCard(s.paper, now)),
   );
 }
 
@@ -142,4 +146,29 @@ function labCard(lab) {
           el("p", { class: "small muted" }, "Walk-forward con costos y funding reales; el holdout de 3 meses sigue sellado. Publicado ",
             new Date(lab.generated_at).toLocaleString("es-AR"), "."),
           el("a", { href: "#/laboratorio" }, "Ver el lote →")));
+}
+
+function signedUsd(v) {
+  if (!isNum(v)) return "—";
+  const r = Math.abs(v) < 0.005 ? 0 : v;
+  return (r > 0 ? "+" : r < 0 ? "−" : "") + "US$ " + num(Math.abs(r), 2, 2);
+}
+
+function paperCard(p, now) {
+  const c = p && p.compare;
+  return card("Paper trading (Freqtrade dry-run)", p && p.available ? chip("dry-run · dinero simulado", "info") : "",
+    !p ? el("p", { class: "empty" }, "No configurado en este proceso.")
+      : !p.available ? el("div", { class: "note warn" }, p.error)
+        : el("div", {},
+          kv([
+            ["Operaciones abiertas", int(p.open)],
+            ["Cerradas", int(p.closed) + (p.closed && p.closed < 30 ? " (muestra chica)" : "")],
+            ["PnL realizado", signedUsd(p.realized), isNum(p.realized) && p.realized < 0 ? "bad-t" : ""],
+            ["Paper desde", p.bot_start_ms ? new Date(p.bot_start_ms).toLocaleString("es-AR") : "—"],
+            ["Última operación", p.last_trade_ms ? ago(p.last_trade_ms, now) : "—"],
+            ["Comparación con el backtest", !c ? "sin publicar" : c.error ? el("span", { class: "bad-t" }, c.error)
+              : c.status !== "ok" ? "sin datos todavía" : "paper − backtest " + signedUsd(c.diff) + " (" + int(c.runs) + " corridas)"],
+          ]),
+          el("p", { class: "small muted", style: { marginTop: "8px" } }, "PnL no realizado, curva y detalle por par en la vista de paper trading. ",
+            el("a", { href: "#/paper" }, "Ver paper trading →"))));
 }

@@ -16,6 +16,7 @@ const VIEWS = {
   estrategias: { title: "Estrategias", mod: "estrategias" },
   hipotesis: { title: "Hipótesis", mod: "hipotesis" },
   laboratorio: { title: "Laboratorio", mod: "laboratorio" },
+  paper: { title: "Paper trading", mod: "paper" },
   noticias: { title: "Noticias", mod: "noticias" },
   datos: { title: "Datos guardados", mod: "datos" },
   sistema: { title: "Sistema", mod: "sistema" },
@@ -216,6 +217,8 @@ function renderChrome() {
   setBadge("noticias", c.news_window !== null && c.news_window !== undefined ? [int(c.news_window), "", "noticias en la ventana de 48 h"] : null);
   const lab = s.lab;
   setBadge("laboratorio", lab && !lab.error ? [lab.passing + "/" + lab.strategies, lab.passing ? "" : "", "pasan / total"] : lab && lab.error ? ["!", "bad", lab.error] : null);
+  const pp = s.paper;
+  setBadge("paper", pp && pp.available ? [int(pp.open), "", pp.open + " operaciones abiertas en el dry-run"] : pp && pp.error ? ["!", "bad", pp.error] : null);
   const rec = s.recording || {};
   setBadge("datos", rec.status === "stale" ? ["!", "bad", "la grabación no escribe"] : rec.status === "off" ? ["off", "", "grabación apagada"] : null);
   const down = (s.workers || []).filter((w) => !w.connected).length;

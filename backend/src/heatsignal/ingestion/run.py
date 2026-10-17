@@ -121,6 +121,11 @@ class RunConfig:
     tickers_retention_days: int | None = 90
     compress_after_days: int | None = 7
     log_level: str = "INFO"
+    # paper trading (Freqtrade dry-run en la misma VM): el panel lo lee en modo solo lectura
+    freqtrade_db: str = "~/heatsignal/data/freqtrade_dryrun.sqlite"
+    freqtrade_secrets: str = "~/heatsignal/freqtrade/config.secrets.json"
+    freqtrade_api: str = "http://127.0.0.1:8081"
+    paper_wallet: float = 10_000.0
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> RunConfig:
@@ -200,6 +205,10 @@ class RunConfig:
             tickers_retention_days=_days("HEATSIGNAL_TICKERS_RETENTION_DAYS", 90),
             compress_after_days=_days("HEATSIGNAL_COMPRESS_AFTER_DAYS", 7),
             log_level=(_opt("HEATSIGNAL_LOG_LEVEL") or "INFO").upper(),
+            freqtrade_db=_opt("HEATSIGNAL_FREQTRADE_DB") or "~/heatsignal/data/freqtrade_dryrun.sqlite",
+            freqtrade_secrets=_opt("HEATSIGNAL_FREQTRADE_SECRETS") or "~/heatsignal/freqtrade/config.secrets.json",
+            freqtrade_api=env.get("HEATSIGNAL_FREQTRADE_API", "http://127.0.0.1:8081").strip(),
+            paper_wallet=_float("HEATSIGNAL_PAPER_WALLET", 10_000.0),
         )
 
     def enabled_exchanges(self) -> list[str]:
@@ -393,7 +402,7 @@ async def start_panel(
         return None
     import uvicorn
 
-    from ..api.panel import PanelContext, create_panel_app
+    from ..api.panel import PanelContext, PaperSources, create_panel_app
 
     if cfg.panel_host not in ("127.0.0.1", "localhost", "::1"):
         log.warning("!!! panel interno escuchando en %s: queda expuesto fuera de la maquina !!!", cfg.panel_host)
@@ -406,6 +415,13 @@ async def start_panel(
         lab_requests = None
     ctx = PanelContext(
         lab_requests=lab_requests,
+        paper=PaperSources(
+            db_path=Path(cfg.freqtrade_db).expanduser(),
+            secrets_path=Path(cfg.freqtrade_secrets).expanduser() if cfg.freqtrade_secrets else None,
+            api_url=cfg.freqtrade_api or None,
+            summary_path=Path(cfg.eval_db).parent / "paper_summary.json",
+            wallet=cfg.paper_wallet,
+        ),
         health=health,
         memory=_memory_sink(sinks),
         history=_recorder(sinks),
@@ -420,6 +436,8 @@ async def start_panel(
             "ticker_interval_s": cfg.ticker_interval_s, "stale_after_s": cfg.stale_after_s,
             "health_log_s": cfg.health_log_s, "panel": f"{cfg.panel_host}:{cfg.panel_port}",
             "log_level": cfg.log_level,
+            "paper": {"freqtrade_db": cfg.freqtrade_db, "freqtrade_api": cfg.freqtrade_api or None,
+                      "freqtrade_secrets_file": cfg.freqtrade_secrets, "wallet": cfg.paper_wallet},
         },
         analysis=analysis.loop if analysis else None,
         registry=analysis.registry if analysis else None,

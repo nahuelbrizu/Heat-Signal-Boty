@@ -2,7 +2,7 @@
 // Se refresca cada 45 s mientras la vista esta abierta.
 import { el, clear, api, errorBox, when, ago, int, dur, bytes, card, table, pageHead, loading, chip, kv, stat, isNum, prose } from "../core.js";
 
-const DB_LABEL = { eval: "Evaluación (estrategias, hipótesis, ciclos)", history: "Historia (barras, liquidaciones, noticias)", checkpoints: "Checkpoints del grafo", lab_summary: "Resumen del laboratorio" };
+const DB_LABEL = { eval: "Evaluación (estrategias, hipótesis, ciclos)", history: "Historia (barras, liquidaciones, noticias)", checkpoints: "Checkpoints del grafo", lab_summary: "Resumen del laboratorio", freqtrade: "Freqtrade dry-run (paper trading, solo lectura)", paper_summary: "Comparación paper vs backtest (publicada desde la PC)" };
 
 export async function mount(root, ctx) {
   const body = el("div", {}, loading());
