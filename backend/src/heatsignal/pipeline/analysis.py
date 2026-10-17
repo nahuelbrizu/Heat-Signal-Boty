@@ -178,6 +178,7 @@ class AnalysisLoop:
         self._clock_ms = clock_ms
         self._news = news
         self.last_result: CycleResult | None = None
+        self.llm_providers: list[str] = []  # orden de proveedores (primario -> fallback), para el panel
         self.last_ran: CycleResult | None = None  # ultimo ciclo en que corrio el grafo (sobrevive a warmups)
         self._cycle_log = cycle_log
         # Rotacion: ademas de los simbolos con estrategia, cada ciclo con grafo analiza `rotation_per_cycle`
@@ -254,7 +255,7 @@ class AnalysisLoop:
         if self._runner is None:
             return self._finish(CycleResult(
                 run_id, "no_llm", features,
-                detail="grafo deshabilitado (falta ANTHROPIC_API_KEY); solo features",
+                detail="grafo deshabilitado (falta ANTHROPIC_API_KEY o GOOGLE_API_KEY); solo features",
             ))
 
         with_strategy = symbols_for_graph(strategies, list(features))
@@ -332,7 +333,7 @@ class AnalysisLoop:
         log.info(
             "analisis cada %.0fs sobre ventana de %ds para %s (grafo %s)",
             self._interval_s, self._window_s, self._symbols,
-            "habilitado" if self._runner is not None else "DESHABILITADO: falta ANTHROPIC_API_KEY",
+            "habilitado" if self._runner is not None else "DESHABILITADO: falta ANTHROPIC_API_KEY o GOOGLE_API_KEY",
         )
         while not stop.is_set():
             with contextlib.suppress(asyncio.TimeoutError):

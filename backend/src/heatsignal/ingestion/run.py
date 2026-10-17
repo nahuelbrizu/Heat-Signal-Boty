@@ -347,8 +347,9 @@ async def start_analysis(
     try:
         llms = make_llms()
     except MissingApiKeyError:
-        log.warning("!!! falta ANTHROPIC_API_KEY - el ciclo de analisis solo calcula features !!!")
+        log.warning("!!! falta ANTHROPIC_API_KEY o GOOGLE_API_KEY - el ciclo de analisis solo calcula features !!!")
     else:
+        log.info("LLM del grafo: %s", " -> ".join(llms.providers) + (" (fallback)" if len(llms.providers) > 1 else ""))
         Path(cfg.checkpoint_db).parent.mkdir(parents=True, exist_ok=True)
         checkpointer = await stack.enter_async_context(sqlite_checkpointer(cfg.checkpoint_db))
         graph = build_graph(llms.cheap, llms.strong, checkpointer=checkpointer, hypothesis_store=store)
@@ -375,6 +376,7 @@ async def start_analysis(
         interval_s=cfg.analysis_interval_s, window_s=cfg.analysis_window_s, news=news, cycle_log=cycle_log,
         rotation_per_cycle=cfg.graph_rotation,
     )
+    loop.llm_providers = list(llms.providers) if runner is not None else []
     task = asyncio.create_task(loop.run_forever(stop), name="analysis")
     return AnalysisHandles(task=task, loop=loop, registry=registry, store=store, news=news, news_task=news_task,
                            cycle_log=cycle_log)

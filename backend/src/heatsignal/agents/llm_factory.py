@@ -14,6 +14,12 @@ DECISION PROPUESTA, no cerrada (ver `decisions.md` -> Abiertas).
   ("function_calling") fuerza `tool_choice`, que Claude Sonnet 5.5 / Opus 5.5
   rechazan; json_schema evita esa dependencia.
 - No se setea `temperature` (Sonnet 5.5 / Haiku 5.5 rechazan valores no default).
+
+Fallback a Gemini (decisions.md, 2026-10-17): si hay `GOOGLE_API_KEY` (o `GEMINI_API_KEY`), cada pedido va
+primero a Anthropic y, si falla (sin credito, caida, rate limit), el MISMO pedido estructurado va a Gemini
+(`langchain-google-genai`, `with_structured_output(method="json_schema")`, verificado contra la API real
+el 2026-10-17: gemini-3.5-flash-lite y gemini-3.5-flash devuelven JSON segun schema). Con una sola key se
+usa ese proveedor solo. `ModelRouting.providers` dice cual es el orden, para el log y el panel.
 """
 
 from __future__ import annotations
@@ -28,6 +34,12 @@ from langchain_core.language_models import BaseChatModel
 DEFAULT_CHEAP_MODEL = "claude-haiku-5-5"
 DEFAULT_STRONG_MODEL = "claude-sonnet-5-5"
 DEFAULT_MAX_TOKENS = 16_000  # sin streaming: se mantiene bajo el timeout HTTP del SDK
+DEFAULT_GEMINI_CHEAP = "gemini-3.5-flash-lite"
+DEFAULT_GEMINI_STRONG = "gemini-3.5-flash"
+# Segundo escalon dentro de Gemini: los modelos nuevos devuelven 503 "high demand" en picos (visto el
+# 2026-10-17); los 2.5 son estables. Vacio en la variable de entorno = sin segundo escalon.
+DEFAULT_GEMINI_CHEAP_BACKUP = "gemini-2.5-flash-lite"
+DEFAULT_GEMINI_STRONG_BACKUP = "gemini-2.5-flash"
 
 
 class MissingApiKeyError(RuntimeError):
@@ -40,8 +52,33 @@ class UnsupportedProviderError(ValueError):
 
 @dataclass(frozen=True)
 class ModelRouting:
-    cheap: BaseChatModel  # analistas
-    strong: BaseChatModel  # debate, sintetizador, redactor
+    cheap: Any  # analistas (BaseChatModel o FallbackChatModel)
+    strong: Any  # debate, sintetizador, redactor
+    providers: tuple[str, ...] = ("anthropic",)
+
+
+class FallbackChatModel:
+    """Lo minimo que usan los nodos (`with_structured_output(schema).ainvoke(msgs)`), con fallback.
+
+    El primario se intenta primero; ante CUALQUIER excepcion el pedido se repite con el siguiente modelo.
+    Si todos fallan, se propaga el error del ultimo (el ciclo queda `error`, sin fallos silenciosos).
+    """
+
+    def __init__(self, *models: Any) -> None:
+        if not models:
+            raise ValueError("hace falta al menos un modelo")
+        self.models = models
+
+    def with_structured_output(self, schema: Any, **kwargs: Any) -> Any:
+        first, *rest = [m.with_structured_output(schema, **kwargs) for m in self.models]
+        return first.with_fallbacks(rest) if rest else first
+
+
+@lru_cache(maxsize=1)
+def _gemini_chat_class() -> type:
+    from langchain_google_genai import ChatGoogleGenerativeAI
+
+    return ChatGoogleGenerativeAI
 
 
 @lru_cache(maxsize=1)
@@ -66,15 +103,37 @@ def make_llms(
     max_tokens: int = DEFAULT_MAX_TOKENS,
     max_retries: int = 2,
 ) -> ModelRouting:
-    """Construye el par (cheap, strong). La key se lee del entorno en ESTE momento."""
-    if provider != "anthropic":
-        raise UnsupportedProviderError(f"proveedor {provider!r} no soportado (solo 'anthropic' por ahora)")
-    key = api_key or os.environ.get("ANTHROPIC_API_KEY")
-    if not key:
-        raise MissingApiKeyError("falta ANTHROPIC_API_KEY (variable de entorno o argumento api_key)")
-    chat_cls = _anthropic_chat_class()
+    """Construye el par (cheap, strong). Las keys se leen del entorno en ESTE momento.
 
-    def _build(model: str) -> BaseChatModel:
-        return chat_cls(model=model, api_key=key, max_tokens=max_tokens, max_retries=max_retries)
-
-    return ModelRouting(cheap=_build(cheap_model), strong=_build(strong_model))
+    Orden: Anthropic (si hay key) y despues Gemini (si hay key) como fallback.
+    """
+    if provider not in ("anthropic", "gemini"):
+        raise UnsupportedProviderError(f"proveedor {provider!r} no soportado ('anthropic' o 'gemini')")
+    a_key = api_key or os.environ.get("ANTHROPIC_API_KEY")
+    g_key = os.environ.get("GOOGLE_API_KEY") or os.environ.get("GEMINI_API_KEY")
+    chains: list[tuple[str, Any, Any]] = []
+    if a_key and provider == "anthropic":
+        chat_cls = _anthropic_chat_class()
+        chains.append(("anthropic",
+                       chat_cls(model=cheap_model, api_key=a_key, max_tokens=max_tokens, max_retries=max_retries),
+                       chat_cls(model=strong_model, api_key=a_key, max_tokens=max_tokens, max_retries=max_retries)))
+    if g_key:
+        g_cls = _gemini_chat_class()
+        g_cheap = os.environ.get("HEATSIGNAL_GEMINI_CHEAP_MODEL", DEFAULT_GEMINI_CHEAP)
+        g_strong = os.environ.get("HEATSIGNAL_GEMINI_STRONG_MODEL", DEFAULT_GEMINI_STRONG)
+        chains.append(("gemini",
+                       g_cls(model=g_cheap, google_api_key=g_key, max_output_tokens=max_tokens, max_retries=max_retries),
+                       g_cls(model=g_strong, google_api_key=g_key, max_output_tokens=max_tokens, max_retries=max_retries)))
+        b_cheap = os.environ.get("HEATSIGNAL_GEMINI_CHEAP_BACKUP", DEFAULT_GEMINI_CHEAP_BACKUP)
+        b_strong = os.environ.get("HEATSIGNAL_GEMINI_STRONG_BACKUP", DEFAULT_GEMINI_STRONG_BACKUP)
+        if b_cheap and b_strong:
+            chains.append(("gemini-backup",
+                           g_cls(model=b_cheap, google_api_key=g_key, max_output_tokens=max_tokens, max_retries=max_retries),
+                           g_cls(model=b_strong, google_api_key=g_key, max_output_tokens=max_tokens, max_retries=max_retries)))
+    if not chains:
+        raise MissingApiKeyError("falta ANTHROPIC_API_KEY o GOOGLE_API_KEY (variable de entorno o argumento api_key)")
+    names = tuple(c[0] for c in chains)
+    if len(chains) == 1:
+        return ModelRouting(cheap=chains[0][1], strong=chains[0][2], providers=names)
+    return ModelRouting(cheap=FallbackChatModel(*(c[1] for c in chains)),
+                        strong=FallbackChatModel(*(c[2] for c in chains)), providers=names)

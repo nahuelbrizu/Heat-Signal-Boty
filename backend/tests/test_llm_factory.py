@@ -39,7 +39,8 @@ def test_import_does_not_require_api_key_nor_provider_sdk() -> None:
 
 
 def test_missing_key_fails_explicitly_at_call_time(monkeypatch) -> None:
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    for k in ("ANTHROPIC_API_KEY", "GOOGLE_API_KEY", "GEMINI_API_KEY"):
+        monkeypatch.delenv(k, raising=False)
     with pytest.raises(MissingApiKeyError):
         make_llms()
 
@@ -51,6 +52,8 @@ def test_unsupported_provider() -> None:
 
 def test_default_routing_uses_current_haiku_and_sonnet(monkeypatch) -> None:
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test-no-real")
+    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
     routing = make_llms()
     assert DEFAULT_CHEAP_MODEL == "claude-haiku-5-5"
     assert DEFAULT_STRONG_MODEL == "claude-sonnet-5-5"
@@ -90,3 +93,55 @@ def test_structured_output_defaults_to_json_schema(schema, monkeypatch) -> None:
     routing = make_llms(api_key="x")
     assert routing.strong.with_structured_output(schema) is not None
     assert calls == ["json_schema"]
+
+
+
+# ---- fallback a Gemini --------------------------------------------------------------------------------
+
+
+def test_gemini_only_and_fallback_routing(monkeypatch) -> None:
+    from heatsignal.agents.llm_factory import FallbackChatModel
+
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.setenv("GOOGLE_API_KEY", "g-test-no-real")
+    solo = make_llms()
+    assert solo.providers == ("gemini", "gemini-backup")
+    assert solo.cheap.models[0].model.endswith("gemini-3.5-flash-lite") and solo.strong.models[0].model.endswith("gemini-3.5-flash")
+    assert solo.strong.models[1].model.endswith("gemini-2.5-flash")
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test-no-real")
+    both = make_llms()
+    assert both.providers == ("anthropic", "gemini", "gemini-backup")
+    assert isinstance(both.strong, FallbackChatModel)
+    assert both.strong.models[0].model == "claude-sonnet-5-5" and both.strong.models[1].model.endswith("gemini-3.5-flash")
+
+
+async def test_fallback_uses_second_model_when_first_fails() -> None:
+    from langchain_core.runnables import RunnableLambda
+
+    from heatsignal.agents.llm_factory import FallbackChatModel
+
+    calls: list[str] = []
+
+    class Fake:
+        def __init__(self, name: str, fail: bool) -> None:
+            self.name, self.fail = name, fail
+
+        def with_structured_output(self, schema, **kw):
+            def run(msgs):
+                calls.append(self.name)
+                if self.fail:
+                    raise RuntimeError("credit balance is too low")
+                return schema(symbol="XRP-USDT", argument="ok", strength=0.5)
+            return RunnableLambda(run)
+
+    from heatsignal.agents.debate import SymbolArgument
+
+    out = await FallbackChatModel(Fake("anthropic", True), Fake("gemini", False)).with_structured_output(
+        SymbolArgument).ainvoke(["hola"])
+    assert out.symbol == "XRP-USDT" and calls == ["anthropic", "gemini"]
+
+    calls.clear()
+    with pytest.raises(RuntimeError, match="credit"):
+        await FallbackChatModel(Fake("a", True), Fake("b", True)).with_structured_output(SymbolArgument).ainvoke(["x"])
+    assert calls == ["a", "b"]  # si fallan todos, el error se propaga (ciclo = error, no silencio)

@@ -263,6 +263,7 @@ def create_panel_app(ctx: PanelContext) -> FastAPI:
             "analysis": {
                 "enabled": ctx.analysis is not None,
                 "graph_enabled": ctx.analysis is not None and ctx.analysis.graph_enabled,
+                "llm_providers": [] if ctx.analysis is None else getattr(ctx.analysis, "llm_providers", []),
                 "last_cycle": _cycle_view(ctx.analysis),
                 "last_ran": _cycle_view(ctx.analysis, ran=True),
                 "history": [] if ctx.cycle_log is None else ctx.cycle_log.latest(30),

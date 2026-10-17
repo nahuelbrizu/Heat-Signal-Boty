@@ -104,6 +104,13 @@
   break-even ≥ 2× el costo esperado, le gana a la canasta, al buy & hold medio y a las entradas al azar (p ≤ 0,05).
   Holdout: los últimos 3 meses, sellados.
 
+- **LLM del grafo: Anthropic con fallback a Gemini (2026-10-17).** La cuenta de Anthropic se quedó sin crédito y
+  el usuario sumó una key de Gemini (Google AI Studio). `llm_factory.make_llms` arma la cadena
+  Anthropic → `gemini-3.5-flash(-lite)` → `gemini-2.5-flash(-lite)`, porque los 3.5 devolvieron 503 "high demand"
+  en un pico. Cada pedido estructurado prueba el siguiente proveedor si el anterior falla; si fallan todos,
+  el ciclo queda `error`. Verificado contra la API real: el grafo completo corre solo con Gemini en ~47 s.
+  Gemini da confianzas más altas que Claude (0,85–0,95 contra ~0,5): mirar la calibración (Brier) por proveedor.
+
 ## Abiertas
 - ~~Plan de CoinGlass a contratar.~~ **Ya no aplica al core** — la fuente primaria pasó a WS nativos.
   Solo se retomaría si se implementa la fuente BYOK opcional (y ahí el plan lo elige el usuario).

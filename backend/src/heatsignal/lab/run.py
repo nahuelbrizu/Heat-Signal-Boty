@@ -94,6 +94,13 @@ def _slice(r: pd.Series, a: pd.Timestamp, b: pd.Timestamp) -> pd.Series:
     return r[(r.index >= a) & (r.index < b)]
 
 
+@dataclass
+class _Daily:
+    daily_returns: pd.Series
+    daily_gross_returns: pd.Series
+    daily_turnover: pd.Series
+
+
 def _dedupe(s: pd.Series) -> pd.Series:
     s = s.sort_index()
     return s[~s.index.duplicated(keep="last")]
@@ -120,14 +127,17 @@ def evaluate(cfg: RunConfig, registry: TrialRegistry | None = None, data: dict[s
                          None if md.metrics is None else md.metrics[md.metrics.index < holdout_start])
            for s, md in data.items()}
     prices, funding = _prices(dev), _funding(dev)
+    data = None  # liberar la copia completa: solo se usa el desarrollo (el holdout queda sellado)
 
     combos = grid_combos(spec)
     sims = []
     for params in combos:
         sig = rule(dev, params)
         res = simulate(prices, sig, funding, cfg.costs)
-        sims.append((params, sig, res))
+        # solo lo necesario: el resultado minuto a minuto de cada combinacion pesa GBs (OOM con 4 en paralelo)
+        sims.append((params, sig, _Daily(res.daily_returns, res.daily_gross_returns, res.daily_turnover)))
         log.info("%s %s: Sharpe dev %.2f", cfg.strategy_id, {k: params[k] for k in spec.grid}, stats.sharpe_ratio(res.daily_returns))
+        del res
 
     windows = list(walk_forward_windows(first.floor("D"), holdout_start, cfg.train_days, cfg.test_days))
     if not windows:

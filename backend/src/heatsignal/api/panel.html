@@ -312,8 +312,9 @@ function renderMarket(memory, now) {
 function renderCycle(analysis) {
   const gs = $("graph-state");
   gs.replaceChildren(!analysis.enabled ? chip("error")
-    : analysis.graph_enabled ? el("span", { class: "chip ok" }, "grafo habilitado")
-    : el("span", { class: "chip warn" }, "grafo deshabilitado: falta ANTHROPIC_API_KEY"));
+    : analysis.graph_enabled ? el("span", { class: "chip ok" }, "grafo habilitado" +
+        (analysis.llm_providers && analysis.llm_providers.length ? " · " + analysis.llm_providers.join(" → ") : ""))
+    : el("span", { class: "chip warn" }, "grafo deshabilitado: falta key de LLM"));
   if (!analysis.enabled) gs.replaceChildren(el("span", { class: "chip warn" }, "ciclo apagado"));
   const box = $("cycle");
   box.replaceChildren();
