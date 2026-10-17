@@ -145,3 +145,22 @@ def test_publish_upload_sends_every_file_to_the_vm_data_dir(tmp_path, monkeypatc
     cmd = calls[0]
     assert cmd[:3] == ["gcloud", "compute", "scp"] and cmd[-1] == f"{publish.VM_HOST}:~/heatsignal/data/"
     assert {p.rsplit("/", 1)[-1] for p in cmd if p.endswith(".json")} == {"lab_summary.json", "lab_detail_s1-v1.json"}
+
+
+def test_holdout_opens_once_and_uses_only_holdout_window(tmp_path) -> None:
+    import pytest
+
+    from heatsignal.lab.run import open_holdout
+    from heatsignal.lab.trials import HoldoutAlreadyOpenedError
+
+    data = {"AAAUSDT": _md(80, 1), "BBBUSDT": _md(80, 2)}
+    cfg = RunConfig("absorcion-flujo-v1", list(data), holdout_months=1, train_days=20, test_days=10, n_perm=3)
+    reg = TrialRegistry(tmp_path / "trials.sqlite")
+    rep = open_holdout(cfg, reg, data=data)
+    start = pd.Timestamp(rep["window"][0])
+    assert rep["split"] == "holdout" and rep["days"] <= 31
+    assert all(pd.Timestamp(d).date() >= start.date() for d, _ in rep["holdout"]["equity_daily"])
+    assert set(rep["verdict"]["checks"]) == {"retorno_neto_positivo", "le_gana_a_la_canasta", "le_gana_al_azar"}
+    assert reg.count("absorcion-flujo-v1", "holdout") == 1
+    with pytest.raises(HoldoutAlreadyOpenedError):
+        open_holdout(cfg, reg, data=data)  # una sola vez

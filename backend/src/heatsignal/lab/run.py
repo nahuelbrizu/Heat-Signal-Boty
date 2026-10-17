@@ -41,7 +41,7 @@ from .baselines import buy_and_hold, equal_weight_basket, random_entries
 from .sim import Costs, simulate
 from .store import load_funding, load_klines, load_metrics
 from .strategies import CATALOG, SEVEN, MarketData
-from .trials import TrialRegistry
+from .trials import HoldoutAlreadyOpenedError, TrialRegistry
 from .vision import lab_dir
 
 log = logging.getLogger("heatsignal.lab.run")
@@ -243,6 +243,89 @@ def evaluate(cfg: RunConfig, registry: TrialRegistry | None = None, data: dict[s
     return report
 
 
+HOLDOUT_CRITERIA = {"retorno_neto_min": 0.0, "le_gana_a_la_canasta": True, "p_random_max": 0.10}
+
+
+def open_holdout(cfg: RunConfig, registry: TrialRegistry, data: dict[str, MarketData] | None = None) -> dict[str, Any]:
+    """Abre el holdout UNA vez (decisions.md, criterio fijado antes de abrir).
+
+    1. La combinacion se elige con la regla del walk-forward: mejor Sharpe en los ultimos `train_days` antes del
+       holdout (solo datos de desarrollo).
+    2. Las senales son causales: se calculan con todos los datos y se simula SOLO [holdout_start, ultimo dato), con
+       la posicion vigente al arrancar.
+    3. Se registra en el registro de intentos con split 'holdout' (un indice unico impide una segunda apertura).
+    """
+    spec, rule = CATALOG[cfg.strategy_id]
+    if registry.count(cfg.strategy_id, "holdout") > 0:
+        raise HoldoutAlreadyOpenedError(f"el holdout de {cfg.strategy_id} ya se abrio")
+    data = data or load_market(cfg.symbols, spec.needs, cfg.start, cfg.end)
+    last = min(md.klines.index[-1] for md in data.values()) + pd.Timedelta(minutes=1)
+    holdout_start = (last - pd.DateOffset(months=cfg.holdout_months)).floor("D")
+    sel0 = holdout_start - pd.Timedelta(days=cfg.train_days)
+    dev = {s: MarketData(md.klines[md.klines.index < holdout_start],
+                         None if md.funding is None else md.funding[md.funding.index < holdout_start],
+                         None if md.metrics is None else md.metrics[md.metrics.index < holdout_start])
+           for s, md in data.items()}
+    dev_prices, dev_funding = _prices(dev), _funding(dev)
+    scores = []
+    for params in grid_combos(spec):
+        r = simulate(dev_prices, rule(dev, params), dev_funding, cfg.costs).daily_returns
+        sc = stats.sharpe_ratio(_slice(r, sel0, holdout_start))
+        scores.append((sc if math.isfinite(sc) else -np.inf, params))
+    sel_sharpe, params = max(scores, key=lambda x: x[0])
+    del dev, dev_prices, dev_funding
+
+    sig = rule(data, params)  # causal: computar con todo equivale a computar en vivo
+    stitched = {}
+    for s, v in sig.items():
+        prev = v[v.index < holdout_start]
+        head = pd.Series([prev.iloc[-1] if len(prev) else 0.0], index=pd.DatetimeIndex([holdout_start]))
+        stitched[s] = _dedupe(pd.concat([head, v[v.index >= holdout_start]]))
+    prices = {s: p[p.index >= holdout_start] for s, p in _prices(data).items()}
+    funding = {s: f[f.index >= holdout_start] for s, f in _funding(data).items()}
+    res = simulate(prices, stitched, funding, cfg.costs)
+    r = res.daily_returns
+    sharpe = stats.sharpe_ratio(r) if float(np.nanstd(r)) > 0 else float("nan")
+    basket = equal_weight_basket(prices, funding, cfg.costs)
+    bh = buy_and_hold(prices, funding, cfg.costs)
+    null = []
+    gens = {s: random_entries(v, cfg.n_perm, cfg.seed + i, start=holdout_start, end=last)
+            for i, (s, v) in enumerate(stitched.items()) if len(v)}
+    for _ in range(cfg.n_perm if gens else 0):
+        null.append(stats.sharpe_ratio(simulate(prices, {s: next(g) for s, g in gens.items()}, funding, cfg.costs).daily_returns))
+    p_random = stats_pvalue(sharpe, null) if math.isfinite(sharpe) else None
+    basket_sharpe = stats.sharpe_ratio(basket.daily_returns)
+    hr = stats.hit_rate(res.trades["pnl_net"]) if len(res.trades) else {}
+    checks = {
+        "retorno_neto_positivo": float(r.sum()) > HOLDOUT_CRITERIA["retorno_neto_min"],
+        "le_gana_a_la_canasta": math.isfinite(sharpe) and sharpe > basket_sharpe,
+        "le_gana_al_azar": p_random is not None and p_random <= HOLDOUT_CRITERIA["p_random_max"],
+    }
+    report = {
+        "strategy_id": cfg.strategy_id, "spec_hash": spec.spec_hash(), "split": "holdout",
+        "window": [str(holdout_start), str(last)], "days": int(len(r)),
+        "selected_params": {k: params[k] for k in spec.grid}, "selection_sharpe_last_train": sel_sharpe,
+        "holdout": {
+            "sharpe": sharpe, "sharpe_ci95": (lambda c: [c["lo"], c["hi"]])(stats.sharpe_ci(r, seed=cfg.seed))
+            if math.isfinite(sharpe) else None,
+            "total_return": float(r.sum()), "max_drawdown": stats.max_drawdown(r), "trades": int(len(res.trades)),
+            "hit_rate": hr, "breakdown": res.breakdown, "equity_daily": equity_daily(r),
+        },
+        "baselines": {
+            "basket_sharpe": basket_sharpe, "basket_return": float(basket.daily_returns.sum()),
+            "buy_and_hold_sharpe": {s: stats.sharpe_ratio(x.daily_returns) for s, x in bh.items()},
+            "random_entries": {"n": len(null), "median_sharpe": float(np.median(null)) if null else None,
+                               "p_value": p_random},
+            "equity_daily": {"basket": equity_daily(basket.daily_returns)},
+        },
+        "verdict": {"confirma": all(checks.values()), "checks": checks, "criterios": HOLDOUT_CRITERIA},
+    }
+    registry.register(cfg.strategy_id, spec.spec_hash(), params, "holdout", cfg.symbols,
+                      {"sharpe": sharpe, "total_return": float(r.sum()), "confirma": report["verdict"]["confirma"]},
+                      holdout_start, last)
+    return report
+
+
 def equity_daily(daily_returns: pd.Series) -> list[list[Any]]:
     """[[fecha UTC 'YYYY-MM-DD', retorno acumulado al cierre de esa fecha], ...] (suma simple, 6 decimales)."""
     r = daily_returns.sort_index()
@@ -292,6 +375,8 @@ def main(argv: Iterable[str] | None = None) -> int:
     p.add_argument("--start", default=None)
     p.add_argument("--end", default=None)
     p.add_argument("--perm", type=int, default=100)
+    p.add_argument("--open-holdout", action="store_true",
+                   help="abrir el holdout sellado (UNA sola vez por estrategia; criterio en decisions.md)")
     p.add_argument("--registry", default=str(Path(os.environ.get("HEATSIGNAL_LAB_HOME", Path.home() / "heatsignal-lab")) / "trials.sqlite"))
     args = p.parse_args(list(argv) if argv is not None else None)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -299,6 +384,18 @@ def main(argv: Iterable[str] | None = None) -> int:
                     pd.Timestamp(args.start, tz="UTC") if args.start else None,
                     pd.Timestamp(args.end, tz="UTC") if args.end else None, n_perm=args.perm)
     reg = TrialRegistry(args.registry)
+    if args.open_holdout:
+        try:
+            report = open_holdout(cfg, reg)
+        finally:
+            reg.close()
+        out = lab_dir().parent / "results" / args.strategy_id / "holdout" / f"{pd.Timestamp.now(tz='UTC'):%Y%m%dT%H%M%S}.json"
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(json.dumps(report, indent=2, default=_json_default, ensure_ascii=False))
+        h = report["holdout"]
+        print(f"{args.strategy_id} HOLDOUT {report['window']}: Sharpe {h['sharpe']} | retorno {h['total_return']} | "
+              f"trades {h['trades']} | confirma: {report['verdict']['confirma']} {report['verdict']['checks']}\n-> {out}")
+        return 0
     try:
         report = evaluate(cfg, reg)
     finally:
