@@ -190,6 +190,19 @@ class FallbackChatModel:
 
 
 @lru_cache(maxsize=1)
+def gemini_uses_vertex(key: str) -> bool:
+    """Las keys de Vertex AI en modo expres (formato `AQ.`) no sirven contra la API de AI Studio (403) y si contra
+    aiplatform.googleapis.com. `HEATSIGNAL_GEMINI_VERTEX` = 1/0 fuerza el modo; sin definir, se decide por el formato.
+    Verificado 2026-10-18: 3.5-flash, 3.8-flash y 3.1-flash-lite con json_schema via Vertex expres (ON_DEMAND, se
+    factura por uso en el proyecto de la key: no tiene el tope gratis de 20 pedidos/dia/modelo de AI Studio)."""
+    forced = os.environ.get("HEATSIGNAL_GEMINI_VERTEX", "").strip().lower()
+    if forced in ("1", "true", "si", "yes"):
+        return True
+    if forced in ("0", "false", "no"):
+        return False
+    return key.startswith("AQ.")
+
+
 def _gemini_chat_class() -> type:
     from langchain_google_genai import ChatGoogleGenerativeAI
 
@@ -233,7 +246,13 @@ def make_llms(
                        chat_cls(model=cheap_model, api_key=a_key, max_tokens=max_tokens, max_retries=max_retries),
                        chat_cls(model=strong_model, api_key=a_key, max_tokens=max_tokens, max_retries=max_retries)))
     if g_key:
-        g_cls = _gemini_chat_class()
+        base_cls = _gemini_chat_class()
+        if gemini_uses_vertex(g_key):
+            import functools
+
+            g_cls = functools.partial(base_cls, vertexai=True)
+        else:
+            g_cls = base_cls
         g_cheap = os.environ.get("HEATSIGNAL_GEMINI_CHEAP_MODEL", DEFAULT_GEMINI_CHEAP)
         g_strong = os.environ.get("HEATSIGNAL_GEMINI_STRONG_MODEL", DEFAULT_GEMINI_STRONG)
         chains.append(("gemini",

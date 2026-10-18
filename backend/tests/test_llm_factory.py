@@ -268,3 +268,21 @@ def test_daily_quota_cooldown_lasts_until_pacific_midnight() -> None:
     secs, why = hard_cooldown(exc, datetime(2026, 10, 18, 6, 0, tzinfo=timezone.utc).timestamp())
     assert abs(secs - 3720) < 1 and "cuota diaria" in why
     assert hard_cooldown(RuntimeError("503 UNAVAILABLE high demand"), 0.0) is None
+
+
+def test_vertex_express_key_routes_gemini_through_vertex(monkeypatch) -> None:
+    from heatsignal.agents.llm_factory import gemini_uses_vertex
+
+    monkeypatch.delenv("HEATSIGNAL_GEMINI_VERTEX", raising=False)
+    assert gemini_uses_vertex("AQ.fake") and not gemini_uses_vertex("AIzaFake")
+    monkeypatch.setenv("HEATSIGNAL_GEMINI_VERTEX", "0")
+    assert not gemini_uses_vertex("AQ.fake")
+    monkeypatch.setenv("HEATSIGNAL_GEMINI_VERTEX", "1")
+    assert gemini_uses_vertex("AIzaFake")
+    monkeypatch.delenv("HEATSIGNAL_GEMINI_VERTEX")
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.setenv("GOOGLE_API_KEY", "AQ.test-no-real")
+    llms = make_llms()
+    assert all(getattr(m, "vertexai", None) is True for m in llms.strong.models + llms.cheap.models)
+    monkeypatch.setenv("GOOGLE_API_KEY", "AIza-test-no-real")
+    assert not any(getattr(m, "vertexai", None) for m in make_llms().strong.models)
