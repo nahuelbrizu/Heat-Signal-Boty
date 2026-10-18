@@ -1,6 +1,6 @@
 # Lote 5 — de la base de conocimiento del usuario (2026-10-18)
 
-**Estado: PROPUESTA, sin aprobar.** Código en `lab/strategies.py` (`LOTE5`), tests en
+**Estado: APROBADO por el usuario el 2026-10-19 (antes de ver resultados).** Código en `lab/strategies.py` (`LOTE5`), tests en
 `tests/test_lab_strategies_lote5.py`. Nada corrido con datos reales. Revisión del documento en
 `research/base-conocimiento-ta.md`.
 

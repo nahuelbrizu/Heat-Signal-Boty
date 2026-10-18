@@ -310,6 +310,10 @@
   `lunes-asia-v1` 0,40 → −0,14, meseta 50 %: frágil. `reversion-flujo-extremo-15m-v1` PBO 0,56: sobreajuste. El
   resto tiene Sharpe ≤ 0 (meseta n/a). Diagnóstico, no selección: no cambia parámetros ni K.
 
+- **Lote 5 aprobado por el usuario (2026-10-19), ANTES de ver resultados** ("sí, apruebo"). Specs congeladas en
+  `estrategias-lote5.md`: `cartera-tendencia-v1` 3d7b32a429f494fc; `max-ruptura-10d-v1` 39cb9dee6d3e469a;
+  `vwap-reversion-v1` 724e2b1e207828df. K del programa = 51.
+
 ## Abiertas
 - ~~Plan de CoinGlass a contratar.~~ **Ya no aplica al core** — la fuente primaria pasó a WS nativos.
   Solo se retomaría si se implementa la fuente BYOK opcional (y ahí el plan lo elige el usuario).
