@@ -292,6 +292,17 @@
   Registro append-only `ft_bridge_orders`. RAM medida 405 MB estables / 465 MB pico (`MemoryMax=550M`); vigilar
   swap: si crece, pasar a e2-medium. Mide la distancia simulación–ejecución; no aprueba estrategias.
 
+- **Diagnósticos anti-sobreajuste: PBO (CSCV) y robustez por vecinos (2026-10-19).** `heatsignal.lab.diagnostics`
+  (`pbo|robustez|ambos <id>` o `--all`) → `results/<id>/diagnostics_<ts>.json` y panel (columna PBO, tarjeta con
+  gráfico de vecinos). PBO: matriz días × combinaciones de la grilla congelada sobre el desarrollo, S=16, C(16,8) =
+  12.870 particiones; PBO = fracción con logit ≤ 0, más degradación y probabilidad de pérdida OOS (solo grillas de
+  2+ combinaciones; con N=2 informa poco). Robustez: cada parámetro numérico ±20 %/±40 % de a uno, Sharpe del
+  desarrollo con 7 bps y con costos ×3; meseta = fracción de vecinos con Sharpe ≥ 50 % del original. **Diagnóstico,
+  no selección:** tabla aparte append-only `lab_diagnostics` (no suma K ni entra a SR0); ningún resultado cambia
+  parámetros congelados (una mejora vista en un vecino solo se prueba como `-v2` pre-registrada); nunca usan el
+  holdout. Primera corrida: `tsmom-diario-v1` meseta 100 %, Sharpe del desarrollo 0,98 → 0,60 con costos ×3.
+  (El refactor de `lab/run.py` que usan los diagnósticos quedó dentro del commit 3aabefc.)
+
 ## Abiertas
 - ~~Plan de CoinGlass a contratar.~~ **Ya no aplica al core** — la fuente primaria pasó a WS nativos.
   Solo se retomaría si se implementa la fuente BYOK opcional (y ahí el plan lo elige el usuario).

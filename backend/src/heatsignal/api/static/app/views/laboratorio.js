@@ -1,7 +1,9 @@
 // Laboratorio de backtest: lote (/api/lab) con veredicto y checks, y detalle (/api/lab/{id}) con curva de capital OOS vs
 // canasta y buy & hold, costo -> Sharpe, descomposicion del PnL, ventanas walk-forward, baselines y p contra azar.
+// Diagnosticos anti-sobreajuste (lab.diagnostics): columna PBO en la tabla y, en el detalle, PBO por CSCV + grafico
+// de vecinos (Sharpe con cada parametro movido +-20 % / +-40 %). renderOverview / renderDetail: render puro (tests).
 import {
-  el, clear, api, errorBox, int, fixed, frac, num, card, table, pageHead, loading, chip, kv, stat, isNum, signedFrac,
+  el, clear, api, errorBox, int, fixed, frac, num, card, table, pageHead, loading, chip, kv, stat, isNum, signedFrac, svgEl,
 } from "../core.js";
 import { makeChart, disposeChart, css, xyChart, signedBars, legend } from "../charts.js";
 import { labRequestAction, labRequestsBlock } from "../actions.js";
@@ -69,6 +71,142 @@ function benchmarkCard(b) {
     (b.notes || []).length ? el("ul", { class: "small muted" }, b.notes.map((n) => el("li", {}, n))) : null);
 }
 
+/** PBO (CSCV) de la grilla y meseta de vecinos, para la tabla del lote. */
+export function pboCell(dg) {
+  if (!dg) return el("span", { class: "muted", title: "todavía no se corrió python -m heatsignal.lab.diagnostics" }, "—");
+  const parts = [];
+  if (isNum(dg.pbo)) {
+    const kind = dg.pbo >= 0.5 ? "bad" : dg.pbo >= 0.25 ? "warn" : "ok";
+    parts.push(chip(fixed(dg.pbo, 2), kind, "probabilidad de sobreajuste de la grilla (CSCV, " + int(dg.pbo_partitions) + " particiones, " + int(dg.pbo_combinations) + " combinaciones)"));
+  } else parts.push(el("span", { class: "muted small", title: dg.pbo_skipped || "sin PBO" }, dg.pbo_skipped ? "sin grilla" : "—"));
+  if (isNum(dg.meseta)) parts.push(el("div", { class: "small muted" }, "meseta " + frac(dg.meseta, 0)));
+  else if (isNum(dg.sharpe_dev)) parts.push(el("div", { class: "small muted" }, "meseta n/a"));
+  if (dg.stale) parts.push(el("div", { class: "small warn-t", title: "el diagnóstico es de un resultado anterior al publicado" }, "desactualizado"));
+  return el("div", {}, parts);
+}
+
+/** Tabla del lote (la usan mount y renderOverview). */
+function labTable(items, href, onOpen) {
+  return card(null, null, table([{ label: "Estrategia" }, { label: "Veredicto" }, { label: "Sharpe OOS", cls: "n" }, { label: "IC 95 %", cls: "n" },
+    { label: "PSR / DSR", cls: "n" }, { label: "DSR prog.", cls: "n", title: "DSR contra el listón de todo el programa (todas las combinaciones probadas)" },
+    { label: "PBO", cls: "n", title: "probabilidad de sobreajuste de la grilla (CSCV) y meseta de parámetros vecinos; diagnóstico, no suma intentos" },
+    { label: "Retorno", cls: "n" }, { label: "Máx. DD", cls: "n" }, { label: "Trades", cls: "n" }, { label: "Acierto", cls: "n" },
+    { label: "Break-even", cls: "n", title: "costo por lado que deja el Sharpe en 0" }, { label: "Canasta", cls: "n", title: "Sharpe de la canasta" },
+    { label: "p azar", cls: "n" }, { label: "Criterios" }, { label: "Holdout" }],
+  items.map((s) => [
+    { v: el("div", { style: { minWidth: "300px" } }, s.has_detail ? el("a", { href: href("laboratorio", [s.strategy_id]) }, el("b", {}, s.strategy_id)) : el("b", {}, s.strategy_id),
+      el("div", { class: "small muted mono" }, (s.oos_range || []).join(" → ") + " · " + int(s.windows) + " ventanas · " + int(s.n_combinations) + " comb."),
+      el("div", { class: "muted", style: { marginTop: "4px" } }, specBlock(s))), cls: "wrap" },
+    verdictChip(s.verdict), fixed(s.sharpe, 2), s.sharpe_ci95 ? fixed(s.sharpe_ci95[0], 2) + " / " + fixed(s.sharpe_ci95[1], 2) : "—",
+    fixed(s.psr, 3) + " / " + fixed(s.dsr, 3), fixed(s.dsr_program, 3), pboCell(s.diagnostics), signedFrac(s.total_return), frac(s.max_drawdown), int(s.trades), frac(s.hit_rate, 0),
+    isNum(s.breakeven_bps) ? num(s.breakeven_bps, 1) + " bps" : "—", fixed(s.basket_sharpe, 2), fixed(s.random_p, 3),
+    { v: el("div", { style: { minWidth: "200px" } }, checkChips(s.verdict && s.verdict.checks)), cls: "wrap" }, holdoutCell(s),
+  ]), { empty: "Sin estrategias en el lote.", label: "Lote del laboratorio",
+    onRow: onOpen ? (i) => items[i].has_detail && onOpen(items[i].strategy_id) : undefined }),
+  el("p", { class: "small muted", style: { marginTop: "8px" } }, "Sharpe anualizado; retornos y drawdown en fracción del capital inicial; costos en bps por lado. " +
+    "PBO: probabilidad de que la mejor combinación de la grilla sea sobreajuste (≥ 0,5 = la elección no se sostiene). Las que no tienen detalle publicado no son clickeables."));
+}
+
+/** Render puro del resumen (tabla + listón del programa). */
+export function renderOverview(d, href) {
+  return [labTable(d.strategies || [], href, null), programNote(d.program)].filter(Boolean);
+}
+
+const STEP_COLOR = { "-0.4": ["--s2", 1], "-0.2": ["--s2", 0.5], "0.2": ["--s1", 0.5], "0.4": ["--s1", 1] };
+const stepLabel = (st) => (st > 0 ? "+" : "−") + Math.round(Math.abs(st) * 100) + " %";
+
+/** Grafico de vecinos: una fila por parametro, eje x = Sharpe del desarrollo (7 bps), un punto por variacion. */
+export function neighborsChart(r) {
+  const nbs = (r.neighbors || []).filter((n) => n.status !== "omitido" && isNum(n.sharpe));
+  const params = [...new Set((r.neighbors || []).filter((n) => n.status !== "omitido").map((n) => n.param))];
+  const base = r.base || {};
+  if (!params.length) return el("p", { class: "empty" }, "Sin vecinos evaluados (ningún parámetro numérico movible).");
+  const xs = nbs.map((n) => n.sharpe).concat(isNum(base.sharpe) ? [base.sharpe, base.sharpe * (r.threshold || 0.5)] : [], [0]);
+  let x0 = Math.min(...xs), x1 = Math.max(...xs);
+  const pad = (x1 - x0) * 0.08 || 0.5; x0 -= pad; x1 += pad;
+  const W = 640, rowH = 26, m = { l: 150, r: 16, t: 26, b: 34 }, H = m.t + params.length * rowH + m.b;
+  const sx = (v) => m.l + (v - x0) / (x1 - x0) * (W - m.l - m.r);
+  const g = svgEl("svg", { class: "viz", viewBox: `0 0 ${W} ${H}`, role: "img",
+    "aria-label": "Sharpe del desarrollo con cada parámetro movido ±20 % y ±40 %; línea llena = original, punteada = 50 % del original" });
+  const yBottom = H - m.b;
+  const vline = (x, color, dash, label) => {
+    g.append(svgEl("line", { x1: sx(x), x2: sx(x), y1: m.t - 6, y2: yBottom, stroke: color, "stroke-width": 1.5, "stroke-dasharray": dash || null }));
+    if (label) g.append(svgEl("text", { x: sx(x) + 4, y: m.t - 10, style: `fill:${color}` }, label));
+  };
+  if (x0 < 0 && x1 > 0) g.append(svgEl("line", { class: "axis", x1: sx(0), x2: sx(0), y1: m.t - 6, y2: yBottom }));
+  if (isNum(base.sharpe)) {
+    vline(base.sharpe, css("--ink"), null, "original " + fixed(base.sharpe, 2));
+    if (base.sharpe > 0) vline(base.sharpe * (r.threshold || 0.5), css("--warn"), "4 3", null);
+  }
+  g.append(svgEl("line", { class: "axis", x1: m.l, x2: W - m.r, y1: yBottom, y2: yBottom }));
+  const step = (x1 - x0) / 5;
+  for (let i = 0; i <= 5; i++) g.append(svgEl("text", { x: sx(x0 + i * step), y: yBottom + 16, "text-anchor": "middle" }, num(x0 + i * step, 2)));
+  g.append(svgEl("text", { x: (m.l + W - m.r) / 2, y: H - 4, "text-anchor": "middle" }, "Sharpe del desarrollo (7 bps por lado)"));
+  params.forEach((p, i) => {
+    const y = m.t + i * rowH + rowH / 2;
+    g.append(svgEl("line", { class: "grid-l", x1: m.l, x2: W - m.r, y1: y, y2: y }),
+      svgEl("text", { x: m.l - 8, y: y + 4, "text-anchor": "end" }, p));
+    for (const n of nbs.filter((q) => q.param === p)) {
+      const [col, op] = STEP_COLOR[String(n.step)] || ["--s5", 1];
+      g.append(svgEl("circle", { cx: sx(n.sharpe), cy: y, r: 5, fill: css(col), "fill-opacity": op, stroke: css(col), "stroke-width": 1.2 },
+        svgEl("title", {}, `${p} ${stepLabel(n.step)} (= ${n.value}): Sharpe ${fixed(n.sharpe, 2)} · costos ×${r.cost_mult || 3}: ${fixed(n.sharpe_x3, 2)}`)));
+    }
+  });
+  return el("div", {}, g, legend([[css("--s2"), "−40 %"], [css("--s2"), "−20 % (claro)"], [css("--s1"), "+20 % (claro)"], [css("--s1"), "+40 %"],
+    [css("--ink"), "Sharpe original"], [css("--warn"), "50 % del original (punteada)"]]));
+}
+
+function neighborsTable(r) {
+  const by = {};
+  for (const n of r.neighbors || []) (by[n.param] = by[n.param] || {})[String(n.step)] = n;
+  const cell = (n) => {
+    if (!n) return "—";
+    if (n.status === "omitido") return el("span", { class: "small muted", title: n.reason || "" }, "omitido");
+    const cls = n.en_meseta === false ? "bad-t" : n.en_meseta ? "ok-t" : "";
+    return el("div", { title: n.reason || "" }, el("span", { class: "mono small muted" }, String(n.value) + (n.status === "recortado" ? " (límite)" : "")),
+      el("div", { class: cls }, fixed(n.sharpe, 2)), el("div", { class: "small muted" }, "×" + (r.cost_mult || 3) + ": " + fixed(n.sharpe_x3, 2)));
+  };
+  return table([{ label: "Parámetro" }, { label: "Original", cls: "n" }, { label: "−40 %", cls: "n" }, { label: "−20 %", cls: "n" }, { label: "+20 %", cls: "n" }, { label: "+40 %", cls: "n" }],
+    Object.keys(by).map((p) => [el("span", { class: "mono" }, p), el("span", { class: "mono" }, fmtVal((r.base_params || {})[p])),
+      cell(by[p]["-0.4"]), cell(by[p]["-0.2"]), cell(by[p]["0.2"]), cell(by[p]["0.4"])]),
+    { label: "Vecinos por parámetro", scroll: true, empty: "Sin vecinos." });
+}
+
+/** Tarjeta de diagnosticos del detalle: PBO + robustez por vecinos, con como leerlos. */
+export function diagnosticsCard(dg) {
+  const howTo = el("div", { class: "note info" }, el("b", {}, "Cómo leerlo. "),
+    "PBO: se parte el desarrollo en bloques y, en cada forma de dividirlo en dos mitades, se elige la mejor combinación de la grilla en una mitad y se mira en qué puesto queda en la otra. " +
+    "PBO es la fracción de veces que quedó en la mitad de abajo: cerca de 0 = la elección se sostiene; 0,5 o más = es tan buena como elegir al azar (sobreajuste). " +
+    "Vecinos: cada fila es un parámetro movido −40 %, −20 %, +20 % y +40 % con el resto fijo. Si los puntos quedan cerca de la línea del original y a la derecha de la punteada (50 %), " +
+    "hay una meseta: el resultado no depende de un valor exacto. Si caen lejos, el resultado es frágil. Es un diagnóstico, no una selección: no cambia parámetros congelados, " +
+    "no suma intentos al listón del programa y no usa el holdout.");
+  if (!dg) return card("Diagnósticos anti-sobreajuste", "sin correr", el("p", { class: "muted small" }, "Todavía no hay diagnósticos para esta estrategia. En la PC: python -m heatsignal.lab.diagnostics ambos <id>"), howTo);
+  const p = dg.pbo_detail || {}, r = dg.robustez_detail || {}, deg = p.degradation || {};
+  const pboStats = dg.pbo_detail ? el("div", { class: "stats" },
+    stat("PBO", isNum(p.pbo) ? fixed(p.pbo, 2) : "—", int(p.n_partitions) + " particiones · " + int(p.n_blocks) + " bloques de " + int(p.block_days) + " días · " + int(p.n_combinations) + " comb.",
+      isNum(p.pbo) ? (p.pbo >= 0.5 ? "bad-t" : p.pbo >= 0.25 ? "warn-t" : "ok-t") : ""),
+    stat("Degradación", isNum(deg.slope) ? fixed(deg.slope, 2) : "—", "pendiente Sharpe fuera vs dentro (≤ 0: lo elegido no se traslada)"),
+    stat("Prob. de pérdida fuera", frac(p.prob_oos_loss, 0), "Sharpe < 0 de la elegida en la otra mitad"),
+    stat("Sharpe medio elegida", fixed(deg.is_sharpe_mean, 2) + " → " + fixed(deg.oos_sharpe_mean, 2), "dentro → fuera de la mitad"))
+    : el("p", { class: "muted small" }, dg.pbo_skipped || "PBO sin correr.");
+  const robStats = dg.robustez_detail ? el("div", { class: "stats" },
+    stat("Meseta", isNum(r.meseta) ? frac(r.meseta, 0) : "n/a", isNum(r.meseta) ? "de " + int(r.n_neighbors) + " vecinos con Sharpe ≥ 50 % del original" : (r.meseta_note || ""),
+      isNum(r.meseta) ? (r.meseta >= 0.8 ? "ok-t" : r.meseta >= 0.5 ? "warn-t" : "bad-t") : ""),
+    stat("Caída máxima", fixed(r.max_drop, 2), r.worst ? "peor: " + r.worst.param + " " + stepLabel(r.worst.step) + (isNum(r.max_drop_rel) ? " (" + frac(r.max_drop_rel, 0) + " del original)" : "") : ""),
+    stat("Sharpe desarrollo", fixed((r.base || {}).sharpe, 2), num(r.cost_bps_per_side, 1) + " bps por lado"),
+    stat("Con costos ×" + (r.cost_mult || 3), fixed((r.base || {}).sharpe_x3, 2), isNum(r.meseta_x3) ? "meseta ×" + (r.cost_mult || 3) + ": " + frac(r.meseta_x3, 0) : ""))
+    : el("p", { class: "muted small" }, "Robustez por vecinos sin correr.");
+  return card("Diagnósticos anti-sobreajuste", el("span", {}, chip("diagnóstico, no selección", "info", "no suma intentos al K del programa ni cambia parámetros"),
+    dg.stale ? chip("de un resultado anterior", "warn") : null),
+  el("p", { class: "small muted" }, "Período de desarrollo " + ((dg.development || []).map((x) => String(x).slice(0, 10)).join(" → ") || "—") + " · holdout: " + (dg.holdout || "no usado") + "."),
+  el("h3", {}, "Sobreajuste de la grilla (PBO, CSCV)"), pboStats,
+  el("h3", { style: { marginTop: "12px" } }, "Robustez por parámetros vecinos"), robStats,
+  dg.robustez_detail ? neighborsChart(r) : null,
+  dg.robustez_detail ? neighborsTable(r) : null,
+  (r.params_not_numeric || []).length ? el("p", { class: "small muted" }, "No se mueven (no son números): " + r.params_not_numeric.join(", ") + ".") : null,
+  howTo);
+}
+
 export async function mount(root, ctx) {
   if (ctx.route.parts[0]) return detail(root, ctx, ctx.route.parts[0]);
   clear(root, loading());
@@ -96,21 +234,7 @@ export async function mount(root, ctx) {
     crit ? el("div", { class: "note" }, "Para pasar a paper trading tiene que cumplir todos los criterios: DSR ≥ " + fixed(crit.criterios.dsr_min, 2) +
       ", costo de equilibrio ≥ " + fixed(crit.criterios.breakeven_vs_cost_min, 1) + "× el esperado, p contra azar ≤ " + fixed(crit.criterios.p_random_max, 2) +
       ", y ganarle a la canasta y al buy & hold medio.") : null,
-    card(null, null, table([{ label: "Estrategia" }, { label: "Veredicto" }, { label: "Sharpe OOS", cls: "n" }, { label: "IC 95 %", cls: "n" },
-      { label: "PSR / DSR", cls: "n" }, { label: "DSR prog.", cls: "n", title: "DSR contra el listón de todo el programa (todas las combinaciones probadas)" }, { label: "Retorno", cls: "n" }, { label: "Máx. DD", cls: "n" }, { label: "Trades", cls: "n" }, { label: "Acierto", cls: "n" },
-      { label: "Break-even", cls: "n", title: "costo por lado que deja el Sharpe en 0" }, { label: "Canasta", cls: "n", title: "Sharpe de la canasta" },
-      { label: "p azar", cls: "n" }, { label: "Criterios" }, { label: "Holdout" }],
-    items.map((s) => [
-      { v: el("div", { style: { minWidth: "300px" } }, s.has_detail ? el("a", { href: ctx.href("laboratorio", [s.strategy_id]) }, el("b", {}, s.strategy_id)) : el("b", {}, s.strategy_id),
-        el("div", { class: "small muted mono" }, (s.oos_range || []).join(" → ") + " · " + int(s.windows) + " ventanas · " + int(s.n_combinations) + " comb."),
-        el("div", { class: "muted", style: { marginTop: "4px" } }, specBlock(s))), cls: "wrap" },
-      verdictChip(s.verdict), fixed(s.sharpe, 2), s.sharpe_ci95 ? fixed(s.sharpe_ci95[0], 2) + " / " + fixed(s.sharpe_ci95[1], 2) : "—",
-      fixed(s.psr, 3) + " / " + fixed(s.dsr, 3), fixed(s.dsr_program, 3), signedFrac(s.total_return), frac(s.max_drawdown), int(s.trades), frac(s.hit_rate, 0),
-      isNum(s.breakeven_bps) ? num(s.breakeven_bps, 1) + " bps" : "—", fixed(s.basket_sharpe, 2), fixed(s.random_p, 3),
-      { v: el("div", { style: { minWidth: "200px" } }, checkChips(s.verdict && s.verdict.checks)), cls: "wrap" }, holdoutCell(s),
-    ]), { empty: "Sin estrategias en el lote.", label: "Lote del laboratorio",
-      onRow: (i) => items[i].has_detail && ctx.navigate(ctx.href("laboratorio", [items[i].strategy_id])) }),
-    el("p", { class: "small muted", style: { marginTop: "8px" } }, "Sharpe anualizado; retornos y drawdown en fracción del capital inicial; costos en bps por lado. Las que no tienen detalle publicado no son clickeables.")),
+    labTable(items, ctx.href, (id) => ctx.navigate(ctx.href("laboratorio", [id]))),
     programNote(d.program),
     benchmarkCard(d.benchmark_ta),
     card("Pedidos al laboratorio", el("span", { class: "small muted" }, "los corre tu PC (worker); pueden tardar minutos u horas"),
@@ -126,10 +250,20 @@ async function detail(root, ctx, id) {
   try { d = await api("/api/lab/" + encodeURIComponent(id), null, ctx.signal); }
   catch (e) { clear(root, pageHead(id, null, null, el("a", { href: "#/laboratorio" }, "← Laboratorio")), errorBox(e, "el detalle") || ""); return; }
   ctx.setTitle("Lab " + d.strategy_id);
+  const charts = [];
+  clear(root, ...detailBody(d, charts));
+  return { unmount: () => { charts.forEach(disposeChart); } };
+}
+
+/** Render puro del detalle (sin red): lo usa detail() y los tests. */
+export function renderDetail(d) {
+  return el("div", {}, detailBody(d, []));
+}
+
+function detailBody(d, charts) {
   const o = d.oos || {}, c = d.costs || {}, wf = d.walk_forward || {}, b = d.baselines || {}, hr = o.hit_rate || {};
   const eqBox = el("div");
   let chart = null;
-  const charts = [];
 
   if (d.equity_daily) {
     const node = el("div", { class: "chart", role: "img", "aria-label": "Curva de capital fuera de muestra" });
@@ -141,6 +275,7 @@ async function detail(root, ctx, id) {
       series.forEach((s, i) => s.applyOptions({ color: cols[i] }));
     });
     if (chart) {
+      charts.push(chart);
       const add = (data, w) => { const s = chart.addLineSeries({ lineWidth: w, priceLineVisible: false, lastValueVisible: true }); s.setData((data || []).map(([t, v]) => ({ time: t, value: v }))); series.push(s); };
       add(d.equity_daily.strategy, 2); add(d.equity_daily.basket, 1); add(d.equity_daily.buy_and_hold_mean, 1);
       chart._retheme();
@@ -156,7 +291,7 @@ async function detail(root, ctx, id) {
   const bd = d.breakdown || {};
   const pass = d.verdict && d.verdict.pasa;
 
-  clear(root,
+  return [
     pageHead(d.strategy_id, el("span", { class: "mono small" }, "spec " + d.spec_hash + " · run " + d.run + " · " + (d.runs || []).length + " corridas · " + (d.symbols || []).join(", ")),
       el("span", { class: "row" }, el("span", { class: "small muted" }, "fuera de muestra:"), verdictChip(d.verdict),
         d.holdout && typeof d.holdout === "object" ? chip((d.holdout.verdict ? d.holdout.verdict.pasa : d.holdout.confirma) ? "holdout confirmó" : "holdout no confirmó",
@@ -174,6 +309,7 @@ async function detail(root, ctx, id) {
     card("Veredicto", pass ? chip("cumple todos los criterios", "ok") : chip("no cumple", "warn"), checkChips(d.verdict && d.verdict.checks),
       d.verdict && d.verdict.criterios ? el("p", { class: "small muted", style: { marginTop: "8px" } }, "Criterios: " + Object.entries(d.verdict.criterios).map(([k, v]) => k + " = " + v).join(" · ")) : null),
     card("Curva de capital fuera de muestra", "estrategia vs canasta y buy & hold", eqBox),
+    diagnosticsCard(d.diagnostics),
     d.holdout && typeof d.holdout === "object" ? holdoutCard(d.holdout, charts) : null,
     el("div", { class: "grid two" },
       card("Costo → Sharpe", "bps por lado",
@@ -205,8 +341,7 @@ async function detail(root, ctx, id) {
         (wf.chosen || []).map((w, i) => [i + 1, (w.train || []).join(" → "), (w.test || []).join(" → "),
           el("span", { class: "mono small" }, Object.entries(w.params || {}).map(([k, v]) => k + "=" + v).join(", ")), fixed(w.train_sharpe, 2)]),
         { label: "Ventanas walk-forward", scroll: true, caption: "El Sharpe de entrenamiento está inflado por la selección: el que cuenta es el OOS de arriba." })),
-  );
-  return { unmount: () => { disposeChart(chart); charts.forEach(disposeChart); } };
+  ].filter(Boolean);
 }
 
 /** Linea de capital (estrategia, canasta, B&H medio) en lightweight-charts. */

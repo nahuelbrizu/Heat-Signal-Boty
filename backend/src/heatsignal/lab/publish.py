@@ -11,6 +11,10 @@ nunca los datos de mercado:
                                 costo -> Sharpe, break-even, descomposicion del PnL, baselines, checks del
                                 veredicto y curvas de capital diarias OOS (estrategia, canasta, buy & hold).
 Los resultados viejos (antes de `oos.equity_daily`) se publican igual, con `equity_daily: null` y una nota.
+
+Diagnosticos (`lab.diagnostics`, results/<id>/diagnostics_<ts>.json): el resumen y el detalle llevan un bloque
+`diagnostics` con el ultimo PBO (CSCV) y la ultima robustez por vecinos (meseta, caida maxima, Sharpe del desarrollo
+con costos x3). Son diagnostico: no entran al conteo K del programa (`program` solo lee `lab_trials`).
 """
 
 from __future__ import annotations
@@ -48,11 +52,60 @@ def _nan_to_null(obj: Any) -> Any:
     return obj
 
 
+DIAG_PREFIX = "diagnostics_"  # = lab.diagnostics.DIAG_PREFIX (no se importa: arrastra pandas)
+
+
 def _latest_runs(results_dir: Path) -> Iterable[tuple[Path, list[Path]]]:
     for folder in sorted(p for p in results_dir.glob("*") if p.is_dir() and not p.name.startswith("_")):
-        runs = sorted(folder.glob("*.json"))
+        runs = sorted(p for p in folder.glob("*.json") if not p.name.startswith(DIAG_PREFIX))
         if runs:
             yield folder, runs
+
+
+def _latest_diagnostics(folder: Path) -> dict[str, tuple[dict[str, Any], dict[str, Any]]]:
+    """Ultimo diagnostico de cada tipo: {"pbo": (reporte, bloque), "robustez": (reporte, bloque)}."""
+    out: dict[str, tuple[dict[str, Any], dict[str, Any]]] = {}
+    for f in sorted(folder.glob(DIAG_PREFIX + "*.json"), reverse=True):
+        try:
+            rep = json.loads(f.read_text())
+        except (OSError, ValueError):
+            continue
+        for kind in ("pbo", "robustez"):
+            if kind not in out and isinstance(rep.get(kind), dict):
+                out[kind] = (rep, rep[kind])
+        if len(out) == 2:
+            break
+    return out
+
+
+def diagnostics_block(folder: Path, current_run: str | None, full: bool = False) -> dict[str, Any] | None:
+    """Bloque `diagnostics` del resumen (full=False) o del detalle (full=True). None si nunca se corrio.
+    `stale`: algun diagnostico se hizo sobre un resultado anterior al publicado."""
+    found = _latest_diagnostics(folder)
+    if not found:
+        return None
+    pb = found.get("pbo", ({}, {}))
+    rb = found.get("robustez", ({}, {}))
+    pr, p = pb
+    rr, r = rb
+    runs = {x.get("run") for x in (pr, rr) if x}
+    out: dict[str, Any] = {
+        "pbo": p.get("pbo"), "pbo_skipped": p.get("skipped"), "pbo_partitions": p.get("n_partitions"),
+        "pbo_combinations": p.get("n_combinations"), "pbo_slope": (p.get("degradation") or {}).get("slope"),
+        "prob_oos_loss": p.get("prob_oos_loss"), "pbo_generated_at": pr.get("generated_at"), "pbo_run": pr.get("run"),
+        "meseta": r.get("meseta"), "meseta_x3": r.get("meseta_x3"), "max_drop": r.get("max_drop"),
+        "max_drop_rel": r.get("max_drop_rel"), "n_neighbors": r.get("n_neighbors"),
+        "sharpe_dev": (r.get("base") or {}).get("sharpe"), "sharpe_dev_x3": (r.get("base") or {}).get("sharpe_x3"),
+        "cost_mult": r.get("cost_mult"), "robustez_generated_at": rr.get("generated_at"), "robustez_run": rr.get("run"),
+        "stale": bool(current_run) and any(x and x != current_run for x in runs),
+        "adds_trials": False,
+    }
+    if full:
+        out["pbo_detail"] = p or None
+        out["robustez_detail"] = r or None
+        out["development"] = (rr or pr).get("development")
+        out["holdout"] = (rr or pr).get("holdout")
+    return out
 
 
 def _spec_info(strategy_id: str | None) -> dict[str, Any]:
@@ -88,6 +141,7 @@ def summarize(results_dir: Path) -> dict[str, Any]:
             "holdout": ("ABIERTO" if hold else r.get("data", {}).get("holdout")),
             "holdout_result": None if not hold else {"sharpe": hold.get("sharpe"), "total_return": hold.get("total_return"), "trades": hold.get("trades"), "confirma": (hold.get("verdict") or {}).get("confirma"), "checks": (hold.get("verdict") or {}).get("checks")}, "holdout_start": r.get("data", {}).get("holdout_start"),
             "has_detail": bool(r.get("strategy_id")) and SAFE_ID.match(str(r.get("strategy_id"))) is not None,
+            "diagnostics": diagnostics_block(runs[-1].parent, runs[-1].stem),
         })
     out["benchmark_ta"] = benchmark_ta(results_dir / "_benchmark_ta")
     out["program"] = program(results_dir.parent / "trials.sqlite", out)
@@ -117,7 +171,10 @@ def benchmark_ta(folder: Path) -> dict[str, Any] | None:
 def program(trials_db: Path, summary: dict[str, Any]) -> dict[str, Any] | None:
     """Liston del programa entero: K = combinaciones registradas en trials + estrategias del benchmark; SR0 =
     E[max] de K Sharpe ruido con la varianza de los Sharpe OOS observados (lab + benchmark). Agrega a cada
-    estrategia `dsr_program`: su DSR contra ese liston (el DSR de la tabla solo corrige por sus propias combinaciones)."""
+    estrategia `dsr_program`: su DSR contra ese liston (el DSR de la tabla solo corrige por sus propias combinaciones).
+
+    K se cuenta SOLO de `lab_trials`. Los diagnosticos (PBO y vecinos de robustez, `lab.diagnostics`) viven en la
+    tabla aparte `lab_diagnostics` y NO son intentos: no suman a K ni sus Sharpe entran a la varianza."""
     import math
     import sqlite3
 
@@ -196,6 +253,7 @@ def detail(run: dict[str, Any], run_files: list[Path]) -> dict[str, Any]:
         "breakdown": o.get("breakdown"),
         "baselines": {k: b.get(k) for k in ("buy_and_hold_sharpe", "basket_sharpe", "random_entries")},
         "verdict": run.get("verdict"),
+        "diagnostics": diagnostics_block(run_files[-1].parent, run_files[-1].stem, full=True),
         "equity_daily": None if o.get("equity_daily") is None else {
             "strategy": o.get("equity_daily"),
             "basket": beq.get("basket"),
