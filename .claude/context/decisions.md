@@ -329,6 +329,16 @@
   de ver el resultado, con los criterios fijos de `run.HOLDOUT_CRITERIA` (los mismos que Donchian). Una sola vez:
   el resultado no se usa para cambiar nada; un cambio es una -v2 que necesita datos nuevos.
 
+- **Holdout de `max-ruptura-10d-v1` y `cartera-tendencia-v1` (2026-07-17 → 10-17): ninguno confirma.**
+  max-ruptura: Sharpe 2,21, +13,2 %, DD 2,7 %, 51 trades; le gana a la canasta (1,95) pero NO al azar (p 0,18 >
+  0,10): en un trimestre muy alcista, entrar long al azar con las mismas duraciones rinde parecido.
+  cartera-tendencia: Sharpe 0,01, +0,0 %, 204 trades; no le gana a la canasta (1,95) ni al azar (p 0,58).
+  Según la regla fijada: no pasan a plata real. max-ruptura puede ir a paper para juntar evidencia en otro
+  régimen (el holdout fue un trimestre alcista, poco informativo para una estrategia solo long).
+- **Curvas de capital del lote 1 (2026-10-19).** Los 7 resultados previos a `oos.equity_daily` se reprodujeron
+  (mismos datos hasta 2026-10-16, mismos parámetros, registro de intentos aparte: no suma K). Los 7 dieron
+  idénticos (Sharpe y trades); se agregó solo la curva en `<run>_curvas.json` con el veredicto original.
+
 ## Abiertas
 - ~~Plan de CoinGlass a contratar.~~ **Ya no aplica al core** — la fuente primaria pasó a WS nativos.
   Solo se retomaría si se implementa la fuente BYOK opcional (y ahí el plan lo elige el usuario).
