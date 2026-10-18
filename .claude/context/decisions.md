@@ -220,6 +220,11 @@
   `no_strategies` (no gasta LLM) hasta registrar las nuevas de 1h / sesiones. La tenencia se ve en el panel
   (Resumen → "Mi wallet", `GET /api/wallet`, archivo `data/wallet.json` en la VM, fuera de git; `qty` opcional).
 
+- **Lote 4 aprobado por el usuario (2026-10-18), ANTES de ver resultados** ("dale, aprobadas, corré el lote 4").
+  Specs en `estrategias-lote4.md`, congeladas: `ema-cruce-v1` a950979de8e216af; `ema-cruce-filtrado-v1`
+  04d0e50a506fde17. Grilla timeframe 1h/4h en las dos: K del programa = 48. Cruce en la vela (no estado), tope de
+  tamaño 1×, sin salida por señal contraria. Umbrales fijos: cualquier ajuste es una -v2.
+
 ## Abiertas
 - ~~Plan de CoinGlass a contratar.~~ **Ya no aplica al core** — la fuente primaria pasó a WS nativos.
   Solo se retomaría si se implementa la fuente BYOK opcional (y ahí el plan lo elige el usuario).

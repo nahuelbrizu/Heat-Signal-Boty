@@ -1,6 +1,6 @@
 # Lote 4 — cruce de EMAs (propuesta del usuario, 2026-10-18)
 
-**Estado: PROPUESTA, sin aprobar.** Código en `lab/strategies.py` (`ema_cruce`, `LOTE4`), indicadores nuevos en
+**Estado: APROBADO por el usuario el 2026-10-18 (antes de ver resultados).** Código en `lab/strategies.py` (`ema_cruce`, `LOTE4`), indicadores nuevos en
 `lab/features.py` (`dmi`, `rsi`, `bb_width`), tests sintéticos en `tests/test_lab_strategies_lote4.py`.
 Nada corrido con datos reales.
 
