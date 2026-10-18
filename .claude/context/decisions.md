@@ -249,6 +249,18 @@
   Vertex; `llm_factory.gemini_uses_vertex` lo detecta. Sin el tope gratis de 20 pedidos/día/modelo; se factura por
   uso (`ON_DEMAND`) en el proyecto de Google Cloud de la key.
 
+- **Resultados del lote 4 (2026-10-18): ninguna pasa; `ema-cruce-v1` falla solo por DSR.** OOS 2021-03-13 →
+  2026-07-15, 7 bps por lado:
+  | estrategia | Sharpe (IC 95%) | retorno | DD | trades | acierto | DSR propio | break-even | p azar |
+  |---|---|---|---|---|---|---|---|---|
+  | ema-cruce-v1 | 0,77 (−0,09 a 1,61) | +18,5% | 7% | 1.564 | 39% | 0,76 | 14,4 bps | 0,01 |
+  | ema-cruce-filtrado-v1 | 0,64 (−0,16 a 1,50) | +4,1% | 2% | 156 | 43% | 0,77 | 21,7 bps | 0,02 |
+  Canasta 0,63. El walk-forward eligió 4h en 52 de 65 ventanas (cruce) y 36 de 65 (filtrado). Retorno bajo por el
+  tamaño por riesgo (1% hasta el stop: exposición chica), por eso el DD también es chico. Los filtros sacan el 90%
+  de las operaciones y no mejoran el Sharpe. **Listón del programa:** K = 48, SR0 ≈ 3,9 → DSR del programa ≈ 0.
+  Nota de método (abierta): la varianza de los Sharpe entre intentos está inflada por estrategias rotas (Sharpe
+  −3 a −5), lo que sube SR0 hasta un nivel que ninguna estrategia real alcanza; ver "Abiertas".
+
 ## Abiertas
 - ~~Plan de CoinGlass a contratar.~~ **Ya no aplica al core** — la fuente primaria pasó a WS nativos.
   Solo se retomaría si se implementa la fuente BYOK opcional (y ahí el plan lo elige el usuario).
@@ -271,6 +283,12 @@
   si se publica así o se modela slippage/funding antes de mostrar números.
 - **Umbral de régimen (`regime-v1`).** 2 ATR de desplazamiento en 20 barras de 60 s; calibrar con datos
   del shadow (cambiarlo = nuevo id de versión).
+
+- **Cómo estimar el listón del programa (SR0) (abierta, 2026-10-18).** Hoy SR0 usa la varianza de los Sharpe OOS
+  de TODOS los intentos (lab + benchmark): con estrategias rotas (Sharpe −3 a −5) la varianza explota y SR0 ≈ 3,9,
+  imposible de alcanzar. Opciones: (a) dejarlo así (muy conservador); (b) K efectivo por correlación de retornos
+  (`stats.effective_n_trials`) y varianza solo de las familias comparables; (c) listón por familia. Decidir ANTES
+  de mirar qué opción hace pasar a alguna estrategia.
 
 ## Plantilla para nuevas decisiones
 ```
