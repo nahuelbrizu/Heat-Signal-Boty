@@ -197,6 +197,29 @@
   sin plata) antes de tener el veredicto del laboratorio. Es evidencia hacia adelante, limpia; no cambia la regla:
   nada pasa a plata real sin pasar el laboratorio, el holdout y la comparación paper vs backtest.
 
+- **Resultados del lote 3 (2026-10-18): ninguna pasa; `tsmom-diario-v1` es la más cercana de todo el programa.**
+  OOS 2021-03-13 → 2026-07-15, 7 bps por lado:
+  | estrategia | Sharpe (IC 95%) | retorno | DD | DSR propio | break-even | p azar | falla en |
+  |---|---|---|---|---|---|---|---|
+  | tsmom-diario-v1 | 0,67 (−0,18 a 1,51) | +48,5% | 12% | 0,94 | 30,7 bps | 0,02 | solo DSR (0,94 < 0,95) |
+  | low-vol-xs-v1 | −0,74 | −152% | 170% | 0,04 | <0 | 0,63 (conjunto) | todo |
+  | pares-eth-btc-v1 | −1,38 | −86% | 92% | 0,00 | <0 | 0,98 (conjunto) | todo |
+  | rango-reversion-v1 | −3,15 | −276% | 274% | 0,00 | <0 | 1,00 | todo |
+  | reversion-xs-1h-v1 | −4,01 | −280% | 272% | 0,00 | 0,6 bps | 0,01 (conjunto) | DSR, costos, canasta, B&H |
+  | funding-prepago-v1 | −3,52 | −237% | 227% | 0,00 | 1,2 bps | 0,01 | DSR, costos, canasta, B&H |
+  (retornos como suma simple sin reinversión: por eso pueden pasar de −100%). Lectura: las de alta rotación
+  (reversion-xs 13.757 trades, prepago 14.231, rango 3.379) tienen timing mejor que el azar (p 0,01) pero el
+  costo las destruye; las de reversión de pares / baja volatilidad no tienen señal. `tsmom-diario` (target_vol
+  0,15 elegido por el walk-forward) le gana a la canasta (0,67 vs 0,63), aguanta 4× el costo y le gana al azar.
+  **Listón del programa:** K = 44 (37 del lab + 7 del benchmark), SR0 ≈ 3,85 → DSR del programa ≈ 0 para todas.
+  Ninguna pasa a plata real. Holdout de tsmom sigue SELLADO (se abre una sola vez, cuando se decida).
+- **XRP deja de ser estrategia (2026-10-18, pedido del usuario).** `xrp-acumulacion-v1/v2` "solo eran un
+  comentario": la posición de XRP (comprada a 2,5 USD) es una tenencia personal de largo plazo. Se retiraron del
+  grafo con un evento de estado `evaluated` (el registro es de solo agregar: no se borran filas; quedan como
+  historia) y los JSON se movieron a `strategies/retiradas/`. Sin estrategias activas el grafo queda en
+  `no_strategies` (no gasta LLM) hasta registrar las nuevas de 1h / sesiones. La tenencia se ve en el panel
+  (Resumen → "Mi wallet", `GET /api/wallet`, archivo `data/wallet.json` en la VM, fuera de git; `qty` opcional).
+
 ## Abiertas
 - ~~Plan de CoinGlass a contratar.~~ **Ya no aplica al core** — la fuente primaria pasó a WS nativos.
   Solo se retomaría si se implementa la fuente BYOK opcional (y ahí el plan lo elige el usuario).
