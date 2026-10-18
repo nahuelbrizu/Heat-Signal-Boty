@@ -325,6 +325,10 @@
   ya evaluadas (comparte muestra con ellas). max-ruptura es solo long: en un período alcista parte del resultado es
   beta; le gana al B&H medio igual. vwap confirma que alta rotación en 15m muere por costos.
 
+- **Apertura del holdout de `max-ruptura-10d-v1` y `cartera-tendencia-v1` (2026-10-19, pedido del usuario)**, ANTES
+  de ver el resultado, con los criterios fijos de `run.HOLDOUT_CRITERIA` (los mismos que Donchian). Una sola vez:
+  el resultado no se usa para cambiar nada; un cambio es una -v2 que necesita datos nuevos.
+
 ## Abiertas
 - ~~Plan de CoinGlass a contratar.~~ **Ya no aplica al core** — la fuente primaria pasó a WS nativos.
   Solo se retomaría si se implementa la fuente BYOK opcional (y ahí el plan lo elige el usuario).
