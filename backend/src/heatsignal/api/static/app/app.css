@@ -260,3 +260,8 @@ textarea { font: inherit; color: var(--ink); background: var(--surface); border:
 .timeline { list-style: none; margin: 8px 0 0; padding: 0 0 0 14px; border-left: 2px solid var(--line); }
 .timeline > li { position: relative; padding: 6px 0 10px 8px; }
 .timeline > li::before { content: ""; position: absolute; left: -21px; top: 12px; width: 10px; height: 10px; border-radius: 50%; background: var(--s4); }
+
+/* Macro (#/macro): mini grafico de probabilidad de Polymarket, hereda el color de la serie y el tema */
+svg.spark { display: block; color: var(--s1); max-width: 100%; }
+svg.spark .grid-l { stroke: var(--line); stroke-dasharray: 2 3; }
+.spark-wrap { display: inline-block; min-width: 100px; }

@@ -1,0 +1,22 @@
+# Contexto macro (macro/job.py): Polymarket cada hora, FRED una vez por dia (FRED_API_KEY en .env; sin key queda
+# 'off' y el panel lo dice), y export de los dias cerrados a data/export/macro/ (los sube heatsignal-history).
+[Unit]
+Description=HeatSignal macro: FRED point-in-time, calendario y Polymarket
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=nahue
+WorkingDirectory=/home/nahue/heatsignal/backend
+EnvironmentFile=-/home/nahue/heatsignal/.env
+Environment=PYTHONPATH=/home/nahue/heatsignal/backend/src
+Environment=HEATSIGNAL_MACRO_DB=/home/nahue/heatsignal/data/heatsignal_macro.sqlite
+Environment=HEATSIGNAL_EXPORT_DIR=/home/nahue/heatsignal/data/export
+ExecStart=/home/nahue/heatsignal/backend/.venv/bin/python -m heatsignal.macro run
+MemoryMax=150M
+Nice=10
+ProtectSystem=strict
+ReadWritePaths=/home/nahue/heatsignal/data
+PrivateTmp=true
+NoNewPrivileges=true

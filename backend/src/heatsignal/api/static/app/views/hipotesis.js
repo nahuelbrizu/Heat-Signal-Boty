@@ -7,6 +7,7 @@ import {
 import { hypTable } from "../hyp-ui.js";
 import { symbolAnalysis } from "../analysis-ui.js";
 import { trendChip, alignChip, tfText, trendCuts, sessionText } from "../htf-ui.js";
+import { lessonBox, RULE_TEXT } from "./lecciones.js";
 
 export async function mount(root, ctx) {
   if (ctx.route.parts[0]) return detail(root, ctx, ctx.route.parts[0]);
@@ -120,6 +121,12 @@ async function detail(root, ctx, id) {
 
   const cyc = h.cycle;
   const st = h.strategy;
+  const lessonSlot = el("div", {}, loading("Buscando la lección…"));
+  if (h.status === "resolved") {
+    api("/api/lessons/" + encodeURIComponent(h.hypothesis_id), null, ctx.signal)
+      .then((l) => clear(lessonSlot, lessonBox(l, null)))
+      .catch((e) => { if (e && e.status === 404) clear(lessonSlot, lessonBox(null)); else { const b = errorBox(e, "la lección"); if (b) clear(lessonSlot, b); } });
+  }
   clear(root,
     pageHead(el("span", {}, dirSpan(h.direction), " ", h.symbol), el("span", { class: "mono small" }, h.hypothesis_id),
       el("span", { class: "row" }, statusChip(HYP_STATUS, h.status), verdictChip(h)), el("a", { href: "#/hipotesis" }, "← Hipótesis")),
@@ -155,6 +162,8 @@ async function detail(root, ctx, id) {
           ["Ciclo que la generó", h.run_id ? el("a", { href: ctx.href("ciclos", [h.run_id]) }, h.run_id) : "—"],
         ]),
         el("h3", { style: { marginTop: "12px" } }, "Justificación"), prose(h.rationale || "—"))),
+    h.status === "resolved" ? card("Lección", el("a", { href: ctx.href("lecciones", [], { strategy_id: h.strategy_id }) }, "diario de lecciones →"),
+      el("p", { class: "small muted" }, RULE_TEXT), lessonSlot) : null,
     st ? card("Estrategia", el("a", { href: ctx.href("estrategias", [st.strategy_id]) }, "ver track record →"),
       el("p", {}, el("b", {}, st.description), " ", statusChip(STRATEGY_STATUS, st.status)),
       el("pre", { class: "mono small", style: { whiteSpace: "pre-wrap", overflowWrap: "anywhere", margin: 0 } },

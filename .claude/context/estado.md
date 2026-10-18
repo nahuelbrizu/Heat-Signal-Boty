@@ -59,6 +59,16 @@
   registran: falta). Panel `#/semanal`, `GET /api/weekly` y `/api/weekly/{week}`. Corrida en seco en la VM: 28 MB, 6–10 s.
   Falta: deploy del código, reiniciar la ingesta (endpoint nuevo) e instalar el timer.
 
+- **Macro y eventos + diario de lecciones (2026-10-19, sin desplegar):** módulo `heatsignal/macro/` (FRED
+  point-in-time por fecha de publicación, calendario FOMC/CPI/NFP versionado en `macro/config/calendar.json`,
+  Polymarket configurable en `macro/config/polymarket_markets.json`), base append-only `data/heatsignal_macro.sqlite`,
+  timer `heatsignal-macro.timer` (cada hora; FRED 1 vez/día), export a `data/export/macro/` (lo sube el timer de
+  historia). El Analista de Contexto recibe el bloque "Macro y eventos" (~320 tokens, sin llamadas extra). Diario de
+  lecciones (`hypothesis_lessons` en la base de evaluación, lo escribe el job de evaluación con el LLM barato; NO vuelve
+  a ningún prompt). Panel: `#/macro`, `#/lecciones` y la lección en el detalle de cada hipótesis. Carga para el
+  laboratorio: `lab/macro_features.py`. Falta: deploy, instalar el timer macro, recargar el eval.service (MemoryMax 400M)
+  y reiniciar la ingesta. `calendar.json` hay que actualizarlo cuando el BLS/Fed publiquen fechas nuevas (el panel avisa).
+
 ## Estado por fase
 
 | Fase | Estado | Dónde |

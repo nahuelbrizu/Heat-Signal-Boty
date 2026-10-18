@@ -217,6 +217,7 @@ class AnalysisLoop:
         sessions: Sequence[SessionDef] | None = None,
         session_source: Any = None,  # history.session_source.SessionDataSource
         journal: Any = None,  # pipeline.session_journal.SessionJournal
+        macro: Any = None,  # macro.context.MacroContextProvider: bloque "Macro y eventos" (None = apagado)
     ) -> None:
         if mode not in ("interval", "sessions"):
             raise ValueError(f"mode debe ser 'interval' o 'sessions', no {mode!r}")
@@ -238,6 +239,7 @@ class AnalysisLoop:
         self.sessions: list[SessionDef] = list(sessions or [])
         self._session_source = session_source
         self.journal = journal
+        self.macro = macro
         self._sessions_done: set[tuple[str, str]] = set()  # sin diario: no repetir en este proceso
         self.last_result: CycleResult | None = None
         self.llm_providers: list[str] = []  # orden de proveedores (primario -> fallback), para el panel
@@ -406,6 +408,14 @@ class AnalysisLoop:
             state["session"] = sess
         if journal_text:
             state["day_journal"] = journal_text
+        if self.macro is not None:
+            try:
+                macro_text = await asyncio.to_thread(self.macro.context_block, now_ms)
+            except Exception:  # noqa: BLE001 - el contexto macro nunca frena el ciclo (queda en el log)
+                log.exception("%s: no se pudo armar el bloque macro", run_id)
+                macro_text = "Macro y eventos: no disponible en este ciclo (error al leer la base macro)."
+            if macro_text:
+                state["macro_context"] = macro_text
         try:
             async with self._graph_lock:  # un ciclo manual y uno agendado no corren el grafo a la vez
                 final = await self._runner(state, run_id)

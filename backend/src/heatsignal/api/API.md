@@ -912,6 +912,37 @@ Snapshot de mercado desde la ventana en memoria (solo símbolos configurados; 40
   archivo `.py` más nuevo (`git archive` conserva la fecha del commit).
 - `size_bytes` incluye los `-wal`/`-shm` de SQLite.
 
+## `GET /api/macro` — Macro y eventos (2026-10-19, `api/panel_macro.py`)
+
+Point-in-time a ahora. Lee `data/heatsignal_macro.sqlite` (lo escribe `heatsignal-macro.timer`) en solo lectura.
+
+```json
+{"now_ms": 1792400000000, "context_id": "macro-context-v1", "db_note": null,
+ "sources": {"fred": {"state": "ok|apagado|sin_datos|atrasado|error", "key_loaded": true, "last_ok": {...},
+                      "last_error": null, "detail": null},
+             "polymarket": {"state": "ok", "last_ok": {...}, "last_error": null},
+             "calendar": {"state": "ok|aviso|error", "calendar_id": "macro-calendar-2026-10-19", "detail": null}},
+ "fred": [{"series_id": "DFF", "value": 3.88, "obs_date": "2026-10-15", "realtime_start": "2026-10-16",
+           "realtime_clipped": false, "available_ms": 1792...,"change_5": 0.0, "points": [["2026-10-15", 3.88, "2026-10-16"]]}],
+ "calendar": {"upcoming": [...48 h...], "next": [{"kind": "FOMC", "label": "...", "ts_ms": ..., "tentative": false}],
+              "next_by_kind": {"FOMC": {...}, "CPI": {...}, "NFP": {...}}, "sources": {"FOMC": "https://www.federalreserve.gov/..."},
+              "warning": null},
+ "polymarket": [{"market_id": "...", "config_key": "fed", "label": "Decisión de la Fed", "question": "...", "prob": 0.86,
+                 "change_24h": -0.01, "change_24h_source": "propia|api|null", "volume": 1.3e7, "liquidity": 8.9e5,
+                 "fetched_ms": ..., "series": [[ms, prob], ...7 días...]}],
+ "block": "Macro y eventos (...)", "block_chars": 1013, "block_tokens_est": 317}
+```
+
+FRED sin `FRED_API_KEY` → `sources.fred.state = "apagado"` (nunca un éxito vacío). Base inexistente → `db_note`.
+
+## `GET /api/lessons` y `GET /api/lessons/{hypothesis_id}` — diario de lecciones
+
+Una lección por hipótesis resuelta (`evaluation/lessons.py`, tabla `hypothesis_lessons` de la base de evaluación).
+**Solo para el usuario: no entra a ningún prompt ni decisión.** Filtros: `strategy_id`, `symbol`, `daily_trend`
+(`alcista|bajista|lateral|sin_datos|none`), `outcome` (`acierto|fallo`), `source` (`llm|codigo`), `window_verdict`
+(`alcanza|dudoso|no_alcanza|sin_dato`), `limit` (≤ 200), `offset`. Respuesta paginada + `facets` (valores y n para los
+filtros) + `available` (false si la tabla todavía no existe). El detalle devuelve 404 si la hipótesis no tiene lección.
+
 ## Endpoints previos (sin cambios)
 
 - `GET /api/status`: todo junto, como lo usa `panel.html`. Mismo contenido de siempre (el resumen de la

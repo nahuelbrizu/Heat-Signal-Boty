@@ -351,6 +351,20 @@
   (`cycle_log` no las registra; va con las métricas del grafo). Una semana no prueba nada: sirve para operar.
   Vista `#/semanal`.
 
+- **Contexto macro point-in-time (2026-10-19).** FRED/ALFRED (DFF, CPIAUCSL, DGS10, DTWEXBGS, VIXCLS) por vintage:
+  un valor existe desde las 00:00 de Chicago del día siguiente a su publicación (`FRED_API_KEY` en el `.env` de la
+  VM; sin key, apagado y declarado). Calendario FOMC/CPI/NFP en `macro/config/calendar.json` (fuentes oficiales,
+  copiado a mano; el panel avisa si quedan < 45 días de fechas). Polymarket (Gamma, pública) con lista versionada
+  en `macro/config/polymarket_markets.json`. Base append-only `heatsignal_macro.sqlite`, timer horario
+  (`heatsignal-macro.timer`, :07), export a Drive. Bloque `macro-context-v1` (≤ 1150 caracteres, ~320 tokens) solo
+  en el Analista de Contexto, sin llamadas extra. `lab/macro_features.py` para el meta-modelo. Adaptado de
+  TradingAgents (Apache-2.0). Cambiar series, lista o formato es versión nueva. Polymarket no resuelve por DNS
+  desde la red de la PC (proveedor de internet); desde la VM sí.
+- **Diario de lecciones: solo lectura humana, NO se reinyecta (2026-10-19).** Una lección por hipótesis resuelta
+  (LLM barato o por código, marcada), append-only en `hypothesis_lessons`. No entra a ningún prompt ni decisión
+  (test estático y dinámico): reinyectarla cambiaría el sistema sin pre-registro. Usarlas sería una decisión aparte,
+  pre-registrada y contada. Vistas `#/macro` y `#/lecciones`.
+
 ## Abiertas
 - ~~Plan de CoinGlass a contratar.~~ **Ya no aplica al core** — la fuente primaria pasó a WS nativos.
   Solo se retomaría si se implementa la fuente BYOK opcional (y ahí el plan lo elige el usuario).

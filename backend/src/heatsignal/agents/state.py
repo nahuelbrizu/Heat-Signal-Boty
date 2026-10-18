@@ -38,6 +38,7 @@ class GraphState(TypedDict, total=False):
     allowed_strategies: list[StrategyHypothesis]
     session: dict          # {"name", "label", "day", "trigger_ms"}: sesion de la corrida o ultima disparada
     day_journal: str       # diario del dia (sesiones previas, codigo + LLM), ver pipeline/session_journal.py
+    macro_context: str     # bloque "Macro y eventos" point-in-time (macro/context.py); solo el Analista de Contexto
     # --- analistas (paralelo; cada uno escribe su clave, sin conflicto de fan-in) ---
     liquidation_analyses: list[LiquidationAnalysis]
     order_flow_analyses: list[OrderFlowAnalysis]

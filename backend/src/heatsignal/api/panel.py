@@ -52,6 +52,12 @@ API de solo lectura para la single page (`api/panel_api.py`; contrato y ejemplos
     GET /api/weekly                      revisiones semanales cerradas (weekly_reviews) + la ultima con flechas
                                          semana contra semana
     GET /api/weekly/{week}               una semana (2026-W42): las 5 fuentes, texto por codigo y comparacion
+    GET /api/macro                       contexto macro point-in-time: FRED con fecha de publicacion, calendario
+                                         (48 h), Polymarket con variacion 24 h y serie de 7 d, estado de fuentes y
+                                         el bloque que recibe el grafo (api/panel_macro.py)
+    GET /api/lessons                     diario de lecciones (solo para el usuario; filtros strategy_id, symbol,
+                                         daily_trend, outcome, source, window_verdict)
+    GET /api/lessons/{hypothesis_id}     la leccion de una hipotesis (404 si no tiene)
     GET /api/system                      operacion: uptime, version, tamanos de bases, export/backup, config,
                                          errores recientes
 
@@ -457,6 +463,9 @@ def create_panel_app(ctx: PanelContext) -> FastAPI:
     from .panel_api import register_api
 
     register_api(app, ctx, build_id)
+    from .panel_macro import register_macro_api
+
+    register_macro_api(app, ctx)  # /api/macro y /api/lessons (solo lectura)
     return app
 
 

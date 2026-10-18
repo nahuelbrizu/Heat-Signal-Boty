@@ -1,0 +1,321 @@
+{
+ "calendar_id": "macro-calendar-2026-10-19",
+ "timezone": "America/New_York",
+ "verified_at": "2026-10-19",
+ "note": "Horas en hora de Nueva York (con DST). FOMC: el comunicado sale a las 14:00 ET del segundo dia. CPI y empleo: 08:30 ET. Las fechas de 2027 del FOMC son tentativas hasta que se confirman en la reunion anterior. Actualizar cuando el BLS publique el calendario siguiente.",
+ "sources": {
+  "FOMC": "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm",
+  "CPI": "https://www.bls.gov/schedule/news_release/cpi.htm",
+  "NFP": "https://www.bls.gov/schedule/news_release/empsit.htm"
+ },
+ "events": [
+  {
+   "kind": "FOMC",
+   "date": "2026-01-28",
+   "time": "14:00",
+   "label": "Decisión FOMC (reunión 01-27 a 01-28)",
+   "tentative": false
+  },
+  {
+   "kind": "FOMC",
+   "date": "2026-03-18",
+   "time": "14:00",
+   "label": "Decisión FOMC (reunión 03-17 a 03-18) + proyecciones (SEP)",
+   "tentative": false
+  },
+  {
+   "kind": "FOMC",
+   "date": "2026-04-29",
+   "time": "14:00",
+   "label": "Decisión FOMC (reunión 04-28 a 04-29)",
+   "tentative": false
+  },
+  {
+   "kind": "FOMC",
+   "date": "2026-06-17",
+   "time": "14:00",
+   "label": "Decisión FOMC (reunión 06-16 a 06-17) + proyecciones (SEP)",
+   "tentative": false
+  },
+  {
+   "kind": "FOMC",
+   "date": "2026-07-29",
+   "time": "14:00",
+   "label": "Decisión FOMC (reunión 07-28 a 07-29)",
+   "tentative": false
+  },
+  {
+   "kind": "FOMC",
+   "date": "2026-09-16",
+   "time": "14:00",
+   "label": "Decisión FOMC (reunión 09-15 a 09-16) + proyecciones (SEP)",
+   "tentative": false
+  },
+  {
+   "kind": "FOMC",
+   "date": "2026-10-28",
+   "time": "14:00",
+   "label": "Decisión FOMC (reunión 10-27 a 10-28)",
+   "tentative": false
+  },
+  {
+   "kind": "NFP",
+   "date": "2026-11-06",
+   "time": "08:30",
+   "label": "Empleo (NFP) de 2026-10",
+   "tentative": false
+  },
+  {
+   "kind": "CPI",
+   "date": "2026-11-10",
+   "time": "08:30",
+   "label": "CPI de 2026-10",
+   "tentative": false
+  },
+  {
+   "kind": "NFP",
+   "date": "2026-12-04",
+   "time": "08:30",
+   "label": "Empleo (NFP) de 2026-11",
+   "tentative": false
+  },
+  {
+   "kind": "FOMC",
+   "date": "2026-12-09",
+   "time": "14:00",
+   "label": "Decisión FOMC (reunión 12-08 a 12-09) + proyecciones (SEP)",
+   "tentative": false
+  },
+  {
+   "kind": "CPI",
+   "date": "2026-12-10",
+   "time": "08:30",
+   "label": "CPI de 2026-11",
+   "tentative": false
+  },
+  {
+   "kind": "NFP",
+   "date": "2027-01-08",
+   "time": "08:30",
+   "label": "Empleo (NFP) de 2026-12",
+   "tentative": false
+  },
+  {
+   "kind": "CPI",
+   "date": "2027-01-13",
+   "time": "08:30",
+   "label": "CPI de 2026-12",
+   "tentative": false
+  },
+  {
+   "kind": "FOMC",
+   "date": "2027-01-27",
+   "time": "14:00",
+   "label": "Decisión FOMC (reunión 01-26 a 01-27)",
+   "tentative": true
+  },
+  {
+   "kind": "NFP",
+   "date": "2027-02-05",
+   "time": "08:30",
+   "label": "Empleo (NFP) de 2027-01",
+   "tentative": false
+  },
+  {
+   "kind": "CPI",
+   "date": "2027-02-11",
+   "time": "08:30",
+   "label": "CPI de 2027-01",
+   "tentative": false
+  },
+  {
+   "kind": "NFP",
+   "date": "2027-03-05",
+   "time": "08:30",
+   "label": "Empleo (NFP) de 2027-02",
+   "tentative": false
+  },
+  {
+   "kind": "CPI",
+   "date": "2027-03-10",
+   "time": "08:30",
+   "label": "CPI de 2027-02",
+   "tentative": false
+  },
+  {
+   "kind": "FOMC",
+   "date": "2027-03-17",
+   "time": "14:00",
+   "label": "Decisión FOMC (reunión 03-16 a 03-17) + proyecciones (SEP)",
+   "tentative": true
+  },
+  {
+   "kind": "NFP",
+   "date": "2027-04-02",
+   "time": "08:30",
+   "label": "Empleo (NFP) de 2027-03",
+   "tentative": false
+  },
+  {
+   "kind": "CPI",
+   "date": "2027-04-13",
+   "time": "08:30",
+   "label": "CPI de 2027-03",
+   "tentative": false
+  },
+  {
+   "kind": "FOMC",
+   "date": "2027-04-28",
+   "time": "14:00",
+   "label": "Decisión FOMC (reunión 04-27 a 04-28)",
+   "tentative": true
+  },
+  {
+   "kind": "NFP",
+   "date": "2027-05-07",
+   "time": "08:30",
+   "label": "Empleo (NFP) de 2027-04",
+   "tentative": false
+  },
+  {
+   "kind": "CPI",
+   "date": "2027-05-12",
+   "time": "08:30",
+   "label": "CPI de 2027-04",
+   "tentative": false
+  },
+  {
+   "kind": "NFP",
+   "date": "2027-06-04",
+   "time": "08:30",
+   "label": "Empleo (NFP) de 2027-05",
+   "tentative": false
+  },
+  {
+   "kind": "FOMC",
+   "date": "2027-06-09",
+   "time": "14:00",
+   "label": "Decisión FOMC (reunión 06-08 a 06-09) + proyecciones (SEP)",
+   "tentative": true
+  },
+  {
+   "kind": "CPI",
+   "date": "2027-06-10",
+   "time": "08:30",
+   "label": "CPI de 2027-05",
+   "tentative": false
+  },
+  {
+   "kind": "NFP",
+   "date": "2027-07-02",
+   "time": "08:30",
+   "label": "Empleo (NFP) de 2027-06",
+   "tentative": false
+  },
+  {
+   "kind": "CPI",
+   "date": "2027-07-14",
+   "time": "08:30",
+   "label": "CPI de 2027-06",
+   "tentative": false
+  },
+  {
+   "kind": "FOMC",
+   "date": "2027-07-28",
+   "time": "14:00",
+   "label": "Decisión FOMC (reunión 07-27 a 07-28)",
+   "tentative": true
+  },
+  {
+   "kind": "NFP",
+   "date": "2027-08-06",
+   "time": "08:30",
+   "label": "Empleo (NFP) de 2027-07",
+   "tentative": false
+  },
+  {
+   "kind": "CPI",
+   "date": "2027-08-11",
+   "time": "08:30",
+   "label": "CPI de 2027-07",
+   "tentative": false
+  },
+  {
+   "kind": "NFP",
+   "date": "2027-09-03",
+   "time": "08:30",
+   "label": "Empleo (NFP) de 2027-08",
+   "tentative": false
+  },
+  {
+   "kind": "CPI",
+   "date": "2027-09-14",
+   "time": "08:30",
+   "label": "CPI de 2027-08",
+   "tentative": false
+  },
+  {
+   "kind": "FOMC",
+   "date": "2027-09-15",
+   "time": "14:00",
+   "label": "Decisión FOMC (reunión 09-14 a 09-15) + proyecciones (SEP)",
+   "tentative": true
+  },
+  {
+   "kind": "NFP",
+   "date": "2027-10-08",
+   "time": "08:30",
+   "label": "Empleo (NFP) de 2027-09",
+   "tentative": false
+  },
+  {
+   "kind": "CPI",
+   "date": "2027-10-14",
+   "time": "08:30",
+   "label": "CPI de 2027-09",
+   "tentative": false
+  },
+  {
+   "kind": "FOMC",
+   "date": "2027-10-27",
+   "time": "14:00",
+   "label": "Decisión FOMC (reunión 10-26 a 10-27)",
+   "tentative": true
+  },
+  {
+   "kind": "NFP",
+   "date": "2027-11-05",
+   "time": "08:30",
+   "label": "Empleo (NFP) de 2027-10",
+   "tentative": false
+  },
+  {
+   "kind": "CPI",
+   "date": "2027-11-10",
+   "time": "08:30",
+   "label": "CPI de 2027-10",
+   "tentative": false
+  },
+  {
+   "kind": "NFP",
+   "date": "2027-12-03",
+   "time": "08:30",
+   "label": "Empleo (NFP) de 2027-11",
+   "tentative": false
+  },
+  {
+   "kind": "FOMC",
+   "date": "2027-12-08",
+   "time": "14:00",
+   "label": "Decisión FOMC (reunión 12-07 a 12-08) + proyecciones (SEP)",
+   "tentative": true
+  },
+  {
+   "kind": "CPI",
+   "date": "2027-12-10",
+   "time": "08:30",
+   "label": "CPI de 2027-11",
+   "tentative": false
+  }
+ ]
+}

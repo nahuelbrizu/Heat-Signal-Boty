@@ -1,0 +1,10 @@
+[Unit]
+Description=HeatSignal macro cada hora (:07 UTC)
+
+[Timer]
+OnCalendar=*-*-* *:07:00 UTC
+Persistent=true
+RandomizedDelaySec=60
+
+[Install]
+WantedBy=timers.target

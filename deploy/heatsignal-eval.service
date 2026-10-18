@@ -1,5 +1,6 @@
 # Resuelve hipotesis vencidas y evalua estrategias (Fase 3). Lo dispara heatsignal-eval.timer.
 # Solo usa la base de hipotesis y klines REST de Binance: no toca datos de mercado guardados.
+# Tambien escribe el diario de lecciones (evaluation/lessons.py, LLM barato; --no-lesson-llm = solo codigo).
 [Unit]
 Description=HeatSignal evaluation job
 After=network-online.target
@@ -13,7 +14,8 @@ EnvironmentFile=-/home/nahue/heatsignal/.env
 Environment=PYTHONPATH=/home/nahue/heatsignal/backend/src
 Environment=HEATSIGNAL_EVAL_DB=/home/nahue/heatsignal/data/heatsignal_eval.sqlite
 ExecStart=/home/nahue/heatsignal/backend/.venv/bin/python -m heatsignal.evaluation.job --public-only
-MemoryMax=300M
+# 400M: el diario de lecciones importa el cliente del LLM barato (pico medido ~180 MB solo en imports)
+MemoryMax=400M
 ProtectSystem=strict
 ReadWritePaths=/home/nahue/heatsignal
 PrivateTmp=true

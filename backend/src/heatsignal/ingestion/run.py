@@ -399,7 +399,7 @@ async def start_analysis(
     loop = AnalysisLoop(
         memory, symbols, registry, graph_runner=runner,
         interval_s=cfg.analysis_interval_s, window_s=cfg.analysis_window_s, news=news, cycle_log=cycle_log,
-        rotation_per_cycle=cfg.graph_rotation, **_session_setup(cfg, stack),
+        rotation_per_cycle=cfg.graph_rotation, macro=_macro_provider(cfg), **_session_setup(cfg, stack),
     )
     loop.llm_providers = list(llms.providers) if runner is not None else []
     task = asyncio.create_task(loop.run_forever(stop), name="analysis")
@@ -415,6 +415,20 @@ def _htf_provider(cfg: RunConfig) -> Any:
     from ..history.hourly import HourlyCandleProvider
 
     return HourlyCandleProvider(cfg.history_db, rest=os.environ.get("HEATSIGNAL_HTF_REST", "1").strip() != "0")
+
+
+def _macro_db(cfg: RunConfig) -> Path:
+    return Path(os.environ.get("HEATSIGNAL_MACRO_DB") or Path(cfg.eval_db).parent / "heatsignal_macro.sqlite")
+
+
+def _macro_provider(cfg: RunConfig) -> Any:
+    """Bloque "Macro y eventos" para el Analista de Contexto (macro/context.py). Apagable con HEATSIGNAL_MACRO=0."""
+    if os.environ.get("HEATSIGNAL_MACRO", "1").strip() == "0":
+        log.info("contexto macro apagado (HEATSIGNAL_MACRO=0)")
+        return None
+    from ..macro.context import MacroContextProvider
+
+    return MacroContextProvider(_macro_db(cfg))
 
 
 def _session_setup(cfg: RunConfig, stack: Any) -> dict[str, Any]:
@@ -496,7 +510,7 @@ async def start_panel(
             api_url=cfg.ft_hyp_api or None,
         ),
         db_paths={"eval": Path(cfg.eval_db), "history": Path(cfg.history_db), "checkpoints": Path(cfg.checkpoint_db),
-                  "paperbot": Path(cfg.eval_db).parent / "paperbot.sqlite"},
+                  "paperbot": Path(cfg.eval_db).parent / "paperbot.sqlite", "macro": _macro_db(cfg)},
         settings={
             "news_interval_s": cfg.news_interval_s, "graph_rotation": cfg.graph_rotation, "record": cfg.record,
             "retention_s": {"trade": cfg.mem_trades_s, "ticker": cfg.mem_tickers_s,

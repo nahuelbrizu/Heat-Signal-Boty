@@ -1,0 +1,15 @@
+{
+ "config_id": "polymarket-v1",
+ "note": "Lista acotada de mercados de Polymarket que se leen cada hora. kind=search: busca eventos ABIERTOS por texto (GET /public-search) y se queda con los de mas volumen que vencen dentro de end_within_days; kind=event / kind=market: un slug fijo (GET /events/slug/{slug} o /markets/slug/{slug}). must_match: palabras que tiene que tener el titulo del evento (minusculas, sin tildes). pick: volume (el evento de mas volumen) o latest_end (el que vence mas tarde dentro de la ventana, p. ej. el de fin de mes entre los diarios de BTC). prefer_uncertain: dentro de un evento elige los mercados con probabilidad entre 5 % y 95 % antes que los ya definidos. Cambiar esta lista es un cambio versionado (subir config_id).",
+ "max_markets_total": 12,
+ "entries": [
+  {"key": "fed", "label": "Decisión de la Fed", "kind": "search", "q": "Fed decision", "must_match": ["fed"],
+   "max_events": 1, "max_markets": 3, "end_within_days": 75, "prefer_uncertain": false},
+  {"key": "btc", "label": "Bitcoin por encima de X", "kind": "search", "q": "Bitcoin above", "must_match": ["bitcoin"],
+   "max_events": 1, "max_markets": 3, "end_within_days": 35, "prefer_uncertain": true, "pick": "latest_end"},
+  {"key": "eth", "label": "Ethereum por encima de X", "kind": "search", "q": "Ethereum above", "must_match": ["ethereum"],
+   "max_events": 1, "max_markets": 2, "end_within_days": 35, "prefer_uncertain": true, "pick": "latest_end"},
+  {"key": "recesion", "label": "Recesión en EE.UU.", "kind": "search", "q": "US recession", "must_match": ["recession"],
+   "max_events": 1, "max_markets": 1, "end_within_days": 500, "prefer_uncertain": false}
+ ]
+}

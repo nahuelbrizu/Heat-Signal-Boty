@@ -111,3 +111,18 @@ del diseño de arriba:
 - Modo `sessions` (`pipeline/analysis.py`): el grafo corre al cerrar la 1ª vela de 1h de Asia/Europa/EE.UU. y la última
   del día UTC (4 corridas/día, todos los símbolos). Sin LLM o sin estrategias, el análisis por código se guarda igual y
   la fila `llm` del diario queda `sin_llm`.
+
+## Contexto macro y diario de lecciones (2026-10-19)
+
+- **Bloque "Macro y eventos"** (`macro/context.py`, `macro-context-v1`): el ciclo (`pipeline/analysis.py`, parámetro
+  `macro`) lo arma point-in-time y lo pone en `state["macro_context"]`; SOLO el Analista de Contexto de Mercado lo
+  recibe, una vez, al final de su mensaje. **Mismas llamadas por ciclo** (test). Tope `MAX_BLOCK_CHARS` = 1150
+  (~320 tokens medidos con datos reales; estimación conservadora 3,2 car./token). Contiene: FRED (DFF, CPIAUCSL,
+  DGS10, DTWEXBGS, VIXCLS) con fecha de publicación, eventos de las próximas 48 h (FOMC/CPI/NFP) y probabilidades de
+  Polymarket con su variación de 24 h. Apagable con `HEATSIGNAL_MACRO=0`.
+- Adaptado de TradingAgents (Apache-2.0): vintage de FRED por `realtime_start`, parseo de Gamma. Diferencia: acá se
+  guarda append-only y el grafo no llama herramientas (lo arma el código).
+- **Diario de lecciones** (`evaluation/lessons.py`, inspirado en `memory/reflection.py`): una lección por hipótesis
+  resuelta, escrita por el job de evaluación con el LLM barato (o por código, marcada). **No se reinyecta**: a
+  diferencia de TradingAgents, ninguna lección entra a ningún prompt ni decisión (test `test_lessons.py` que lo verifica
+  estática y dinámicamente). Motivo: cambiaría el sistema sin pre-registro ni conteo de intentos.

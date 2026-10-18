@@ -2,7 +2,8 @@
 Analista de Contexto de Mercado — nodo de la capa de analistas (paralelo).
 
 Lee `features_by_symbol[*].context` (mark, funding por exchange, OI, ATR y el
-regimen calculado por codigo). El regimen NO lo decide el LLM: se copia de
+regimen calculado por codigo) y, si el ciclo lo arma, el bloque comun `macro_context` ("Macro y eventos",
+`macro/context.py`): se agrega UNA vez al mismo mensaje, sin llamadas extra al LLM. El regimen NO lo decide el LLM: se copia de
 features (`regime`) para que el benchmark pasivo tenga una definicion estable;
 el LLM puede marcar desacuerdo en `regime_commentary`, pero no lo pisa.
 """
@@ -36,6 +37,9 @@ _SYSTEM_PROMPT = (
     "Tambien recibis el contexto de velas de 1h CERRADAS y la tendencia del dia UTC (`daily_trend`, regla fija "
     "calculada por codigo): describi donde esta el precio respecto de la apertura del dia, la EMA20 de 1h y el "
     "rango diario, sin reemplazar la etiqueta. "
+    "Si aparece un bloque 'Macro y eventos' (FRED con su fecha de publicacion, eventos de las proximas 48 h y "
+    "probabilidades implicitas de Polymarket), es contexto comun a todos los simbolos: mencionalo solo si ayuda a "
+    "describir el contexto (p. ej. un evento cercano), como dato publicado, nunca como pronostico. "
     + HISTORICAL_LANGUAGE_RULE
 )
 
@@ -78,12 +82,13 @@ def make_market_context_analyst_node(llm: BaseChatModel) -> Callable[["GraphStat
         features: dict[str, FeatureSet] = state.get("features_by_symbol") or {}
         if not features:
             return {"market_context_analyses": []}
-        messages = [
-            SystemMessage(content=_SYSTEM_PROMPT),
-            HumanMessage(content="\n".join(
-                render_context(fs) + (f"\n  ultima sesion (codigo): {fs.session.summary}" if fs.session else "")
-                for fs in features.values())),
-        ]
+        body = "\n".join(
+            render_context(fs) + (f"\n  ultima sesion (codigo): {fs.session.summary}" if fs.session else "")
+            for fs in features.values())
+        macro = state.get("macro_context")
+        if macro:  # bloque comun, una sola vez (macro/context.py, tope de tamano en codigo)
+            body += "\n\n" + macro
+        messages = [SystemMessage(content=_SYSTEM_PROMPT), HumanMessage(content=body)]
         result: MarketContextAnalysisBatch = await structured_llm.ainvoke(messages)
         return {
             "market_context_analyses": reconcile_by_symbol(
