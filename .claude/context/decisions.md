@@ -261,6 +261,14 @@
   Nota de método (abierta): la varianza de los Sharpe entre intentos está inflada por estrategias rotas (Sharpe
   −3 a −5), lo que sube SR0 hasta un nivel que ninguna estrategia real alcanza; ver "Abiertas".
 
+- **5 estrategias del grafo en velas de 1h, registradas con aprobación del usuario (2026-10-18)** ("registrá
+  todas"), antes de cualquier resultado. Archivos en `backend/strategies/tendencia-diaria-1h/`; registro inmutable
+  en `heatsignal_eval.sqlite`: `1h-apertura-continuacion-a-favor-v1` 515b5470-d6e5-4bd9-adc7-818d43fc2dec;
+  `1h-apertura-reversion-en-contra-v1` ffa65014-b229-4d42-9f7a-d319b5b5f820; `1h-continuacion-a-favor-fin-dia-v1`
+  0c8b962a-e4d5-4402-83f2-31bf20b470b5; `1h-extremo-rango-diario-en-contra-v1` 5cd0c0b4-ae24-465c-90b9-9838c79ffa40;
+  `1h-retroceso-ema-a-favor-v1` da81e854-6cba-48b4-b6a3-8d8395f459d9. Corren en las sesiones (modo `sessions`).
+  Cada una es una variante distinta: sus tasas se comparan entre sí y contra mantener, con n e IC.
+
 ## Abiertas
 - ~~Plan de CoinGlass a contratar.~~ **Ya no aplica al core** — la fuente primaria pasó a WS nativos.
   Solo se retomaría si se implementa la fuente BYOK opcional (y ahí el plan lo elige el usuario).
