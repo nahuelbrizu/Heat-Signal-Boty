@@ -365,6 +365,31 @@
   (test estático y dinámico): reinyectarla cambiaría el sistema sin pre-registro. Usarlas sería una decisión aparte,
   pre-registrada y contada. Vistas `#/macro` y `#/lecciones`.
 
+- **Listón del programa: regla aprobada por el usuario (2026-10-19), ANTES de calcular resultados con ella.**
+  Auditoría previa (Etapa 1): (1) el DSR propio de `run.py` usa K = combinaciones de esa estrategia y su dispersión;
+  con K = 1 la dispersión es 0 y el DSR = PSR (sin corrección): el "pasa" de max-ruptura y cartera no está corregido
+  por el programa. (2) El DSR del programa (`publish.program`) usa la dispersión observada de Sharpe OOS (1,96 vs
+  ~0,43 esperada por azar con T = 1950 días), mezcla unidades (K = combinaciones, dispersión = estrategias) y
+  construcciones (Freqtrade = PnL realizado), ignora asimetría y curtosis, y no usa `effective_n_trials`. (3) No hay
+  experimentos inválidos conocidos (los Sharpe muy negativos son pérdidas reales por costos); falta un estado
+  explícito por intento. **Regla:** se calculan y publican tres métodos en paralelo: (i) DSR actual (referencia);
+  (ii) DSR con dispersión nula analítica por estrategia (con asimetría y curtosis) y K efectivo por correlación de
+  retornos diarios (Freqtrade cuenta en K como independiente, no en la dispersión; el registro sigue diciendo 51);
+  (iii) test de máximo por bootstrap estacionario conjunto (bloques medios de 20 días, B = 5.000, nula impuesta por
+  centrado, estadístico = máximo Sharpe del conjunto, Romano–Wolf escalonado para identificar cuáles).
+  **Criterio de aprobación:** (iii) p ≤ 0,05 principal y (ii) ≥ 0,95 como confirmación; nada pasa a plata real sin
+  paper trading. Si los métodos divergen se investiga; no se elige el que apruebe. El DSR propio con K = 1 se
+  muestra como PSR. Estados por intento: válido / inválido técnico (con motivo) / sin resultado.
+- **Stop loss y take profit (2026-10-19, pedido del usuario: "agregá esa info en todo el sistema").** Estado actual:
+  solo algunas reglas tienen stop/objetivo (ema-cruce 1,5/3 ATR, rango y vwap 1,5 ATR + objetivo, pares z 4,
+  capitulación/squeeze, funding-crowding-short); el resto sale por tiempo, canal o rebalanceo (Donchian, tsmom,
+  max-ruptura, cartera). Las hipótesis de 1h salen por tiempo (pre-registradas así). Freqtrade Donchian sin stop
+  (como el lab); Freqtrade de hipótesis con stop de seguridad −20 %. **Se agrega:** ficha de salidas por estrategia
+  (stop, objetivo, tiempo, otra) en un mapa aparte que NO cambia los spec_hash, visible en lab, paper y Freqtrade;
+  atribución de salidas (cuántas por stop, objetivo, tiempo, señal); MAE/MFE de cada hipótesis resuelta (cuánto fue
+  en contra y a favor). Agregar stop/objetivo a una estrategia ya registrada es una -v2. **Para la etapa de plata
+  real:** toda orden lleva stop del lado del exchange (reduce-only), obligatorio aunque la regla salga por tiempo.
+
 ## Abiertas
 - ~~Plan de CoinGlass a contratar.~~ **Ya no aplica al core** — la fuente primaria pasó a WS nativos.
   Solo se retomaría si se implementa la fuente BYOK opcional (y ahí el plan lo elige el usuario).
