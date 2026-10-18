@@ -39,6 +39,7 @@ de ingesta, en `127.0.0.1:8000` de la VM (se abre con túnel SSH). Todo es `GET`
 | `/api/paper` | lee la base de Freqtrade (read-only) + 4 llamadas a su API REST, en otro hilo; cache 10 s | al abrir la vista; cada 30 s si está abierta |
 | `/api/paper/compare` | lee un archivo (se relee solo si cambia) | al abrir; cambia una vez por semana |
 | `/api/paperbot`, `/api/paperbot/{id}` | lee `paperbot.sqlite` (read-only, otro hilo); cache 10 s | al abrir la vista; cada 60 s si está abierta (el bot escribe una vez por hora) |
+| `/api/weekly`, `/api/weekly/{week}` | lee `weekly_reviews` de la base de evaluación (read-only, otro hilo); cache 30 s | al abrir la vista; cada 5 min si está abierta (cambia una vez por semana) |
 | `/api/system` | liviano | al abrir la vista de sistema; cada 30–60 s si está abierta |
 | `/api/status` | **pesado** (todo junto, incluye features de todos los símbolos) | solo para el panel viejo; la SPA no lo necesita |
 
@@ -756,8 +757,10 @@ la dirección: + = a favor), `pnl_diff_pp` (PnL FT − PnL hipótesis), `entry_d
 
 ## `GET /api/paperbot`
 
-Bot propio de **paper trading del lote 3** (`heatsignal.paperbot`, timer horario a los :02 UTC). Todo SIMULADO: 10.000 USDT
-ficticios por estrategia, sin reinversión, precios reales de Binance, costos 5 + 2 bps por lado y funding liquidado real.
+Bot propio de **paper trading** (`heatsignal.paperbot`, timer horario a los :02 UTC): las estrategias de `params.json`
+(las 6 del lote 3 y `max-ruptura-10d-v1` del lote 5). Todo SIMULADO: 10.000 USDT ficticios por estrategia, sin
+reinversión, precios reales de Binance, costos 5 + 2 bps por lado y funding liquidado real. Cada estrategia tiene su
+propio inicio (`started_ms`): la que se sumó después arranca con su capital y su canasta desde su primera corrida.
 Lee `data/paperbot.sqlite` en solo lectura (sin pandas). 503 si el bot nunca corrió o no está configurado.
 
 ```json
@@ -769,13 +772,17 @@ Lee `data/paperbot.sqlite` en solo lectura (sin pandas). 503 si el bot nunca cor
  "lab_generated_at": "2026-10-18T...",
  "strategies": [{"strategy_id": "tsmom-diario-v1", "spec_hash": "7515d798e5d66a55", "params": {"target_vol": 0.15},
                  "origen": "walk-forward del lab 2026-10-18 (...)", "universe": ["BTCUSDT", ...], "hour_ms": ...,
+                 "started_ms": 1792..., "hours": 120, "desde": "2026-10-18",
                  "equity": 10012.3, "return": 0.0012, "basket_equity": 9990.1, "basket_return": -0.001,
                  "realized": 3.1, "unrealized": 15.2, "funding": -1.2, "fees": 3.5, "slippage": 1.4, "exposure": 0.39,
                  "positions": [{"symbol": "BTCUSDT", "weight": -0.437, "target": -0.437, "units": -0.0..., "entry_price": ...,
                                 "mark_price": ..., "notional": ..., "unrealized": ...}],
                  "n_orders": 9, "n_trades": 2, "wins": 1, "win_ci95": [0.09, 0.91], "spark": [[hour_ms, equity, basket], ...],
                  "lab": {"pasa": false, "sharpe": 0.67, "sharpe_ci95": [-0.18, 1.51], "dsr": 0.94, "checks": {...},
-                         "same_spec": true, "...": "veredicto del backtest (lab_summary.json); null si no hay"}}],
+                         "same_spec": true, "holdout": "ABIERTO|SELLADO",
+                         "holdout_result": {"sharpe": 2.21, "total_return": 0.132, "trades": 51, "window": [...],
+                                            "basket_sharpe": 1.95, "random_p": 0.18, "confirma": false, "checks": {...}},
+                         "...": "veredicto del backtest (lab_summary.json); null si no hay"}}],
  "notes": ["La ultima corrida termino en error: ..."]}
 ```
 
@@ -791,6 +798,35 @@ Lo mismo que un elemento de `strategies` más: `equity_hourly` (`[[hour_ms, equi
 `weight_from/to`, `units_from/to`, `notional`, `fee`, `slippage`, `reason` = `senal|resincronizacion|inicio|hueco`),
 `trades` cerrados, `funding_events` (`rate`, `units` vigentes justo antes, `price`, `cash`), `basket`, `max_drawdown` y
 `lab` (veredicto del backtest). 400 si el id no es válido, 404 si el bot no tiene esa estrategia.
+
+## `GET /api/weekly?limit=52`
+
+Revisión semanal automática (`heatsignal.paper.weekly`, `heatsignal-weekly.timer`, lunes 00:30 UTC): cierre por código
+(sin LLM) de la semana UTC lunes 00:00 → lunes 00:00, guardado append-only en `weekly_reviews` de
+`heatsignal_eval.sqlite` (una fila por semana; el job es idempotente). 503 si la base no está configurada o no existe;
+200 con `weeks: []` y `note` si todavía no se cerró ninguna semana.
+
+```json
+{"weeks": [{"week": "2026-W42", "week_start_ms": ..., "week_end_ms": ..., "generated_ms": ..., "model_id": "weekly-review-v1",
+            "status": "ok|partial", "failed_sources": [],
+            "metrics": {"freqtrade.pnl": {"label": "...", "value": 5.0, "kind": "money|int|frac|pct", "better": "up|down|null",
+                                          "prev": 20.0, "delta": -15.0, "dir": "up|down|flat|null", "good": false}, "...": {}}}],
+ "latest": {"...": "igual que GET /api/weekly/{week} de la ultima semana"}, "note": null}
+```
+
+## `GET /api/weekly/{week}`
+
+Una semana (`2026-W42`; 400 si el formato o la semana ISO no son válidos, 404 si no está cerrada):
+`summary` con las cinco fuentes — `paperbot` (por estrategia: PnL de la semana y acumulado contra su canasta, precio,
+funding, costos, máx. DD, órdenes por motivo, trades con n e IC; corridas, errores y huecos), `freqtrade` (Donchian:
+cerradas en la semana y acumulado, abiertas al cierre, último `paper_compare`), `hyp_bridge` (Freqtrade de hipótesis:
+emitidas, enviadas, omitidas por motivo, PnL, acierto de Freqtrade y de la hipótesis, diferencia media en pp),
+`hypotheses` (emitidas, resueltas en la semana con tasa e IC de Wilson, alfa contra mantener, por estrategia con su último
+estado shadow/publicable, cortes por tendencia, alineación y sesión) y `health` (ciclos por estado, errores agrupados,
+sesiones con/sin LLM, `llm_calls.counted = false` porque `cycle_log` no guarda las llamadas, cobertura de `bars_1m` y
+`klines` 1m por símbolo/exchange). Cada fuente trae `available`; si falla, `error` y la semana queda `partial`. Toda
+tasa trae `n`, `wins`, `rate`, `ci95` y `small_sample` (n < 30). Además: `text` (resumen redactado por código),
+`compare` (métricas contra la semana anterior), `prev_week` y `notes` (siempre: "una semana no prueba nada").
 
 ## `GET /api/market/{symbol}`
 

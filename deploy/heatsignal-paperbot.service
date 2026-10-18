@@ -1,9 +1,9 @@
-# Bot propio de PAPER TRADING del lote 3 (simulado: sin plata real ni API keys). Una corrida por hora: baja velas 1m y
-# funding (REST publico de Binance), corre las 6 reglas de lab/strategies.py y simula fills/costos/funding en
+# Bot propio de PAPER TRADING (lote 3 + max-ruptura-10d-v1; simulado: sin plata real ni API keys). Una corrida por hora: baja velas 1m y
+# funding (REST publico de Binance), corre las reglas de params.json (lab/strategies.py) y simula fills/costos/funding en
 # data/paperbot.sqlite (append-only). Ver backend/src/heatsignal/paperbot/. Lo dispara heatsignal-paperbot.timer.
 # Necesita pandas en el venv (requirements-paperbot.txt); el panel y la ingesta NO lo importan.
 [Unit]
-Description=HeatSignal paperbot: paper trading simulado del lote 3 (una corrida)
+Description=HeatSignal paperbot: paper trading simulado (lote 3 + max-ruptura, una corrida)
 After=network-online.target
 Wants=network-online.target
 

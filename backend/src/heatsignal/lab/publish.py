@@ -139,7 +139,7 @@ def summarize(results_dir: Path) -> dict[str, Any]:
             "random_p": (b.get("random_entries") or {}).get("p_value"),
             "verdict": r.get("verdict"),
             "holdout": ("ABIERTO" if hold else r.get("data", {}).get("holdout")),
-            "holdout_result": None if not hold else {"sharpe": hold.get("sharpe"), "total_return": hold.get("total_return"), "trades": hold.get("trades"), "confirma": (hold.get("verdict") or {}).get("confirma"), "checks": (hold.get("verdict") or {}).get("checks")}, "holdout_start": r.get("data", {}).get("holdout_start"),
+            "holdout_result": _holdout_result(hold), "holdout_start": r.get("data", {}).get("holdout_start"),
             "has_detail": bool(r.get("strategy_id")) and SAFE_ID.match(str(r.get("strategy_id"))) is not None,
             "diagnostics": diagnostics_block(runs[-1].parent, runs[-1].stem),
         })
@@ -262,6 +262,19 @@ def detail(run: dict[str, Any], run_files: list[Path]) -> dict[str, Any]:
         },
         "notes": notes,
     }
+
+
+def _holdout_result(hold: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Resumen del holdout para lab_summary.json (lo muestran el laboratorio y el bot de paper)."""
+    if not hold:
+        return None
+    b = hold.get("baselines") or {}
+    v = hold.get("verdict") or {}
+    return {"sharpe": hold.get("sharpe"), "total_return": hold.get("total_return"), "trades": hold.get("trades"),
+            "max_drawdown": hold.get("max_drawdown"), "window": hold.get("window"), "days": hold.get("days"),
+            "basket_sharpe": b.get("basket_sharpe"), "basket_return": b.get("basket_return"),
+            "random_p": (b.get("random_entries") or {}).get("p_value"),
+            "confirma": v.get("confirma"), "checks": v.get("checks"), "criterios": v.get("criterios")}
 
 
 def _holdout(strategy_dir: Path) -> dict[str, Any] | None:

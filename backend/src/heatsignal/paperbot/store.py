@@ -202,6 +202,13 @@ class PaperbotStore:
     def basket(self, strategy_id: str) -> list[sqlite3.Row]:
         return self.conn.execute("SELECT * FROM basket WHERE strategy_id=? ORDER BY symbol", (strategy_id,)).fetchall()
 
+    def last_equity_hour(self, strategy_id: str) -> int | None:
+        """Ultima hora con equity de la estrategia (None = nunca corrio: entra "desde hoy")."""
+        return self.conn.execute("SELECT MAX(hour_ms) FROM equity WHERE strategy_id=?", (strategy_id,)).fetchone()[0]
+
+    def first_equity_hour(self, strategy_id: str) -> int | None:
+        return self.conn.execute("SELECT MIN(hour_ms) FROM equity WHERE strategy_id=?", (strategy_id,)).fetchone()[0]
+
     def first_ok_hour(self) -> int | None:
         row = self.conn.execute("SELECT MIN(hour_ms) FROM runs WHERE status='ok'").fetchone()
         return row[0]

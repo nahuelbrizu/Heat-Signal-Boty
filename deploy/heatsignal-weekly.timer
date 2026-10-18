@@ -1,0 +1,13 @@
+[Unit]
+Description=HeatSignal revision semanal (lunes 00:30 UTC)
+
+[Timer]
+# Lunes 00:30 UTC: la semana UTC anterior ya cerro y el paperbot de las 00:02 ya marco la hora de cierre.
+OnCalendar=Mon *-*-* 00:30:00 UTC
+# Si la VM estuvo apagada el lunes, corre al volver (cierra la ultima semana completa; las anteriores perdidas se
+# cierran a mano con --week).
+Persistent=true
+AccuracySec=1min
+
+[Install]
+WantedBy=timers.target

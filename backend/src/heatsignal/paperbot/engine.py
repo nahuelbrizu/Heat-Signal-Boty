@@ -20,6 +20,10 @@ Una corrida en el instante `now` (el timer la dispara a los :02 UTC):
         reglas con memoria), se re-sincroniza en H (`resincronizacion`).
       - primera corrida o despues de un hueco (VM apagada, corridas con error): NO se simulan las horas perdidas; se
         registra el hueco y la posicion se lleva al objetivo de la regla en H (`inicio` / `hueco`).
+      - el modo se decide POR ESTRATEGIA: una estrategia que se suma a `params.json` despues (p. ej.
+        max-ruptura-10d-v1 el 2026-10-19) entra "desde hoy": su primera corrida es `inicio` (orden al objetivo de la
+        regla en H, capital 10.000 y canasta propios desde H) aunque las demas sigan en `consecutiva`. No se reescribe
+        ni se recalcula nada de las otras.
       - costos 5 + 2 bps por lado; funding cobrado/pagado en cada liquidacion con la posicion vigente justo antes.
  6. Escribe todo en `paperbot.sqlite` en UNA transaccion (append-only).
 """
@@ -187,12 +191,16 @@ def _clean(sig: pd.Series | None) -> pd.Series:
 # ---- corrida -------------------------------------------------------------------------------------------
 
 
-def _catalog(cfg: EngineConfig) -> dict[str, Any]:
+def _catalog(cfg: EngineConfig, entries: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    """Estrategias que corre el bot = las de `params.json` (las reglas salen del catalogo congelado del lab)."""
     if cfg.catalog is not None:
         return cfg.catalog
-    from ..lab.strategies import CATALOG, LOTE3
+    from ..lab.strategies import CATALOG
 
-    return {k: CATALOG[k] for k in LOTE3}
+    unknown = sorted(k for k in entries if k not in CATALOG)
+    if unknown:
+        raise P.ParamsError(f"{unknown}: no estan en el catalogo del laboratorio (lab/strategies.py)")
+    return {k: CATALOG[k] for k in entries}
 
 
 def run_once(cfg: EngineConfig, *, now_ms: int | None = None, http_get: HttpGet | None = None,
@@ -243,8 +251,8 @@ def _finish(store: PaperbotStore, base: dict, status: str, reason: str, detail: 
 
 def _run(cfg: EngineConfig, store: PaperbotStore, base: dict, H: int, now: int, http_get: HttpGet | None,
          sleep: Callable[[float], None], t0: float) -> dict[str, Any]:
-    catalog = _catalog(cfg)
     entries = cfg.entries if cfg.entries is not None else P.load(cfg.params_path)
+    catalog = _catalog(cfg, entries)
     plans = {}
     for sid, (spec, rule) in catalog.items():
         if sid not in entries:
@@ -311,6 +319,11 @@ def _run(cfg: EngineConfig, store: PaperbotStore, base: dict, H: int, now: int, 
 
     per_strategy = {}
     for sid, (spec, rule, params, universe, entry) in plans.items():
+        # Cada estrategia lleva su propio inicio: una que se suma despues entra "desde hoy" (orden `inicio` al
+        # objetivo de la regla en H, canasta y capital propios desde H) sin tocar la historia de las demas.
+        last_eq = store.last_equity_hour(sid)
+        s_consecutive = consecutive and last_eq == prev["hour_ms"]
+        s_mode = "consecutiva" if s_consecutive else ("inicio" if last_eq is None else "hueco")
         data = {s: MarketData(closed[s], funding[s]) for s in universe}
         signals = rule(data, params)
         sigs = {s: _clean(signals.get(s)) for s in universe}
@@ -324,7 +337,7 @@ def _run(cfg: EngineConfig, store: PaperbotStore, base: dict, H: int, now: int, 
             new_orders.append(book.order(s, t_ms, fill_ms, price, w, reason, src))
 
         n_events = 0
-        if consecutive:
+        if s_consecutive:
             for s in universe:
                 sig = sigs[s]
                 if not len(sig):
@@ -340,7 +353,7 @@ def _run(cfg: EngineConfig, store: PaperbotStore, base: dict, H: int, now: int, 
                         place(s, t, w, "senal")
         for s in universe:
             if abs(targets[s] - book.pos[s].weight) > TARGET_TOL:
-                place(s, H, targets[s], "resincronizacion" if consecutive else mode)
+                place(s, H, targets[s], "resincronizacion" if s_consecutive else s_mode)
 
         # funding de las liquidaciones con posicion abierta (incluye las que llegaron tarde a la cache)
         all_orders = [dict(o) for o in stored_orders] + new_orders
@@ -400,7 +413,8 @@ def _run(cfg: EngineConfig, store: PaperbotStore, base: dict, H: int, now: int, 
         per_strategy[sid] = {"spec_hash": spec.spec_hash(), "params": {k: params[k] for k in spec.grid},
                              "origen": entry.get("origen"), "universe": universe, "targets": targets,
                              "eventos": n_events, "ordenes": len(new_orders), "funding": len(new_funding),
-                             "equity": tot["equity"]}
+                             "equity": tot["equity"], "modo": s_mode, "desde": entry.get("desde"),
+                             "inicio_ms": H if last_eq is None else store.first_equity_hour(sid)}
 
     detail.update({"modo": mode, "estrategias": per_strategy, "marcas": marks,
                    "anterior_ok_ms": None if prev is None else prev["hour_ms"]})

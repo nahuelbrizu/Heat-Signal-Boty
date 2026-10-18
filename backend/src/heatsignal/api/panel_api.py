@@ -58,6 +58,7 @@ TF_MS = {"1m": 60_000, "5m": 300_000, "15m": 900_000, "1h": 3_600_000}
 EXCHANGE_PRIORITY = ("binance", "bybit", "okx", "hyperliquid")  # referencia de precio en `combine=true`
 LAB_ID = re.compile(r"^[a-z0-9][a-z0-9._-]{0,99}$")  # = lab.publish.SAFE_ID (sin importar heatsignal.lab)
 RUN_ID = re.compile(r"^[A-Za-z0-9._:-]{1,120}$")
+WEEK_ID = re.compile(r"^\d{4}-W\d{2}$")  # = paper.weekly.WEEK_RE
 SUMMARY_TTL_S = 10.0
 CHECKPOINT_TIMEOUT_S = 15.0
 COLD_TIMEOUT_S = 120.0  # lectura fria (Drive): mas que esto -> 503 (lo bajado queda en cache para el reintento)
@@ -1555,6 +1556,44 @@ def register_api(app: FastAPI, ctx: PanelContext, build_id: str) -> None:  # noq
         if out is None:
             raise HTTPException(status_code=404, detail=f"el bot no tiene datos de {strategy_id}")
         return {**out, "lab": pbv.lab_verdict(_lab_view(ctx), strategy_id, out.get("spec_hash"))}
+
+    # ---------------------------------------------------------------- revision semanal (paper/weekly.py)
+
+    def _weekly_read(fn: Callable[[Path], Any]) -> Callable[[], Any]:
+        import sqlite3
+
+        def work() -> Any:
+            if ctx.weekly_db is None:
+                raise HTTPException(status_code=503, detail="revision semanal no configurada en este proceso")
+            try:
+                return json_safe(fn(Path(ctx.weekly_db)))
+            except FileNotFoundError:
+                raise HTTPException(status_code=503, detail=f"no existe la base de evaluacion ({ctx.weekly_db})") from None
+            except sqlite3.Error as exc:
+                raise HTTPException(status_code=503, detail=f"no se pudo leer weekly_reviews: {exc}") from None
+        return work
+
+    @app.get("/api/weekly")
+    async def weekly(limit: int = Query(52, ge=1, le=260, description="semanas del historial")) -> Any:
+        """Revisiones semanales cerradas (lo mas nuevo primero) + la ultima completa con la comparacion semana contra semana."""
+        from ..paper import weekly as wk
+
+        return await _paper_cached(f"weekly:{limit}", 30.0, _weekly_read(lambda p: wk.list_reviews(p, limit)))
+
+    @app.get("/api/weekly/{week}")
+    async def weekly_detail(week: str = PathParam(..., max_length=10)) -> Any:
+        from ..paper import weekly as wk
+
+        if not WEEK_ID.match(week):
+            raise HTTPException(status_code=400, detail=f"semana invalida: {week!r} (formato 2026-W42)")
+        try:
+            wk.week_bounds(week)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from None
+        out = await _paper_cached("weekly:" + week, 30.0, _weekly_read(lambda p: wk.get_review(p, week)))
+        if out is None:
+            raise HTTPException(status_code=404, detail=f"la semana {week} no esta cerrada (heatsignal-weekly.timer)")
+        return out
 
     # ---------------------------------------------------------------- mercado (ventana en memoria)
 

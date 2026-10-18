@@ -1,0 +1,34 @@
+# Revision semanal automatica (paper/weekly.py): cierra la semana UTC anterior (lunes a domingo) y guarda un resumen
+# por codigo (sin LLM) en la tabla append-only weekly_reviews de heatsignal_eval.sqlite. Junta el bot propio de paper,
+# los dos Freqtrade (dry-run), las hipotesis del grafo y la salud de datos. Todas las fuentes se abren en SOLO LECTURA;
+# lo unico que escribe es una fila por semana (idempotente: si la semana ya estaba cerrada no hace nada).
+# Solo libreria estandar: corre en el venv de la ingesta, sin pandas. Lo dispara heatsignal-weekly.timer.
+[Unit]
+Description=HeatSignal revision semanal (cierre de la semana UTC anterior)
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=nahue
+WorkingDirectory=/home/nahue/heatsignal/backend
+# HEATSIGNAL_SYMBOLS (simbolos de la grabacion) sale del .env, como en la ingesta
+EnvironmentFile=-/home/nahue/heatsignal/.env
+Environment=PYTHONPATH=/home/nahue/heatsignal/backend/src
+Environment=HEATSIGNAL_EVAL_DB=/home/nahue/heatsignal/data/heatsignal_eval.sqlite
+Environment=HEATSIGNAL_HISTORY_DB=/home/nahue/heatsignal/data/heatsignal_history.sqlite
+Environment=HEATSIGNAL_PAPERBOT_DB=/home/nahue/heatsignal/data/paperbot.sqlite
+Environment=HEATSIGNAL_FREQTRADE_DB=/home/nahue/heatsignal/data/freqtrade_dryrun.sqlite
+Environment=HEATSIGNAL_FT_HYP_DB=/home/nahue/heatsignal/data/freqtrade_hyp.sqlite
+Environment=HEATSIGNAL_FT_BRIDGE_DB=/home/nahue/heatsignal/data/ft_bridge.sqlite
+ExecStart=/home/nahue/heatsignal/backend/.venv/bin/python -m heatsignal.paper.weekly run
+# Medido 2026-10-18 en la VM (corrida en seco desde /tmp contra las bases reales, semana W42): pico 28 MB de RSS,
+# 6-10 s. El tope deja mucho margen (la base historica crece; las consultas van por indice); sin swap.
+MemoryMax=250M
+MemorySwapMax=0
+Nice=10
+IOSchedulingClass=idle
+TimeoutStartSec=15min
+ProtectSystem=strict
+ReadWritePaths=/home/nahue/heatsignal/data
+PrivateTmp=true
+NoNewPrivileges=true

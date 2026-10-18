@@ -46,9 +46,12 @@ API de solo lectura para la single page (`api/panel_api.py`; contrato y ejemplos
     GET /api/paper/compare               ultima comparacion paper vs backtest (paper_summary.json) + historial
     GET /api/paper/hypotheses            hipotesis de 1h ejecutadas en el Freqtrade de hipotesis (dry-run): envios del
                                          puente, estado, PnL de Freqtrade vs resolucion de la hipotesis, por estrategia
-    GET /api/paperbot                    bot propio de paper trading del lote 3 (paperbot.sqlite, solo lectura):
+    GET /api/paperbot                    bot propio de paper trading (lote 3 + max-ruptura; paperbot.sqlite, solo lectura):
                                          corridas, huecos, equity vs canasta y posiciones por estrategia
     GET /api/paperbot/{strategy_id}      detalle: equity horaria, ordenes, trades, funding, descomposicion
+    GET /api/weekly                      revisiones semanales cerradas (weekly_reviews) + la ultima con flechas
+                                         semana contra semana
+    GET /api/weekly/{week}               una semana (2026-W42): las 5 fuentes, texto por codigo y comparacion
     GET /api/system                      operacion: uptime, version, tamanos de bases, export/backup, config,
                                          errores recientes
 
@@ -121,6 +124,7 @@ class PanelContext:
     archive: Any = None  # history.cold.ColdReader: lectura fria de lo archivado en Drive (almacenamiento por niveles)
     paperbot_db: Path | None = None  # data/paperbot.sqlite del bot propio de paper trading (lote 3), solo lectura
     hyp_bridge: HypBridgeSources | None = None  # hipotesis de 1h en el Freqtrade de hipotesis (dry-run), solo lectura
+    weekly_db: Path | None = None  # heatsignal_eval.sqlite: tabla weekly_reviews (paper/weekly.py), solo lectura
 
 
 @dataclass

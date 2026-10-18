@@ -10,7 +10,7 @@ import pandas as pd
 import pytest
 
 from heatsignal.history import klines as hk
-from heatsignal.lab.strategies import CATALOG, LOTE3, MarketData, Spec
+from heatsignal.lab.strategies import CATALOG, LOTE3, LOTE5, MarketData, Spec
 from heatsignal.paperbot import params as P
 from heatsignal.paperbot.engine import EngineConfig, run_once, target_at
 from heatsignal.paperbot.ledger import Book
@@ -329,7 +329,8 @@ def test_targets_match_lab_rules_with_longer_history(lote3_env):
     lab = _lab_data(d, Hh)  # 70 dias (el bot usa 64), solo velas cerradas en H
     entries = P.load()
     nonzero = 0
-    for sid in LOTE3:
+    assert set(r["detail"]["estrategias"]) == set(BOT)
+    for sid in BOT:
         spec, rule = CATALOG[sid]
         params = P.effective(sid, entries[sid], spec)
         universe = entries[sid]["universe"]
@@ -362,10 +363,15 @@ def test_rule_never_sees_open_candle(lote3_env):
 # ---- parametros --------------------------------------------------------------------------------------------
 
 
+BOT = (*LOTE3, "max-ruptura-10d-v1")
+
+
 def test_params_json_matches_catalog_and_grid():
     entries = P.load()
-    assert set(entries) == set(LOTE3)
-    for sid in LOTE3:
+    assert set(entries) == set(BOT)
+    assert "max-ruptura-10d-v1" in LOTE5
+    assert entries["max-ruptura-10d-v1"]["spec_hash"] == "39cb9dee6d3e469a" and entries["max-ruptura-10d-v1"]["params"] == {}
+    for sid in BOT:
         spec = CATALOG[sid][0]
         eff = P.effective(sid, entries[sid], spec)
         assert eff == {**spec.params, **entries[sid]["params"]}
@@ -403,3 +409,71 @@ def test_cli_reset_not_allowed(capsys):
 
     assert main(["reset-not-allowed"]) == 2
     assert "append-only" in capsys.readouterr().out
+
+
+# ---- estrategia nueva: entra "desde hoy" sin tocar a las otras --------------------------------------------
+
+
+def _toy2(events_a, events_b):
+    cat_a, ent_a = toy(events_a)
+    spec_b = Spec("toy-b-v1", "test", "toy b", "1D", "long", "1 dia", {"events": [list(e) for e in events_b]})
+    cat = {**cat_a, "toy-b-v1": (spec_b, toy_rule)}
+    ent = {**ent_a, "toy-b-v1": {"spec_hash": spec_b.spec_hash(), "universe": ["BTCUSDT", "ETHUSDT"], "params": {}}}
+    return cat_a, ent_a, cat, ent
+
+
+def _snapshot(tmp_path, sid):
+    return {t: [tuple(r) for r in rows(tmp_path, f"SELECT * FROM {t} WHERE strategy_id=? ORDER BY 1, 2", (sid,))]
+            for t in ("orders", "equity", "positions", "basket", "funding_events", "trades")}
+
+
+def test_new_strategy_enters_from_today_without_touching_the_others(env):
+    a_events = [("BTCUSDT", T0 + H, 1.0), ("ETHUSDT", T0 + 3 * H + 10 * MIN, -0.5)]
+    # b tiene posicion desde ANTES de sumarse y una senal en la ultima hora: nada de eso se simula hacia atras
+    b_events = [("BTCUSDT", T0 - 2 * DAY, 1.0), ("ETHUSDT", T0 + 2 * H + 30 * MIN, 1.0)]
+    cat_a, ent_a, cat, ent = _toy2(a_events, b_events)
+    for k in range(3):
+        assert run_once(cfg(env, cat_a, ent_a), now_ms=T0 + k * H + 2 * MIN)["status"] == "ok"
+    before = _snapshot(env, "toy-v1")
+
+    r = run_once(cfg(env, cat, ent), now_ms=T0 + 3 * H + 2 * MIN)
+    assert r["status"] == "ok" and r["detail"]["modo"] == "consecutiva"
+    est = r["detail"]["estrategias"]
+    assert est["toy-v1"]["modo"] == "consecutiva" and est["toy-b-v1"]["modo"] == "inicio"
+    assert est["toy-b-v1"]["inicio_ms"] == T0 + 3 * H and est["toy-v1"]["inicio_ms"] == T0
+
+    # la historia de la estrategia vieja no cambio (append-only y sin recalculo)
+    after = _snapshot(env, "toy-v1")
+    for t, old in before.items():
+        assert after[t][:len(old)] == old, t
+    # la nueva: ordenes 'inicio' al objetivo de la regla en H, nada antes de H
+    ob = rows(env, "SELECT * FROM orders WHERE strategy_id='toy-b-v1' ORDER BY symbol")
+    assert [(o["symbol"], o["weight_to"], o["reason"], o["decision_ms"]) for o in ob] == [
+        ("BTCUSDT", 1.0, "inicio", T0 + 3 * H), ("ETHUSDT", 1.0, "inicio", T0 + 3 * H)]
+    eb = rows(env, "SELECT * FROM equity WHERE strategy_id='toy-b-v1'")
+    assert [e["hour_ms"] for e in eb] == [T0 + 3 * H]
+    assert eb[0]["equity"] == pytest.approx(10_000 - eb[0]["fees"] - eb[0]["slippage"] + eb[0]["unrealized"])
+    bb = rows(env, "SELECT * FROM basket WHERE strategy_id='toy-b-v1'")
+    assert {b["start_ms"] for b in bb} == {T0 + 3 * H}
+    ba = rows(env, "SELECT * FROM basket WHERE strategy_id='toy-v1'")
+    assert {b["start_ms"] for b in ba} == {T0}
+    # sin hueco global (la vieja siguio consecutiva) y sin funding anterior a su primera orden
+    assert rows(env, "SELECT * FROM gaps") == []
+    assert all(f["funding_ms"] > T0 + 3 * H for f in rows(env, "SELECT * FROM funding_events WHERE strategy_id='toy-b-v1'"))
+
+    # la hora siguiente las dos siguen consecutivas; la vieja opera su senal normal
+    r2 = run_once(cfg(env, cat, ent), now_ms=T0 + 4 * H + 2 * MIN)
+    assert {k: v["modo"] for k, v in r2["detail"]["estrategias"].items()} == {"toy-v1": "consecutiva", "toy-b-v1": "consecutiva"}
+    oa = rows(env, "SELECT * FROM orders WHERE strategy_id='toy-v1' AND run_id=?", (r2["run_id"],))
+    assert [(o["symbol"], o["weight_to"], o["reason"]) for o in oa] == [("ETHUSDT", -0.5, "senal")]
+
+
+def test_unknown_strategy_in_params_is_error(env, tmp_path):
+    import json
+
+    p = tmp_path / "params.json"
+    p.write_text(json.dumps({"strategies": {"no-existe-v1": {"spec_hash": "x", "universe": ["BTCUSDT"], "params": {}}}}))
+    c = EngineConfig(paperbot_db=env / "pb.sqlite", history_db=env / "hist.sqlite", window_days=2, funding_days=3,
+                     download=False, params_path=p)
+    r = run_once(c, now_ms=T0 + 2 * MIN)
+    assert r["status"] == "error" and "no estan en el catalogo" in r["reason"]

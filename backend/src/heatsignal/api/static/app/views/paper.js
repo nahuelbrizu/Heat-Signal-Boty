@@ -35,7 +35,7 @@ export async function mount(root, ctx) {
   const q = ctx.route.query;
   const f = { symbol: q.get("symbol") || "", result: q.get("result") || "", since: q.get("since") || "" };
   const head = pageHead("Paper trading", "Freqtrade en dry-run de donchian-ensemble-v1 y, abajo, las hipótesis de 1h en una segunda instancia: dinero simulado, precios reales de Binance. Solo lectura.",
-    el("a", { class: "btn", href: ctx.href("paperbot") }, "Bot paper del lote 3 →"));
+    el("a", { class: "btn", href: ctx.href("paperbot") }, "Bot paper propio →"));
   const top = el("div", {}, loading());
   const cmpBox = el("div", {}, loading("Cargando la comparación con el backtest…"));
   // Segunda instancia de Freqtrade (hipotesis de 1h del grafo): seccion aparte, independiente del bot de Donchian

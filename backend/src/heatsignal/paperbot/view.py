@@ -19,8 +19,10 @@ from .store import HOUR_MS, open_readonly
 
 CAPITAL = 10_000.0
 DISCLAIMER = ("SIMULADO: paper trading con dinero ficticio (10.000 USDT por estrategia, sin reinversion) y precios "
-              "reales de Binance. No hay ordenes reales ni API keys. El backtest del lote 3 todavia puede descartar "
-              "cualquiera de estas estrategias; unas semanas de paper no prueban nada (muestra chica).")
+              "reales de Binance. No hay ordenes reales ni API keys. Ninguna de estas estrategias esta aprobada: el backtest "
+              "o el holdout del laboratorio pueden descartarlas (ver el veredicto al lado de cada una); unas semanas de "
+              "paper no prueban nada (muestra chica). Cada estrategia tiene su propio inicio: la que se sumo despues "
+              "arranca con 10.000 US$ y su canasta desde su primera corrida.")
 MAX_ROWS = 500
 STALE_AFTER_MS = 2 * HOUR_MS + 10 * 60_000
 
@@ -86,6 +88,7 @@ def _summary(conn: sqlite3.Connection, sid: str, last_ok_detail: dict[str, Any])
     n_orders = conn.execute("SELECT COUNT(*), MAX(fill_ms) FROM orders WHERE strategy_id=?", (sid,)).fetchone()
     tr = conn.execute("SELECT COUNT(*), COALESCE(SUM(pnl_net > 0), 0), COALESCE(SUM(pnl_net), 0) FROM trades WHERE strategy_id=?",
                       (sid,)).fetchone()
+    first = conn.execute("SELECT MIN(hour_ms), COUNT(*) FROM equity WHERE strategy_id=?", (sid,)).fetchone()
     spark = conn.execute("SELECT hour_ms, equity, basket_equity FROM (SELECT * FROM equity WHERE strategy_id=? "
                          "ORDER BY hour_ms DESC LIMIT 168) ORDER BY hour_ms", (sid,)).fetchall()
     info = (last_ok_detail.get("estrategias") or {}).get(sid) or {}
@@ -94,6 +97,7 @@ def _summary(conn: sqlite3.Connection, sid: str, last_ok_detail: dict[str, Any])
         "strategy_id": sid, "spec_hash": info.get("spec_hash"), "params": info.get("params"), "origen": info.get("origen"),
         "universe": info.get("universe") or [p["symbol"] for p in pos], "capital": CAPITAL,
         "hour_ms": e["hour_ms"], "hour_at": _iso(e["hour_ms"]),
+        "started_ms": first[0], "started_at": _iso(first[0]), "hours": first[1], "desde": info.get("desde"),
         "equity": eq, "return": eq / CAPITAL - 1, "basket_equity": beq,
         "basket_return": None if beq is None else beq / CAPITAL - 1,
         "realized": e["realized"], "unrealized": e["unrealized"], "funding": e["funding"], "fees": e["fees"],
@@ -191,7 +195,8 @@ LAB_FIELDS = ("run", "oos_range", "oos_days", "sharpe", "sharpe_ci95", "dsr", "p
 
 
 def lab_verdict(summary: Any, strategy_id: str, spec_hash: str | None) -> dict[str, Any] | None:
-    """Veredicto del backtest del laboratorio (lab_summary.json publicado) para mostrar junto al paper.
+    """Veredicto del backtest del laboratorio (lab_summary.json publicado) para mostrar junto al paper, con el
+    resultado del holdout si se abrio (`holdout_result`: Sharpe, retorno, trades, `confirma` y sus checks).
 
     `same_spec` = False si el backtest es de otra version de la regla (hash distinto): se avisa, no se esconde."""
     if not isinstance(summary, dict) or "error" in summary:
@@ -201,6 +206,7 @@ def lab_verdict(summary: Any, strategy_id: str, spec_hash: str | None) -> dict[s
             v = e.get("verdict") or {}
             out = {k: e.get(k) for k in LAB_FIELDS}
             out.update({"spec_hash": e.get("spec_hash"), "pasa": v.get("pasa"), "checks": v.get("checks"),
+                        "holdout_result": e.get("holdout_result"),
                         "criterios": v.get("criterios"), "generated_at": summary.get("generated_at"),
                         "same_spec": spec_hash is None or e.get("spec_hash") == spec_hash})
             return out

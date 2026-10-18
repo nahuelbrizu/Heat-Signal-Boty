@@ -487,6 +487,7 @@ async def start_panel(
         lab_summary_path=Path(cfg.eval_db).parent / "lab_summary.json",
         checkpoint_db=Path(cfg.checkpoint_db),
         paperbot_db=Path(cfg.eval_db).parent / "paperbot.sqlite",
+        weekly_db=Path(cfg.eval_db),
         hyp_bridge=HypBridgeSources(
             bridge_db=Path(cfg.ft_bridge_db or Path(cfg.eval_db).parent / "ft_bridge.sqlite").expanduser(),
             ft_db=Path(cfg.ft_hyp_db).expanduser(),

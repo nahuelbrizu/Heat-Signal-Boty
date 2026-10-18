@@ -44,6 +44,21 @@
   y corte por tendencia/sesión (n e IC) en Hipótesis. 5 estrategias nuevas en `backend/strategies/tendencia-diaria-1h/`
   **sin registrar** (las registra el usuario). Falta: deploy + `HEATSIGNAL_ANALYSIS_MODE=sessions` + reinicio.
 
+## Novedades 2026-10-19 (sin desplegar)
+
+- **max-ruptura-10d-v1 en el bot propio de paper.** `paperbot/params.json` ahora define qué corre (6 del lote 3 + max-ruptura,
+  spec 39cb9dee6d3e469a, sin grilla). El modo (`inicio`/`consecutiva`/`hueco`) se decide por estrategia: la nueva entra
+  "desde hoy" (orden `inicio` al objetivo de la regla, 10.000 US$ y canasta propios desde su primera corrida) sin tocar la
+  historia de las otras. Sin cambios de esquema. Panel `#/paperbot`: veredicto del backtest + del holdout (no confirmó)
+  y "en paper desde". `lab/publish.py` publica `holdout_result` con ventana, canasta y p azar (republicar con
+  `python -m heatsignal.lab.publish --upload` desde la PC para verlos). Corrida en seco en la VM: 147 MB, 3 s.
+- **Revisión semanal** `python -m heatsignal.paper.weekly` + `deploy/heatsignal-weekly.{service,timer}` (lunes 00:30 UTC):
+  cierra la semana UTC anterior por código (sin LLM) y guarda una fila append-only por semana en `weekly_reviews`
+  (base de evaluación). Fuentes: bot propio, Freqtrade Donchian (+ paper_compare), Freqtrade de hipótesis, hipótesis del
+  grafo (n, IC de Wilson, alfa, cortes) y salud (bars_1m/klines, ciclos, sesiones con LLM; las llamadas al LLM no se
+  registran: falta). Panel `#/semanal`, `GET /api/weekly` y `/api/weekly/{week}`. Corrida en seco en la VM: 28 MB, 6–10 s.
+  Falta: deploy del código, reiniciar la ingesta (endpoint nuevo) e instalar el timer.
+
 ## Estado por fase
 
 | Fase | Estado | Dónde |
@@ -55,7 +70,7 @@
 | 4 — Producto | Panel **interno** listo (no público); dashboard/API pública/reporte no iniciados | `phase-4-product.md` |
 
 Código: rama `ingestion-binance-bybit`, pusheada a GitHub (sin PR).
-Tests: 787 pasando, 1 skipped (2026-10-18) (`backend/`, `.venv/bin/pytest -q`).
+Tests: 847 pasando, 1 skipped (2026-10-19) (`backend/`, `.venv/bin/pytest -q`).
 
 ## Qué corre hoy (VM de prueba)
 

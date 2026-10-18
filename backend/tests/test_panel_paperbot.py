@@ -41,7 +41,10 @@ def bot_db(tmp_path):
     (tmp_path / "lab_summary.json").write_text(json.dumps({"generated_at": "2026-10-18T00:00:00Z", "strategies": [
         {"strategy_id": "toy-v1", "spec_hash": spec.spec_hash(), "run": "r1", "sharpe": -0.42, "sharpe_ci95": [-1.2, 0.3],
          "dsr": 0.01, "total_return": -0.1, "max_drawdown": 0.2, "basket_sharpe": 0.6, "random_p": 0.7,
-         "oos_range": ["2021-01-01", "2026-07-15"], "holdout": "SELLADO",
+         "oos_range": ["2021-01-01", "2026-07-15"], "holdout": "ABIERTO",
+         "holdout_result": {"sharpe": 2.21, "total_return": 0.132, "trades": 51, "window": ["2026-07-17", "2026-10-17"],
+                            "basket_sharpe": 1.95, "random_p": 0.18, "confirma": False,
+                            "checks": {"retorno_neto_positivo": True, "le_gana_a_la_canasta": True, "le_gana_al_azar": False}},
          "verdict": {"pasa": False, "checks": {"opera": True, "dsr": False, "le_gana_a_la_canasta": False}}}]}))
     return tmp_path
 
@@ -64,6 +67,8 @@ async def test_paperbot_endpoints(bot_db):
         assert s["strategy_id"] == "toy-v1" and s["origen"] == "<b>origen</b>"
         assert {p["symbol"]: p["weight"] for p in s["positions"]} == {"BTCUSDT": 0.0, "ETHUSDT": -0.5}
         assert s["lab"]["pasa"] is False and s["lab"]["sharpe"] == -0.42 and s["lab"]["same_spec"] is True
+        assert s["lab"]["holdout_result"]["confirma"] is False and s["lab"]["holdout_result"]["random_p"] == 0.18
+        assert s["started_ms"] == T0 and s["hours"] == 5
         assert "traceback" not in json.dumps(ov)
 
         r = await c.get("/api/paperbot/toy-v1")
@@ -113,6 +118,8 @@ async def test_paperbot_view_renders_and_escapes(bot_db, tmp_path):
     assert "Simulado, sin plata real" in res["overview"]
     assert "no pasan los criterios del laboratorio" in res["overview"] and "backtest: no pasa" in res["overview"]
     assert "Equity horaria vs canasta" in res["detail"] and "NO pasó los criterios" in res["detail"]
+    assert "holdout: no confirmó" in res["overview"] and "Holdout: NO confirmó" in res["detail"]
+    assert "le gana al azar" in res["detail"] and "En paper desde" in res["detail"]
     assert "<b>origen</b>" in res["detail"]           # texto escapado (nodo de texto), no HTML
     assert "<img src=x onerror=alert(1)>" in res["overview"]
     assert "img" not in res["tags"]                     # ningun elemento creado a partir de datos

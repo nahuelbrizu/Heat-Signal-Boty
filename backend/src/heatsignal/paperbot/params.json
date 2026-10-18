@@ -1,5 +1,5 @@
 {
-  "_doc": "Parametros del bot de paper trading del lote 3. Versionado: cambiar un valor = commit con su origen. Solo se pueden elegir valores de la grilla congelada del spec (el bot lo valida y falla si no). Nada se optimiza en vivo. Para tomar el valor que eligio el walk-forward del laboratorio: python -m heatsignal.paperbot params-from-lab <strategy_id> [--write].",
+  "_doc": "Parametros del bot de paper trading del lote 3 y de max-ruptura-10d-v1 (lote 5). Las estrategias que corre el bot son las de este archivo; una nueva entra 'desde hoy' (su primera corrida) sin reescribir la historia de las otras. Versionado: cambiar un valor = commit con su origen. Solo se pueden elegir valores de la grilla congelada del spec (el bot lo valida y falla si no). Nada se optimiza en vivo. Para tomar el valor que eligio el walk-forward del laboratorio: python -m heatsignal.paperbot params-from-lab <strategy_id> [--write].",
   "strategies": {
     "tsmom-diario-v1": {
       "spec_hash": "7515d798e5d66a55",
@@ -85,6 +85,21 @@
       "params": {},
       "origen": "spec congelada (sin grilla)",
       "desde": "2026-10-18"
+    },
+    "max-ruptura-10d-v1": {
+      "spec_hash": "39cb9dee6d3e469a",
+      "universe": [
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "ETHUSDT",
+        "XLMUSDT",
+        "BNBUSDT",
+        "TRXUSDT"
+      ],
+      "params": {},
+      "origen": "spec congelada (sin grilla). Lote 5: pasa el backtest del lab; el holdout 2026-07-17 a 10-17 NO confirmo (le gana a la canasta, no al azar: p 0,18). Paper para juntar evidencia en otro regimen, no aprobacion.",
+      "desde": "2026-10-19"
     }
   }
 }

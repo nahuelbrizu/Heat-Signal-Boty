@@ -339,6 +339,18 @@
   (mismos datos hasta 2026-10-16, mismos parámetros, registro de intentos aparte: no suma K). Los 7 dieron
   idénticos (Sharpe y trades); se agregó solo la curva en `<run>_curvas.json` con el veredicto original.
 
+- **max-ruptura-10d-v1 al bot propio de paper (2026-10-19, pedido del usuario).** Spec congelada
+  39cb9dee6d3e469a, 7 símbolos, 10.000 USDT ficticios y canasta propia desde su primera corrida. El modo del bot
+  (inicio/consecutiva/hueco) se decide por estrategia: entra "desde hoy" sin tocar la historia de las otras 6;
+  `paperbot/params.json` define qué corre. No es aprobación: el holdout no confirmó (p azar 0,18 en un trimestre
+  alcista); el paper junta evidencia en otro régimen. El panel muestra backtest y holdout al lado.
+- **Revisión semanal automática (2026-10-19).** `heatsignal.paper.weekly` + `heatsignal-weekly.timer` (lunes
+  00:30 UTC) cierran la semana UTC anterior por código (sin LLM) en `weekly_reviews` (append-only, idempotente;
+  fuente caída = `partial`). Junta bot propio, Freqtrade Donchian (+ paper_compare), Freqtrade de hipótesis,
+  hipótesis del grafo (n, IC de Wilson, alfa, cortes) y salud. Llamadas al LLM: no se cuentan todavía
+  (`cycle_log` no las registra; va con las métricas del grafo). Una semana no prueba nada: sirve para operar.
+  Vista `#/semanal`.
+
 ## Abiertas
 - ~~Plan de CoinGlass a contratar.~~ **Ya no aplica al core** — la fuente primaria pasó a WS nativos.
   Solo se retomaría si se implementa la fuente BYOK opcional (y ahí el plan lo elige el usuario).

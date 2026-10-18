@@ -1,5 +1,6 @@
-// Bot propio de paper trading del lote 3 (/api/paperbot y /api/paperbot/{id}): corre cada hora en la VM, simula las 6
-// estrategias con las MISMAS reglas del laboratorio, dinero ficticio. Honestidad: aviso fijo de que es simulado y de que
+// Bot propio de paper trading (/api/paperbot y /api/paperbot/{id}): corre cada hora en la VM, simula las estrategias de
+// params.json (6 del lote 3 + max-ruptura-10d-v1 del lote 5) con las MISMAS reglas del laboratorio, dinero ficticio.
+// Cada estrategia tiene su propio inicio (la que se sumó después arranca con su capital y su canasta desde ahí). Honestidad: aviso fijo de que es simulado y de que
 // el backtest todavia puede descartarlas; huecos y corridas con error a la vista; tasas con n e IC.
 import {
   el, clear, api, errorBox, when, int, num, frac, price, card, table, pageHead, loading, chip, kv, stat, isNum,
@@ -14,6 +15,7 @@ const NAMES = {
   "rango-reversion-v1": "Reversión en rango (BNB/TRX/XLM)",
   "reversion-xs-1h-v1": "Reversión alts vs BTC 1h",
   "funding-prepago-v1": "Funding prepago",
+  "max-ruptura-10d-v1": "Ruptura del máximo de 10 días (lote 5)",
 };
 const STATUS = { ok: ["ok", "ok"], error: ["bad", "error"], skipped: ["", "omitida"] };
 const REASON = { senal: "señal", resincronizacion: "re-sincronización", inicio: "inicio", hueco: "después de hueco" };
@@ -44,9 +46,27 @@ function labChip(lab) {
   if (lab.same_spec === false) return chip("backtest de otra versión", "warn", "el spec_hash del backtest no coincide con el del bot");
   return lab.pasa ? chip("backtest: pasa", "ok") : chip("backtest: no pasa", "bad", "no cumple los criterios para pasar a paper");
 }
+/** Resultado del holdout (si se abrió): se muestra siempre al lado del backtest, confirme o no. */
+export function holdoutChip(lab) {
+  const h = lab && lab.holdout_result;
+  if (!h) return lab && lab.holdout === "ABIERTO" ? chip("holdout abierto", "info") : null;
+  return h.confirma ? chip("holdout: confirmó", "ok")
+    : chip("holdout: no confirmó", "bad", "el trimestre reservado no confirmó el backtest" + (isNum(h.random_p) ? " (p azar " + num(h.random_p, 2) + ")" : ""));
+}
+const HOLD_CHECKS = { retorno_neto_positivo: "retorno neto > 0", le_gana_a_la_canasta: "le gana a la canasta", le_gana_al_azar: "le gana al azar" };
+function holdoutText(h) {
+  if (!h) return null;
+  const failed = Object.entries(h.checks || {}).filter(([, ok]) => ok === false).map(([k]) => HOLD_CHECKS[k] || k);
+  return el("div", {}, el("b", {}, h.confirma ? "Holdout: confirmó. " : "Holdout: NO confirmó. "),
+    (h.window ? "Ventana " + String(h.window[0]).slice(0, 10) + " a " + String(h.window[1]).slice(0, 10) + " · " : "") +
+    "Sharpe " + num(h.sharpe, 2) + " · retorno " + signedFrac(h.total_return, 1) + " · " + int(h.trades) + " trades" +
+    (isNum(h.basket_sharpe) ? " · canasta Sharpe " + num(h.basket_sharpe, 2) : "") + (isNum(h.random_p) ? " · p azar " + num(h.random_p, 2) : "") + ".",
+    failed.length ? " Falla: " + failed.join(", ") + "." : "",
+    h.confirma ? "" : " Según la regla fijada no pasa a plata real; el paper junta evidencia en otro régimen.");
+}
 function labCell(lab) {
   if (!lab) return el("span", { class: "muted" }, "sin backtest");
-  return el("span", {}, labChip(lab), el("div", { class: "small" }, "Sharpe OOS ", el("b", { class: isNum(lab.sharpe) ? (lab.sharpe >= 0 ? "pos" : "neg") : "" }, num(lab.sharpe, 2)),
+  return el("span", {}, el("span", { class: "chips" }, labChip(lab), holdoutChip(lab)), el("div", { class: "small" }, "Sharpe OOS ", el("b", { class: isNum(lab.sharpe) ? (lab.sharpe >= 0 ? "pos" : "neg") : "" }, num(lab.sharpe, 2)),
     lab.sharpe_ci95 ? el("span", { class: "muted" }, " (IC " + num(lab.sharpe_ci95[0], 2) + " a " + num(lab.sharpe_ci95[1], 2) + ")") : null));
 }
 export function labBlock(lab) {
@@ -59,11 +79,12 @@ export function labBlock(lab) {
     " · DSR " + num(lab.dsr, 2) + " · retorno " + signedFrac(lab.total_return, 1) + " · máx. DD " + frac(lab.max_drawdown, 1) +
     " · canasta Sharpe " + num(lab.basket_sharpe, 2) + " · p azar " + num(lab.random_p, 3) +
     (lab.oos_range ? " · OOS " + lab.oos_range[0] + " a " + lab.oos_range[1] : "") + (lab.holdout ? " · holdout " + lab.holdout : "") + ".",
-    failed.length ? el("div", {}, "Falla: ", failed.join(", "), ".") : null);
+    failed.length ? el("div", {}, "Falla: ", failed.join(", "), ".") : null,
+    holdoutText(lab.holdout_result));
 }
 
 export async function mount(root, ctx) {
-  const head = pageHead("Bot paper · lote 3", "Bot propio que corre cada hora en la VM y simula las 6 estrategias del lote 3 con las mismas reglas del laboratorio. Solo lectura.",
+  const head = pageHead("Bot paper", "Bot propio que corre cada hora en la VM y simula las estrategias del lote 3 y max-ruptura-10d-v1 (lote 5) con las mismas reglas del laboratorio. Solo lectura.",
     el("a", { class: "btn", href: ctx.href("paper") }, "Freqtrade dry-run →"));
   const top = el("div", {}, loading());
   const detailBox = el("div", {});
@@ -98,7 +119,7 @@ export async function mount(root, ctx) {
 
 function disclaimer(ov) {
   return el("div", { class: "note warn", role: "note" }, el("b", {}, "Simulado, sin plata real. "),
-    ov && ov.disclaimer ? ov.disclaimer : "Paper trading con dinero ficticio; el backtest del lote 3 todavía puede descartar estas estrategias.");
+    ov && ov.disclaimer ? ov.disclaimer : "Paper trading con dinero ficticio; el backtest o el holdout del laboratorio pueden descartar estas estrategias.");
 }
 
 // ------------------------------------------------------------------ resumen
@@ -110,12 +131,12 @@ export function renderOverview(ov, href, sel) {
       last.hour_ms ? el("span", {}, "hora ", when(last.hour_ms), last.reason ? " · " + last.reason : "") : "ninguna"),
     stat("Corridas", int(c.ok) + " ok", int(c.error) + " con error · " + int(c.skipped) + " omitidas", c.error ? "bad-t" : ""),
     stat("Huecos", int((ov.gaps || []).length), (ov.gaps || []).length ? "horas sin simular (no se rellenan)" : "ninguno"),
-    stat("Paper desde", ov.started_ms ? when(ov.started_ms) : DASH, "10.000 US$ ficticios por estrategia"));
+    stat("Paper desde", ov.started_ms ? when(ov.started_ms) : DASH, "10.000 US$ ficticios por estrategia, cada una desde su primera corrida"));
   const notes = (ov.notes || []).map((n) => el("div", { class: "note bad" }, n));
   const withLab = (ov.strategies || []).filter((s) => s.lab);
   const failing = withLab.filter((s) => !s.lab.pasa);
   const negative = withLab.filter((s) => isNum(s.lab.sharpe) && s.lab.sharpe < 0);
-  if (failing.length) notes.push(el("div", { class: "note bad" }, el("b", {}, "Backtest del lote 3: "),
+  if (failing.length) notes.push(el("div", { class: "note bad" }, el("b", {}, "Backtest del laboratorio: "),
     int(failing.length) + " de " + int(withLab.length) + " estrategias no pasan los criterios del laboratorio" +
     (negative.length ? " (" + int(negative.length) + " con Sharpe fuera de muestra negativo)" : "") +
     ". El paper sigue corriendo para compararlo con la realidad, no porque estén aprobadas."));
@@ -128,7 +149,8 @@ export function renderOverview(ov, href, sel) {
     { label: "Backtest (laboratorio)", title: "veredicto del walk-forward OOS publicado (lab_summary.json)" }],
   strategies.map((s) => [
     el("a", { href: href("paperbot", [s.strategy_id]), "aria-current": s.strategy_id === sel ? "true" : null }, el("b", {}, name(s.strategy_id)),
-      el("div", { class: "small muted mono" }, s.strategy_id)),
+      el("div", { class: "small muted mono" }, s.strategy_id),
+      s.started_ms ? el("div", { class: "small muted" }, "desde ", when(s.started_ms)) : null),
     money(s.equity), sFrac(s.return), sFrac(s.basket_return), sMoney(s.realized), sMoney(s.unrealized), sMoney(s.funding),
     money((s.fees || 0) + (s.slippage || 0)), num(s.exposure, 2) + "×", int(s.n_orders),
     s.n_trades ? int(s.wins) + "/" + int(s.n_trades) + " ganadores" : "0",
@@ -216,13 +238,14 @@ export function renderDetail(d) {
     stat("Máx. drawdown", isNum(d.max_drawdown) ? signedFrac(d.max_drawdown, 2) : DASH, "sobre la equity horaria"),
     stat("Trades cerrados", int(trades.length), trades.length ? rateText(nW, trades.length, d.win_ci95) : "todavía ninguno"));
 
-  return card(name(d.strategy_id), el("span", { class: "chips" }, chip("simulado", "warn"), labChip(d.lab), d.spec_hash ? chip("spec " + d.spec_hash, "", "hash de la regla congelada") : null),
+  return card(name(d.strategy_id), el("span", { class: "chips" }, chip("simulado", "warn"), labChip(d.lab), holdoutChip(d.lab), d.spec_hash ? chip("spec " + d.spec_hash, "", "hash de la regla congelada") : null),
     el("div", { class: "stack" },
       labBlock(d.lab),
       stats,
       trades.length && trades.length < 30 ? el("div", { class: "note" }, el("b", {}, "Muestra chica: "), int(trades.length) + " trades cerrados no alcanzan para sacar conclusiones.") : null,
       kv([["Estrategia", el("code", {}, d.strategy_id)], ["Parámetros de la grilla", el("code", {}, JSON.stringify(d.params || {}))],
-        ["Origen de los parámetros", d.origen || DASH], ["Universo", (d.universe || []).map(toSym).join(", ")], ["Estado a la hora", when(d.hour_ms)]]),
+        ["Origen de los parámetros", d.origen || DASH], ["Universo", (d.universe || []).map(toSym).join(", ")],
+        ["En paper desde", d.started_ms ? el("span", {}, when(d.started_ms), " · " + int(d.hours) + " h con corrida ok") : DASH], ["Estado a la hora", when(d.hour_ms)]]),
       el("div", { class: "grid two" },
         el("div", {}, el("h3", {}, "Equity horaria vs canasta"), chart),
         el("div", {}, el("h3", {}, "De dónde sale el PnL"), bars,

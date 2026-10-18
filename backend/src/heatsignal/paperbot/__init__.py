@@ -1,5 +1,6 @@
 """
-Bot propio de PAPER TRADING (simulado: sin plata real, sin API keys de exchange) para las 6 estrategias del lote 3.
+Bot propio de PAPER TRADING (simulado: sin plata real, sin API keys de exchange) para las estrategias de `params.json`: las 6 del lote 3
+(desde 2026-10-18) y max-ruptura-10d-v1 del lote 5 (desde 2026-10-19, entra sin tocar a las otras).
 
     python -m heatsignal.paperbot run          # una corrida (la dispara heatsignal-paperbot.timer a los :02 UTC)
     python -m heatsignal.paperbot status       # ultimas corridas y equity por estrategia
