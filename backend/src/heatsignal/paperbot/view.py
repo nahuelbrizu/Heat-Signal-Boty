@@ -76,6 +76,38 @@ def _detail(r: sqlite3.Row | None) -> dict[str, Any]:
         return {}
 
 
+def _has_exits(conn: sqlite3.Connection) -> bool:
+    return conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='exit_reasons'").fetchone() is not None
+
+
+def exit_counts(conn: sqlite3.Connection, sid: str, since_ms: int | None = None, until_ms: int | None = None) -> dict[str, Any]:
+    """Trades cerrados por motivo (tabla `exit_reasons`, aditiva desde 2026-10-19). Los trades anteriores al registro
+    quedan como `sin_dato` (no se reconstruyen hacia atras)."""
+    where, args = "t.strategy_id=?", [sid]
+    if since_ms is not None:
+        where += " AND t.exit_ms >= ?"
+        args.append(since_ms)
+    if until_ms is not None:
+        where += " AND t.exit_ms < ?"
+        args.append(until_ms)
+    if not _has_exits(conn):
+        n = conn.execute(f"SELECT COUNT(*) FROM trades t WHERE {where}", args).fetchone()[0]
+        return {"sin_dato": n} if n else {}
+    out: dict[str, int] = {}
+    for m, n in conn.execute(
+            "SELECT COALESCE((SELECT e.motivo FROM exit_reasons e WHERE e.strategy_id=t.strategy_id AND e.symbol=t.symbol "
+            f"AND e.fill_ms=t.exit_ms ORDER BY e.decision_ms DESC LIMIT 1), 'sin_dato'), COUNT(*) FROM trades t WHERE {where} "
+            "GROUP BY 1", args):
+        out[m] = n
+    return out
+
+
+def _ficha(sid: str) -> dict[str, Any] | None:
+    from ..lab.exits import ficha_json  # sin pandas
+
+    return ficha_json(sid)
+
+
 def _strategy_ids(conn: sqlite3.Connection) -> list[str]:
     return [r[0] for r in conn.execute("SELECT DISTINCT strategy_id FROM equity ORDER BY strategy_id")]
 
@@ -108,6 +140,7 @@ def _summary(conn: sqlite3.Connection, sid: str, last_ok_detail: dict[str, Any])
         "n_orders": n_orders[0], "last_order_ms": n_orders[1], "last_order_at": _iso(n_orders[1]),
         "n_trades": tr[0], "wins": tr[1], "trades_pnl": tr[2], "win_ci95": wilson(tr[1], tr[0]),
         "spark": [[r["hour_ms"], r["equity"], r["basket_equity"]] for r in spark],
+        "exits": _ficha(sid), "exit_counts": exit_counts(conn, sid),
     }
 
 
@@ -160,7 +193,9 @@ def strategy_detail(db_path: str | Path, strategy_id: str, *, now_ms: int | None
                            (strategy_id, s["hour_ms"])).fetchall()
         orders = conn.execute("SELECT * FROM orders WHERE strategy_id=? ORDER BY fill_ms DESC, id DESC LIMIT ?",
                               (strategy_id, MAX_ROWS)).fetchall()
-        trades = conn.execute("SELECT * FROM trades WHERE strategy_id=? ORDER BY exit_ms DESC LIMIT ?",
+        motivo = ("(SELECT e.motivo FROM exit_reasons e WHERE e.strategy_id=t.strategy_id AND e.symbol=t.symbol AND "
+                  "e.fill_ms=t.exit_ms ORDER BY e.decision_ms DESC LIMIT 1)") if _has_exits(conn) else "NULL"
+        trades = conn.execute(f"SELECT t.*, {motivo} AS motivo FROM trades t WHERE t.strategy_id=? ORDER BY t.exit_ms DESC LIMIT ?",
                               (strategy_id, MAX_ROWS)).fetchall()
         funding = conn.execute("SELECT * FROM funding_events WHERE strategy_id=? ORDER BY funding_ms DESC LIMIT ?",
                                (strategy_id, MAX_ROWS)).fetchall()

@@ -6,6 +6,7 @@ import {
   el, clear, api, errorBox, when, int, num, frac, card, table, pageHead, loading, chip, kv, stat, isNum, signedFrac,
   signedPct, rateText, ciBar, prose, sym as toSym, DASH,
 } from "../core.js";
+import { reasonBars, FT_REASON, MOTIVO } from "../exits-ui.js";
 
 const SMALL = 30;
 const SOURCES = { paperbot: "Bot paper propio", freqtrade: "Freqtrade Donchian", hyp_bridge: "Freqtrade de hipótesis",
@@ -72,6 +73,9 @@ export function renderOverview(data, href, sel) {
 
 // ------------------------------------------------------------------ una semana
 
+const exitsText = (c, labels) => c && Object.keys(c).length ? el("span", { class: "small" },
+  Object.entries(c).map(([k, n]) => (labels[k] || k) + " " + int(n)).join(" · ")) : el("span", { class: "muted" }, DASH);
+
 function unavailable(src) { return el("div", { class: "note warn" }, el("b", {}, "Sin datos: "), String(src && src.error || "fuente no disponible")); }
 
 function paperbotCard(pb) {
@@ -80,11 +84,13 @@ function paperbotCard(pb) {
   const t = table([{ label: "Estrategia" }, { label: "PnL semana", cls: "n" }, { label: "Canasta", cls: "n", title: "buy & hold igual-ponderado de los mismos símbolos" },
     { label: "vs canasta", cls: "n" }, { label: "Precio", cls: "n" }, { label: "Funding", cls: "n" }, { label: "Costos", cls: "n", title: "comisiones + slippage" },
     { label: "Máx. DD", cls: "n", title: "drawdown máximo dentro de la semana (equity horaria)" }, { label: "Órdenes", cls: "n" },
-    { label: "Trades cerrados" }, { label: "Acumulado", cls: "n" }, { label: "Acum. vs canasta", cls: "n" }],
+    { label: "Trades cerrados" }, { label: "Salidas", title: "trades cerrados en la semana por motivo (stop, objetivo, tiempo, señal, rebalanceo)" },
+    { label: "Acumulado", cls: "n" }, { label: "Acum. vs canasta", cls: "n" }],
   sts.map((s) => [el("span", {}, el("b", { class: "mono" }, s.strategy_id),
     s.started_in_week ? el("div", {}, chip("entró en la semana", "info", "semana parcial: arrancó con 10.000 US$ el " + day(s.started_at))) : null),
     sMoney(s.pnl_week), sMoney(s.basket_pnl_week), sMoney(s.vs_basket_week), sMoney(s.price_pnl_week), sMoney(s.funding_week), money(s.costs_week),
-    isNum(s.max_dd_week) ? signedFrac(s.max_dd_week, 2) : DASH, int(s.orders_week), rateCell(s.trades_week), sMoney(s.pnl_cum), sMoney(s.vs_basket_cum)]),
+    isNum(s.max_dd_week) ? signedFrac(s.max_dd_week, 2) : DASH, int(s.orders_week), rateCell(s.trades_week), exitsText(s.exits_week, MOTIVO),
+    sMoney(s.pnl_cum), sMoney(s.vs_basket_cum)]),
   { empty: "El bot no tenía estrategias con corridas en esta semana.", label: "Bot paper por estrategia", scroll: true });
   const r = pb.runs || {};
   const errs = pb.errors || [];
@@ -119,6 +125,7 @@ function freqtradeCard(ft) {
           : el("span", {}, "publicada " + (cmp.generated_at || DASH) + " · estado " + (cmp.status || DASH) +
             (cmp.window ? " · ventana " + [].concat(cmp.window).join(" a ") : "") + " · paper " + money(cmp.paper_total, true) + " vs simulado " + money(cmp.sim_total, true),
             cmp.published_in_week ? null : el("span", { class: "muted" }, " (no se publicó en esta semana)"))]]),
+      ft.exits_week && Object.keys(ft.exits_week).length ? el("div", {}, el("h3", {}, "Cierres de la semana por motivo (exit_reason)"), reasonBars(ft.exits_week, FT_REASON)) : null,
       el("p", { class: "small muted" }, ft.unrealized_note || "")));
 }
 
@@ -142,6 +149,8 @@ function hypBridgeCard(hb) {
         { label: "Cerradas", cls: "n" }, { label: "PnL", cls: "n" }, { label: "Ganadoras (Freqtrade)" }, { label: "Aciertos (hipótesis)" },
         { label: "Mismo resultado", cls: "n" }, { label: "Dif. media", cls: "n" }, { label: "Stops" }], rows,
       { empty: "Ninguna hipótesis de 1h en la semana.", label: "Freqtrade de hipótesis por estrategia", scroll: true }),
+      hb.exits_week && Object.keys(hb.exits_week).length ? el("div", {}, el("h3", {}, "Cierres de la semana por motivo (exit_reason)"), reasonBars(hb.exits_week, FT_REASON),
+        el("p", { class: "small muted" }, "hyp_due = venció la hipótesis (salida por tiempo, la regla); stop_loss = stop de seguridad −20 % (no es parte de la hipótesis).")) : null,
       (hb.notes || []).length ? el("div", {}, ...(hb.notes || []).map((n) => el("div", { class: "note" }, n))) : null));
 }
 
@@ -170,6 +179,9 @@ function hypothesesCard(hy) {
           "PnL medio " + (isNum(rw.mean_pnl_pct) ? signedPct(rw.mean_pnl_pct, 2) : DASH) + " · mantener " + (isNum(rw.mean_benchmark_pnl_pct) ? signedPct(rw.mean_benchmark_pnl_pct, 2) : DASH)),
         stat("Acumulado", hy.cum && hy.cum.n ? frac(hy.cum.rate, 0) : DASH, hy.cum && hy.cum.n ? rateText(hy.cum.wins, hy.cum.n, hy.cum.ci95) : "sin casos")),
       rw.n ? el("div", {}, ciBar(rw.rate, rw.ci95), " ", small(rw)) : null,
+      el("p", { class: "small" }, el("b", {}, "Salidas: "), "todas por tiempo (" + int((hy.exits_week || {}).tiempo || 0) + " en la semana; pre-registradas sin stop ni objetivo).",
+        hy.excursion_week && hy.excursion_week.n ? el("span", { class: "muted" }, " MAE medio " + num(hy.excursion_week.mean_mae_atr, 2) + " ATR · MFE medio " +
+          num(hy.excursion_week.mean_mfe_atr, 2) + " ATR (n " + int(hy.excursion_week.n) + "; descriptivo, no pre-registrado).") : null),
       st,
       el("div", { class: "grid wide" },
         segTable("Por tendencia del día", hy.by_daily_trend, "daily_trend", { head: "Tendencia", sin_registro: "sin registro", sin_datos: "sin datos" }),

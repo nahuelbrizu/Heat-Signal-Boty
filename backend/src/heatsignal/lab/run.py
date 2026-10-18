@@ -17,6 +17,8 @@ Procedimiento (plan-laboratorio.md, research/ml4t-metodologia.md):
      al azar (p-valor empirico). El reporte trae ademas las curvas de capital diarias OOS (`oos.equity_daily`
      y `baselines.equity_daily`: canasta, buy & hold medio y por simbolo) solo para graficar.
   6. Veredicto con los criterios del plan. El holdout se abre aparte (`--open-holdout`), una sola vez.
+     Con una sola combinacion el "DSR" del reporte es el PSR (`oos.dsr_label`); el veredicto del programa con la
+     regla del 2026-10-19 lo arma `lab.publish` (`veredicto_programa`) con `lab.program`, sin reescribir este JSON.
 """
 
 from __future__ import annotations
@@ -251,6 +253,7 @@ def evaluate(cfg: RunConfig, registry: TrialRegistry | None = None, data: dict[s
         "oos": {
             "sharpe": sharpe_oos, "sharpe_ci95": [ci.get("lo"), ci.get("hi")] if isinstance(ci, dict) else ci,
             "psr": dsr["psr"], "dsr": dsr["dsr"], "sr0_annual": dsr["sr0_annual"],
+            "dsr_label": dsr_label(len(combos)),
             "min_trl_days": dsr["min_trl_obs"], "days": dsr["n_obs"],
             "total_return": float(oos.sum()), "max_drawdown": stats.max_drawdown(oos),
             "breakeven_bps_per_side": breakeven,
@@ -276,6 +279,16 @@ def evaluate(cfg: RunConfig, registry: TrialRegistry | None = None, data: dict[s
     }
     report["verdict"] = verdict(report)
     return report
+
+
+PSR_LABEL = "PSR (sin corrección de selección)"
+
+
+def dsr_label(n_combinations: int) -> str:
+    """Como se llama el "DSR propio" del reporte. Con UNA combinacion la varianza de los intentos es 0, SR0 = 0 y el
+    DSR es exactamente el PSR: no corrige ninguna seleccion (ni la del programa). El calculo no cambia; solo se
+    marca. El liston del programa (`lab.program`, regla del 2026-10-19) es el que corrige por todos los intentos."""
+    return PSR_LABEL if n_combinations <= 1 else "DSR"
 
 
 HOLDOUT_CRITERIA = {"retorno_neto_min": 0.0, "le_gana_a_la_canasta": True, "p_random_max": 0.10}

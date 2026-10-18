@@ -20,7 +20,8 @@ from typing import Any
 DEFAULT_DB = "data/paperbot.sqlite"
 HOUR_MS = 3_600_000
 
-TABLES = ("runs", "orders", "funding_events", "equity", "positions", "trades", "basket", "gaps", "funding_rates")
+TABLES = ("runs", "orders", "funding_events", "equity", "positions", "trades", "basket", "gaps", "funding_rates",
+          "exit_reasons")
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS runs (
@@ -139,6 +140,24 @@ CREATE TABLE IF NOT EXISTS gaps (
     hours        INTEGER NOT NULL
 );
 
+-- Motivo de cada orden que cierra o da vuelta una posicion (2026-10-19, aditiva: solo desde su primera corrida; las
+-- ordenes anteriores no tienen fila y no se reescriben). stop / objetivo / tiempo / senal / rebalanceo salen de la
+-- regla (lab/exits.py: niveles reconstruidos con la misma logica de exits_with_levels, o la ficha de salidas);
+-- resincronizacion / inicio / hueco = la orden no la pidio la regla en esa hora (ver orders.reason).
+CREATE TABLE IF NOT EXISTS exit_reasons (
+    run_id       TEXT    NOT NULL,
+    strategy_id  TEXT    NOT NULL,
+    symbol       TEXT    NOT NULL,
+    decision_ms  INTEGER NOT NULL,
+    fill_ms      INTEGER NOT NULL,          -- = trades.exit_ms del trade que cierra
+    weight_from  REAL    NOT NULL,
+    weight_to    REAL    NOT NULL,
+    motivo       TEXT    NOT NULL CHECK (motivo IN ('stop', 'objetivo', 'tiempo', 'senal', 'rebalanceo',
+                                                    'resincronizacion', 'inicio', 'hueco')),
+    UNIQUE (strategy_id, symbol, decision_ms, fill_ms)
+);
+CREATE INDEX IF NOT EXISTS exit_reasons_fill ON exit_reasons (strategy_id, symbol, fill_ms);
+
 CREATE TABLE IF NOT EXISTS funding_rates (
     symbol       TEXT    NOT NULL,          -- BTCUSDT
     funding_ms   INTEGER NOT NULL,
@@ -235,7 +254,7 @@ class PaperbotStore:
 
     def record_run(self, run: dict[str, Any], *, orders: Iterable[dict] = (), funding: Iterable[dict] = (),
                    equity: Iterable[dict] = (), positions: Iterable[dict] = (), trades: Iterable[dict] = (),
-                   basket: Iterable[dict] = (), gaps: Iterable[dict] = ()) -> None:
+                   basket: Iterable[dict] = (), gaps: Iterable[dict] = (), exits: Iterable[dict] = ()) -> None:
         """Todo en UNA transaccion. Si falla (p.ej. otra corrida ok de la misma hora), no queda nada escrito."""
         run = {**run, "detail": json.dumps(run.get("detail"), ensure_ascii=False, default=str)
                if not isinstance(run.get("detail"), str) else run["detail"]}
@@ -248,6 +267,7 @@ class PaperbotStore:
             _insert(self.conn, "trades", trades, ignore=True)  # un trade cerrado ya guardado no se duplica
             _insert(self.conn, "basket", basket)
             _insert(self.conn, "gaps", gaps)
+            _insert(self.conn, "exit_reasons", exits, ignore=True)
 
 
 def _insert(conn: sqlite3.Connection, table: str, rows: Iterable[dict], ignore: bool = False) -> None:

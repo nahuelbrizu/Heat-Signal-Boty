@@ -8,6 +8,7 @@ import { hypTable } from "../hyp-ui.js";
 import { symbolAnalysis } from "../analysis-ui.js";
 import { trendChip, alignChip, tfText, trendCuts, sessionText } from "../htf-ui.js";
 import { lessonBox, RULE_TEXT } from "./lecciones.js";
+import { excursionCard, excursionSummaryCard } from "../exits-ui.js";
 
 export async function mount(root, ctx) {
   if (ctx.route.parts[0]) return detail(root, ctx, ctx.route.parts[0]);
@@ -29,9 +30,10 @@ async function list(root, ctx) {
   const body = el("div", {}, loading());
   const summaryBox = el("div");
   const trendBox = el("div", {}, loading());
-  clear(root, pageHead("Hipótesis", "Todas, incluidos los fallos (anti-sesgo de supervivencia). Cada una se resuelve contra el precio real al vencer."),
+  const excBox = el("div");
+  clear(root, pageHead("Hipótesis", "Todas, incluidos los fallos (anti-sesgo de supervivencia). Cada una se resuelve contra el precio real al vencer. Salen por tiempo (sin stop ni objetivo)."),
     card(null, null, form, summaryBox, body),
-    card("Acierto según la tendencia del día", "con los filtros de estrategia, símbolo y temporalidad", trendBox));
+    card("Acierto según la tendencia del día", "con los filtros de estrategia, símbolo y temporalidad", trendBox), excBox);
 
   let strategies = [];
   try { strategies = (await api("/api/strategies", null, ctx.signal)).items; } catch { /* filtro sin nombres */ }
@@ -76,6 +78,7 @@ async function list(root, ctx) {
         pager(d.total, f.limit, f.offset, (o) => { f.offset = o; sync(); }));
       filterRate();
       trendRate();
+      excursions();
     } catch (e) { const b = errorBox(e, "las hipótesis"); if (b) clear(body, b); }
   }
 
@@ -84,6 +87,11 @@ async function list(root, ctx) {
       const d = await api("/api/hypotheses/by-trend", { strategy_id: f.strategy_id, symbol: f.symbol, timeframe: f.timeframe }, ctx.signal);
       clear(trendBox, trendCuts(d));
     } catch (e) { const b = errorBox(e, "el corte por tendencia"); if (b) clear(trendBox, b); }
+  }
+
+  async function excursions() {
+    try { clear(excBox, excursionSummaryCard(await api("/api/hypotheses/excursions", { strategy_id: f.strategy_id }, ctx.signal)) || ""); }
+    catch { clear(excBox); }
   }
 
   async function filterRate() {
@@ -162,6 +170,7 @@ async function detail(root, ctx, id) {
           ["Ciclo que la generó", h.run_id ? el("a", { href: ctx.href("ciclos", [h.run_id]) }, h.run_id) : "—"],
         ]),
         el("h3", { style: { marginTop: "12px" } }, "Justificación"), prose(h.rationale || "—"))),
+    excursionCard(h),
     h.status === "resolved" ? card("Lección", el("a", { href: ctx.href("lecciones", [], { strategy_id: h.strategy_id }) }, "diario de lecciones →"),
       el("p", { class: "small muted" }, RULE_TEXT), lessonSlot) : null,
     st ? card("Estrategia", el("a", { href: ctx.href("estrategias", [st.strategy_id]) }, "ver track record →"),

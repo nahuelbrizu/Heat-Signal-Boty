@@ -402,6 +402,19 @@
   (percentil ~76). Las de tendencia son las mejores del programa pero todavía no hay evidencia estadística de
   ventaja. Seguir con: meta-labeling (plan de entrenamiento), datos nuevos hacia adelante y paper trading.
 
+- **Stop loss / take profit implementado (2026-10-19).** Ficha `lab/exits.py` (`EXITS`, aparte del Spec: ningún
+  spec_hash cambió; test contra `spec.params`). Atribución de salidas con `lab.diagnostics salidas|ambos`: misma
+  lógica que `exits_with_levels`, verificada llamada por llamada en las reglas que la usan; en las que salen por
+  transición de señal (Donchian, tsmom, carry, low-vol, funding-xs, pares, reversion-xs, prepago) el motivo se
+  infiere de la ficha (no verificado). Solo desarrollo, no suma intentos. Paperbot: `exit_reasons` (append-only,
+  desde ahora). Hipótesis: MAE/MFE en `hypothesis_excursions`; el corte de stops 1/1,5/2 ATR es descriptivo y NO
+  pre-registrado. Freqtrade: stop y ROI configurados y `exit_reason` por trade en el panel. **Plata real:** toda
+  orden lleva `STOP_MARKET` reduce-only en el exchange; si la regla no tiene stop, stop de catástrofe — PROPUESTA a
+  confirmar por el usuario: 3 ATR(14) de la temporalidad, piso 8 %, techo 20 % del precio; si el stop no se puede
+  colocar, la entrada se cancela. Verificar `STOP_MARKET`/`reduceOnly`/`workingType` contra la doc de Binance antes.
+- **Listón del programa implementado** (`lab/program.py`, estados por intento en `lab_trial_status`, tres métodos
+  en el panel). Resultado arriba.
+
 ## Abiertas
 - ~~Plan de CoinGlass a contratar.~~ **Ya no aplica al core** — la fuente primaria pasó a WS nativos.
   Solo se retomaría si se implementa la fuente BYOK opcional (y ahí el plan lo elige el usuario).

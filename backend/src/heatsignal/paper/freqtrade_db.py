@@ -416,6 +416,14 @@ def paper_state(d: dict[str, Any], *, api: dict[str, Any] | None = None, wallet_
         p["hit_rate"] = p["wins"] / p["closed"] if p["closed"] else None
         p["ci95"] = wilson(p["wins"], p["closed"])
 
+    exit_reasons: dict[str, int] = {}
+    for c in closed:
+        k = c.get("exit_reason") or "sin_dato"
+        exit_reasons[k] = exit_reasons.get(k, 0) + 1
+    from ..lab.exits import freqtrade_exits  # sin pandas: stop y ROI configurados (API si respondio, si no la estrategia)
+
+    strategy = cfg.get("strategy") or next((t["strategy"] for t in d.get("trades", []) if t.get("strategy")), None)
+
     kv = d.get("kv", {})
     health = api.get("health") or {}
     startup_ms = _f(health.get("bot_startup_ts"))
@@ -457,6 +465,8 @@ def paper_state(d: dict[str, Any], *, api: dict[str, Any] | None = None, wallet_
         "closed_trades": closed,
         "equity": equity,
         "by_pair": sorted(pairs.values(), key=lambda p: p["symbol"] or ""),
+        "exits": freqtrade_exits(strategy or "DonchianEnsembleV1", cfg),
+        "exit_reasons": exit_reasons,
         "notes": notes,
     }
 

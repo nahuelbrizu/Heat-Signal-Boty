@@ -25,6 +25,8 @@ Una corrida en el instante `now` (el timer la dispara a los :02 UTC):
         regla en H, capital 10.000 y canasta propios desde H) aunque las demas sigan en `consecutiva`. No se reescribe
         ni se recalcula nada de las otras.
       - costos 5 + 2 bps por lado; funding cobrado/pagado en cada liquidacion con la posicion vigente justo antes.
+      - cada orden que cierra o da vuelta una posicion queda con su motivo en `exit_reasons` (stop / objetivo /
+        tiempo / senal / rebalanceo, de `lab/exits.py`; o el motivo de la orden si no la pidio la regla).
  6. Escribe todo en `paperbot.sqlite` en UNA transaccion (append-only).
 """
 
@@ -47,6 +49,7 @@ import pandas as pd
 from ..evaluation.price_source import HttpGet
 from ..history import klines as hk
 from ..history.store import HistoryStore
+from ..lab.exits import capture_exits, reason_map
 from . import params as P
 from .funding import update_funding
 from .ledger import CAPITAL, EPS, FEE_BPS, SLIPPAGE_BPS, Book
@@ -310,7 +313,7 @@ def _run(cfg: EngineConfig, store: PaperbotStore, base: dict, H: int, now: int, 
     prev = store.last_ok_run(before_ms=H)
     consecutive = prev is not None and prev["hour_ms"] == H - HOUR_MS
     mode = "consecutiva" if consecutive else ("inicio" if prev is None else "hueco")
-    rows: dict[str, list] = {k: [] for k in ("orders", "funding", "equity", "positions", "trades", "basket", "gaps")}
+    rows: dict[str, list] = {k: [] for k in ("orders", "funding", "equity", "positions", "trades", "basket", "gaps", "exits")}
     if prev is not None and not consecutive:
         hours = (H - prev["hour_ms"]) // HOUR_MS - 1
         rows["gaps"].append({"run_id": base["run_id"], "from_ms": prev["hour_ms"] + HOUR_MS, "to_ms": H - HOUR_MS,
@@ -325,8 +328,15 @@ def _run(cfg: EngineConfig, store: PaperbotStore, base: dict, H: int, now: int, 
         s_consecutive = consecutive and last_eq == prev["hour_ms"]
         s_mode = "consecutiva" if s_consecutive else ("inicio" if last_eq is None else "hueco")
         data = {s: MarketData(closed[s], funding[s]) for s in universe}
-        signals = rule(data, params)
+        with capture_exits() as rec:  # misma regla y mismo resultado; registra el motivo de cada salida
+            signals = rule(data, params)
         sigs = {s: _clean(signals.get(s)) for s in universe}
+        try:
+            reasons = {(s, int(pd.Timestamp(t).value // 1_000_000)): m
+                       for (s, t), m in reason_map(sid, data, signals, rec, params).items() if s is not None}
+        except Exception:  # noqa: BLE001 - el motivo es informativo: si falla, la orden queda sin motivo (no se inventa)
+            log.exception("%s: no se pudo reconstruir el motivo de las salidas", sid)
+            reasons = {}
         targets = {s: target_at(sigs[s], H) for s in universe}
         stored_orders = store.orders(sid)
         book = Book.replay(universe, stored_orders, store.funding_events(sid))
@@ -397,6 +407,14 @@ def _run(cfg: EngineConfig, store: PaperbotStore, base: dict, H: int, now: int, 
 
         rid = base["run_id"]
         rows["orders"] += [{"run_id": rid, "strategy_id": sid, **o} for o in new_orders]
+        for o in new_orders:
+            w0, w1 = o["weight_from"], o["weight_to"]
+            if abs(w0) < TARGET_TOL or (abs(w1) > TARGET_TOL and np.sign(w1) == np.sign(w0)):
+                continue  # no cierra nada (entrada o ajuste de tamano)
+            m = reasons.get((o["symbol"], o["decision_ms"])) if o["reason"] == "senal" else o["reason"]
+            if m is not None:
+                rows["exits"].append({"run_id": rid, "strategy_id": sid, "symbol": o["symbol"], "decision_ms": o["decision_ms"],
+                                      "fill_ms": o["fill_ms"], "weight_from": w0, "weight_to": w1, "motivo": m})
         rows["funding"] += [{"run_id": rid, "strategy_id": sid, **f} for f in new_funding]
         rows["equity"].append({"run_id": rid, "hour_ms": H, "strategy_id": sid, "equity": tot["equity"],
                                "basket_equity": basket_eq, "realized": tot["realized"], "unrealized": tot["unrealized"],
@@ -422,7 +440,7 @@ def _run(cfg: EngineConfig, store: PaperbotStore, base: dict, H: int, now: int, 
             "hueco": f"hueco de {detail.get('hueco_horas')} h sin simular; posiciones llevadas al objetivo"}[mode]
     return _finish(store, base, "ok", note, detail, t0, orders=rows["orders"], funding=rows["funding"],
                    equity=rows["equity"], positions=rows["positions"], trades=rows["trades"], basket=rows["basket"],
-                   gaps=rows["gaps"])
+                   gaps=rows["gaps"], exits=rows["exits"])
 
 
 def summary_line(run: dict[str, Any]) -> str:

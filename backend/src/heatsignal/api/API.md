@@ -1085,3 +1085,42 @@ El archivo que subió el worker (`data/lab_requests/<id>.json`). **404** mientra
 ```
 
 Con un solo símbolo, `basket` y `buy_and_hold_mean` de `equity_daily` son el buy & hold de esa moneda.
+
+## Salidas: stop, objetivo, tiempo y motivo de cada cierre (2026-10-19)
+
+Ficha de salidas por estrategia en `lab/exits.py` (`EXITS`, mapa aparte del `Spec`: no cambia ningún `spec_hash`).
+Forma de una ficha (`exits`):
+
+```json
+{"strategy_id": "ema-cruce-v1",
+ "stop": {"tipo": "atr", "valor": 1.5, "param": "sl_atr", "base": "ATR(14) ...", "velas_1m": true, "empate": "stop"},
+ "take_profit": {"tipo": "atr", "valor": 3.0, "param": "rr*sl_atr", "...": "..."},
+ "tiempo": {"valor": 720, "unidad": "h", "param": "max_hold_hours", "fuente": "tope de seguridad"},
+ "otra": null, "nota": "Stop 1,5 ATR y objetivo 3 ATR; ...", "cierre": "tiempo", "giro": "tiempo",
+ "chips": ["stop 1,5 ATR", "objetivo 3 ATR", "máx. 30 d"], "resumen": "stop 1,5 ATR · objetivo 3 ATR · máx. 30 d",
+ "componentes": null}
+```
+
+Motivos de cierre: `stop`, `objetivo`, `tiempo`, `senal` (canal, señal contraria, giro programado), `rebalanceo`
+(cambio de composición). En el bot de paper además `resincronizacion` / `inicio` / `hueco` (la orden no la pidió la
+regla) y `sin_dato` (cierres anteriores al registro).
+
+- `GET /api/lab`: cada estrategia trae `exits` (la ficha; `null` si no está en el catálogo). `diagnostics.salidas`
+  (si se corrió `lab.diagnostics salidas|ambos` y se publicó): `por_motivo`, `trades`, `abiertas_al_final`, `ajustes`,
+  `metodo`, `verificacion` (`coincide`: la reconstrucción armó exactamente la misma serie que la regla), `window`,
+  `holdout: "NO USADO"`, `adds_trials: false`.
+- `GET /api/lab/{id}`: `exits` + `diagnostics.salidas` con `por_simbolo` y `componentes` (cartera).
+- `GET /api/paperbot`: cada estrategia trae `exits` y `exit_counts` (`{motivo: n}` de sus trades cerrados).
+  `GET /api/paperbot/{id}`: lo mismo y cada trade con `motivo` (`null` = anterior a la tabla `exit_reasons`).
+- `GET /api/paper`: `exits` (`stoploss`, `minimal_roi`, `stop_text`, `roi_text`, `source`: `api` si respondió
+  `show_config`, si no `estrategia`) y `exit_reasons` (`{exit_reason de Freqtrade: n}` de las cerradas).
+- `GET /api/paper/hypotheses`: `exits` (Freqtrade de hipótesis: stop de seguridad −20 %, ROI desactivado),
+  `hypothesis_exit` (por tiempo), `exit_reasons` total y por estrategia (`hyp_due` = tiempo, `stop_loss` = seguridad).
+- `GET /api/hypotheses/{id}`: `exit_rule` (`{"tipo": "tiempo", "texto": "por tiempo: 4 velas de 1h", "nota": ...}`) y
+  `excursion` (`null` si todavía no se calculó): `mae_pct`, `mfe_pct`, `mae_atr`, `mfe_atr`, `atr`, `atr_source`,
+  `source` (`klines_1m` | `rest_1h`), `n_candles`, `partial_before`, `stops` (`[{"atr": 1.0, "hit": true, "hit_ms": ...}]`),
+  `descriptivo` (aviso: no pre-registrado).
+- `GET /api/hypotheses/excursions?strategy_id=`: por estrategia `n`, MAE/MFE medianos (ATR y %) y, por stop
+  descriptivo, `n`, `hit`, `hit_won`, `hit_lost`. Solo descriptivo: no se usa para decidir nada.
+- `GET /api/weekly/{week}`: `paperbot.strategies[].exits_week`, `freqtrade.exits_week`, `hyp_bridge.exits_week` (y por
+  estrategia), `hypotheses.exits_week` (`{"tiempo": n}`) y `hypotheses.excursion_week` (MAE/MFE medios en ATR).

@@ -215,6 +215,8 @@ def paperbot_week(db: str | Path, ws: int, we: int) -> dict[str, Any]:
             orders = {r[0]: r[1] for r in conn.execute(
                 "SELECT reason, COUNT(*) FROM orders WHERE strategy_id=? AND fill_ms >= ? AND fill_ms < ? GROUP BY reason",
                 (sid, ws, we))}
+            from ..paperbot.view import exit_counts
+
             pnl = d("equity")
             bpnl = d("basket_equity")
             strategies.append({
@@ -233,6 +235,7 @@ def paperbot_week(db: str | Path, ws: int, we: int) -> dict[str, Any]:
                 "exposure_end": e1["exposure"],
                 "orders_week": sum(orders.values()), "orders_by_reason": orders,
                 "trades_week": {**_rate(tr[1], tr[0]), "pnl_net": tr[2], "costs": tr[3], "funding": tr[4]},
+                "exits_week": exit_counts(conn, sid, ws, we),  # cierres por motivo (stop/objetivo/tiempo/senal/...)
                 "trades_cum": _rate(tr_all[1], tr_all[0]),
             })
         runs = {r[0]: r[1] for r in conn.execute(
@@ -283,6 +286,7 @@ def freqtrade_week(db: str | Path, ws: int, we: int, summary_path: str | Path | 
     opened = [t for t in trades if t["open_ms"] is not None and ws <= t["open_ms"] < we]
     bw, bc = _ft_block(week), _ft_block(cum)
     return {
+        "exits_week": _count(week, "exit_reason"),  # exit_reason de Freqtrade (exit_signal, stop_loss, ...)
         "wallet": FT_WALLET, "bot_start_ms": (d.get("kv") or {}).get("bot_start_time"),
         "week": {**bw, "return": bw["pnl"] / FT_WALLET, "opened": len(opened)},
         "cum": {**bc, "return": bc["pnl"] / FT_WALLET},
@@ -340,6 +344,7 @@ def hyp_bridge_week(bridge_db: str | Path, eval_db: str | Path, ft_db: str | Pat
             "mean_entry_effect_bps": _mean([o["cmp"].get("entry_effect_bps") for o in compared]),
             "mean_exit_effect_bps": _mean([o["cmp"].get("exit_effect_bps") for o in compared]),
             "safety_stops": sum(1 for o in closed if o.get("cmp") and o["cmp"].get("safety_stop")),
+            "exits_week": _count([o["ft"] for o in closed], "exit_reason"),  # hyp_due = tiempo; stop_loss = seguridad
         }
         if row["emitted"] or row["closed"]:
             per.append(row)
@@ -349,7 +354,11 @@ def hyp_bridge_week(bridge_db: str | Path, eval_db: str | Path, ft_db: str | Pat
         tot["ft_pnl"] += row["ft_pnl"]
         tot["diffs"] += [o["cmp"]["pnl_diff_pp"] for o in compared]
     diffs = tot.pop("diffs")
-    return {"strategies": per, "totals": {**tot, "ft": _rate(tot["ft_wins"], tot["closed"]),
+    exits: dict[str, int] = {}
+    for r in per:
+        for k, v in r["exits_week"].items():
+            exits[k] = exits.get(k, 0) + v
+    return {"strategies": per, "exits_week": exits, "totals": {**tot, "ft": _rate(tot["ft_wins"], tot["closed"]),
                                           "mean_pnl_diff_pp": _mean(diffs)},
             "cum": {"sent": (ov.get("totals") or {}).get("sent"), "closed": (ov.get("totals") or {}).get("closed"),
                     "ft_pnl": (ov.get("totals") or {}).get("ft_pnl_abs")},
@@ -374,6 +383,9 @@ def hypotheses_week(eval_db: str | Path, ws: int, we: int) -> dict[str, Any]:
              + ("LEFT JOIN hypothesis_context c ON c.hypothesis_id = p.hypothesis_id " if ctx else "")
              + "LEFT JOIN hypothesis_resolutions r ON r.hypothesis_id = p.hypothesis_id WHERE p.created_ts < ?")
         rows = [dict(r) for r in conn.execute(q, (we / 1000,))]
+        exc = {}
+        if _has_table(conn, "hypothesis_excursions"):  # MAE/MFE descriptivo (evaluation/excursion.py)
+            exc = {r[0]: (r[1], r[2]) for r in conn.execute("SELECT hypothesis_id, mae_atr, mfe_atr FROM hypothesis_excursions")}
         reports = {}
         if _has_table(conn, "strategy_reports"):
             for r in conn.execute("SELECT strategy_id, generated_at, publishable, report FROM strategy_reports WHERE id IN "
@@ -417,7 +429,13 @@ def hypotheses_week(eval_db: str | Path, ws: int, we: int) -> dict[str, Any]:
     for part in seg.values():
         for s in (part if isinstance(part, list) else [part]):
             s["small_sample"] = s["n"] < SMALL_N
+    mae = [exc[r["hypothesis_id"]][0] for r in resolved if r["hypothesis_id"] in exc]
+    mfe = [exc[r["hypothesis_id"]][1] for r in resolved if r["hypothesis_id"] in exc]
     return {
+        # todas salen por tiempo (pre-registradas asi; sin stop ni objetivo)
+        "exits_week": {"tiempo": len(resolved)} if resolved else {},
+        "excursion_week": {"n": len([x for x in mae if x is not None]), "mean_mae_atr": _mean(mae), "mean_mfe_atr": _mean(mfe),
+                           "nota": "MAE/MFE descriptivo, no pre-registrado"},
         "emitted": len(emitted),
         "emitted_by_timeframe": _count(emitted, "timeframe"),
         "pending_at_end": sum(1 for r in emitted if not r["status"]),
@@ -608,6 +626,14 @@ def metrics(s: dict[str, Any]) -> dict[str, dict[str, Any]]:
     return out
 
 
+_EXIT_LABEL = {"senal": "señal", "exit_signal": "señal", "stop_loss": "stop", "hyp_due": "tiempo", "roi": "objetivo (ROI)",
+               "sin_dato": "sin registro"}
+
+
+def _exits_text(c: dict[str, int] | None) -> str:
+    return ", ".join(f"{_EXIT_LABEL.get(k, k)} {v}" for k, v in sorted((c or {}).items(), key=lambda kv: -kv[1]))
+
+
 def summary_text(s: dict[str, Any]) -> str:
     """Resumen por codigo (sin LLM), en lenguaje historico."""
     L = [f"Semana {s['week']} ({s['week_start_at'][:10]} a {iso(s['week_end_ms'] - 1)[:10]}, UTC). {ONE_WEEK_NOTE}"]
@@ -619,7 +645,8 @@ def summary_text(s: dict[str, Any]) -> str:
             L.append(f"- {st['strategy_id']}{new}: en la semana {_fmt_money(st['pnl_week'])} contra "
                      f"{_fmt_money(st['basket_pnl_week'])} de su canasta; acumulado {_fmt_money(st['pnl_cum'])} "
                      f"(canasta {_fmt_money(st['basket_cum'])}); costos {_fmt_money(st['costs_week'], False)}, funding "
-                     f"{_fmt_money(st['funding_week'])}; trades cerrados: {_rate_text(st['trades_week'])}.")
+                     f"{_fmt_money(st['funding_week'])}; trades cerrados: {_rate_text(st['trades_week'])}"
+                     + (f"; salidas: {_exits_text(st.get('exits_week'))}." if st.get("exits_week") else "."))
         r = pb["runs"]
         L.append(f"  Corridas: {r['ok']} ok, {r['error']} con error, {r['missing_hours']} horas sin corrida ok"
                  + (f"; {len(pb['gaps'])} hueco(s) registrados." if pb["gaps"] else "."))
@@ -631,7 +658,8 @@ def summary_text(s: dict[str, Any]) -> str:
         head = (f"{w['n']} operaciones cerradas en la semana, {_fmt_money(w['pnl'])} (ganadoras: {_rate_text(w)})"
                 if w["n"] else "ninguna operación cerrada en la semana")
         L.append(f"Freqtrade Donchian (dry-run): {head}; acumulado cerrado {_fmt_money(ft['cum']['pnl'])}; "
-                 f"{ft['open_at_end']} abiertas al cierre (sin PnL no realizado).")
+                 f"{ft['open_at_end']} abiertas al cierre (sin PnL no realizado)"
+                 + (f"; motivos de cierre: {_exits_text(ft.get('exits_week'))}." if ft.get("exits_week") else "."))
         c = ft.get("compare")
         if c and not c.get("error"):
             L.append(f"  Última comparación paper vs backtest publicada {c.get('generated_at')}: estado {c.get('status')}.")
@@ -645,7 +673,8 @@ def summary_text(s: dict[str, Any]) -> str:
         L.append(f"Freqtrade de hipótesis: {t['emitted']} hipótesis de 1h en la semana, {t['sent']} enviadas, {t['skipped']} "
                  f"omitidas, {t['errors']} con error; {t['closed']} cerradas con {_fmt_money(t['ft_pnl'])} "
                  f"(ganadoras: {_rate_text(t['ft'])}); diferencia media con la resolución "
-                 + ("s/d" if t["mean_pnl_diff_pp"] is None else f"{t['mean_pnl_diff_pp']:+.2f} pp".replace(".", ",")) + ".")
+                 + ("s/d" if t["mean_pnl_diff_pp"] is None else f"{t['mean_pnl_diff_pp']:+.2f} pp".replace(".", ","))
+                 + (f"; motivos de cierre: {_exits_text(hb.get('exits_week'))}." if hb.get("exits_week") else "."))
     else:
         L.append(f"Freqtrade de hipótesis: sin datos ({hb.get('error')}).")
     hy = s.get("hypotheses") or {}

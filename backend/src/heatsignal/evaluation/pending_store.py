@@ -567,6 +567,19 @@ class PendingHypothesisStore:
             ).fetchone()
         return None if row is None else self._hydrate_record(row)
 
+    def excursion(self, hypothesis_id: UUID) -> dict[str, Any] | None:
+        """MAE/MFE descriptivo de una hipotesis resuelta (tabla aditiva `hypothesis_excursions`, ver excursion.py)."""
+        from .excursion import get
+
+        with self._lock:
+            return get(self._conn, str(hypothesis_id))
+
+    def excursion_summary(self, strategy_id: UUID | None = None) -> list[dict[str, Any]]:
+        from .excursion import summary
+
+        with self._lock:
+            return summary(self._conn, None if strategy_id is None else str(strategy_id))
+
     def stats_by_strategy(self, now_ts: float | None = None) -> dict[str, dict[str, Any]]:
         """Agregados por estrategia en una sola consulta (track record del panel).
 

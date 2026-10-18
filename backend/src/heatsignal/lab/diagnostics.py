@@ -5,6 +5,7 @@ Diagnosticos anti-sobreajuste del laboratorio: PBO por CSCV y robustez por param
     python -m heatsignal.lab.diagnostics robustez tsmom-diario-v1
     python -m heatsignal.lab.diagnostics ambos tsmom-diario-v1
     python -m heatsignal.lab.diagnostics pbo --all          # todas las que tienen resultado (y grilla, para PBO)
+    python -m heatsignal.lab.diagnostics salidas tsmom-diario-v1   # solo la atribucion de salidas (ambos tambien la corre)
 
 Escribe ~/heatsignal-lab/results/<id>/diagnostics_<ts>.json y deja cada corrida en la tabla append-only
 `lab_diagnostics` (misma base que `lab_trials`, ~/heatsignal-lab/trials.sqlite). `lab.publish` los lleva al panel.
@@ -43,6 +44,12 @@ Escribe ~/heatsignal-lab/results/<id>/diagnostics_<ts>.json y deja cada corrida 
          congelado ni `paperbot/params.json` (no se escribe en ninguno);
        * nunca usa el holdout: los datos se cargan hasta `holdout_start` del resultado evaluado y se vuelven a cortar
          con `run.development`; `assert_no_holdout` lo verifica antes de simular.
+
+3. Atribucion de salidas (`salidas`, tambien dentro de `ambos`; `lab/exits.py`): cuantas operaciones del desarrollo
+   cerraron por stop, objetivo, tiempo, senal o rebalanceo, con los parametros base de arriba. Corre la regla una vez
+   (sin simular) envolviendo `exits_with_levels` / `hold_events` y verifica que la reconstruccion coincida exactamente.
+   Mismo corte del holdout. NO suma intentos y NO se escribe en `lab_diagnostics` (su CHECK solo admite pbo/robustez):
+   queda solo en el JSON del diagnostico, que `lab.publish` lleva al panel.
 """
 
 from __future__ import annotations
@@ -463,7 +470,7 @@ def diagnose(kind: str, spec, rule, result: dict[str, Any], data: dict[str, Any]
              n_blocks: int = DEFAULT_BLOCKS, costs: Costs | None = None, log_db: DiagnosticsLog | None = None) -> dict[str, Any]:
     """Corre `pbo`, `robustez` o `ambos` sobre el desarrollo del resultado evaluado (`result`). `data` puede traer
     mas de lo necesario: se corta en el holdout_start del resultado antes de nada."""
-    if kind not in ("pbo", "robustez", "ambos"):
+    if kind not in ("pbo", "robustez", "ambos", "salidas"):
         raise ValueError(kind)
     if result.get("spec_hash") and result["spec_hash"] != spec.spec_hash():
         raise ValueError(f"el spec de {spec.strategy_id} cambio desde el resultado ({result['spec_hash']} != "
@@ -502,6 +509,15 @@ def diagnose(kind: str, spec, rule, result: dict[str, Any], data: dict[str, Any]
         r = robustness(spec, rule, dev, base, costs, on_variant=_rec)
         r["seconds"] = round(time.monotonic() - t0, 1)
         out["robustez"] = r
+    if kind in ("salidas", "ambos"):
+        from .exits import attribute
+
+        t0 = time.monotonic()
+        s = attribute(spec.strategy_id, rule, dev, base_params(spec, result))
+        s.update({"seconds": round(time.monotonic() - t0, 1), "window": [str(first), str(holdout_start)],
+                  "holdout": "NO USADO", "adds_trials": False,
+                  "base_params": {k: v for k, v in base_params(spec, result).items() if k in spec.grid}})
+        out["salidas"] = s
     return out
 
 
@@ -532,7 +548,7 @@ def main(argv: Iterable[str] | None = None) -> int:
     from .vision import lab_dir
 
     p = argparse.ArgumentParser(description="PBO (CSCV) y robustez por vecinos. Diagnostico: no suma intentos.")
-    p.add_argument("kind", choices=("pbo", "robustez", "ambos"))
+    p.add_argument("kind", choices=("pbo", "robustez", "ambos", "salidas"))
     p.add_argument("strategy_id", nargs="?")
     p.add_argument("--all", action="store_true", help="todas las estrategias con resultado")
     p.add_argument("--blocks", type=int, default=DEFAULT_BLOCKS, help="S bloques del CSCV (par)")
@@ -577,9 +593,10 @@ def main(argv: Iterable[str] | None = None) -> int:
             rep["peak_rss_mb"] = round(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024, 0)
             out = results_dir / sid / f"{DIAG_PREFIX}{rep['diagnostics_id']}.json"
             out.write_text(json.dumps(_clean(rep), indent=1, default=_json_default, ensure_ascii=False))
-            pb, rb = rep.get("pbo") or {}, rep.get("robustez") or {}
+            pb, rb, sb = rep.get("pbo") or {}, rep.get("robustez") or {}, rep.get("salidas") or {}
             print(f"{sid}: PBO {pb.get('pbo', pb.get('skipped', '-'))} | meseta {rb.get('meseta', '-')} | "
-                  f"caida max {rb.get('max_drop', '-')} | {rep['seconds_total']} s | pico {rep['peak_rss_mb']} MB\n-> {out}")
+                  f"caida max {rb.get('max_drop', '-')} | salidas {sb.get('por_motivo', '-')} | {rep['seconds_total']} s | "
+                  f"pico {rep['peak_rss_mb']} MB\n-> {out}")
     finally:
         db.close()
     return rc

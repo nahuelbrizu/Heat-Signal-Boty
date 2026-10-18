@@ -8,6 +8,7 @@ import {
 } from "../core.js";
 import { makeChart, disposeChart, css, signedBars, legend, toChartTime, xyChart } from "../charts.js";
 import { mountHypFt } from "../hyp-ft-ui.js";
+import { ftExitsBlock, FT_REASON } from "../exits-ui.js";
 
 const COMP = {
   timing: ["Timing", "Estar en el mercado cuando el otro no: entradas/salidas en otro momento u operaciones que hizo uno solo."],
@@ -172,7 +173,7 @@ function renderPaper(p, f, ctx, charts) {
       { label: "%", cls: "n" }, { label: "Comisiones", cls: "n" }, { label: "Funding", cls: "n" }, { label: "Motivo" }],
       rows.map((c) => [el("b", {}, pairName(c.symbol)), when(c.open_ms), when(c.close_ms), dur(c.duration_s), price(c.open_rate), price(c.close_rate),
         money(c.max_stake_amount), int(c.adjustments), sMoney(c.pnl), isNum(c.pnl_ratio) ? signedFrac(c.pnl_ratio, 2) : DASH, money(c.fees),
-        sMoney(c.funding), c.exit_reason || DASH]),
+        sMoney(c.funding), c.exit_reason ? chip(FT_REASON[c.exit_reason] || c.exit_reason, c.exit_reason === "stop_loss" ? "bad" : "", c.exit_reason) : DASH]),
       { empty: closed.length ? "Ninguna operación cerrada con esos filtros." : "Todavía no se cerró ninguna operación.", label: "Operaciones cerradas", scroll: true }));
 
   // por par
@@ -188,7 +189,11 @@ function renderPaper(p, f, ctx, charts) {
   const src = p.source || {};
   const sourceNote = el("p", { class: "small muted" }, "Leído de la base ", el("code", {}, src.db || "—"), " (solo lectura) ", when(src.read_at ? parseMs(src.read_at) : null, true),
     src.api && src.api.ok ? " · API de Freqtrade OK" : " · API de Freqtrade: " + ((src.api && src.api.error) || "sin respuesta"), ". Se refresca cada 30 s.");
-  return [stats, ...notes, el("div", { class: "stack" }, openCard, el("div", { class: "grid two" }, eqCard, frequiCard(p.frequi && p.frequi.url)), closedCard, pairCard, sourceNote)];
+  const exitsCard = card("Cómo sale el bot", "stop y ROI configurados en Freqtrade · cierres por exit_reason",
+    ftExitsBlock(p.exits, p.exit_reasons) || el("p", { class: "muted small" }, "Sin datos de salida."),
+    el("p", { class: "small muted" }, "Igual que el laboratorio: Donchian no tiene stop ni objetivo, sale cuando el canal se apaga (exit_signal). ",
+      "Un «stop_loss» acá sería una diferencia de diseño con el backtest."));
+  return [stats, ...notes, el("div", { class: "stack" }, exitsCard, openCard, el("div", { class: "grid two" }, eqCard, frequiCard(p.frequi && p.frequi.url)), closedCard, pairCard, sourceNote)];
 }
 
 // ------------------------------------------------------------------ comparacion con el backtest

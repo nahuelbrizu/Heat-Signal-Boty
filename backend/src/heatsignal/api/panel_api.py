@@ -269,6 +269,20 @@ def hypothesis_json(rec: Any, now: datetime | None = None) -> dict[str, Any]:
     }
 
 
+def exit_rule(h: Any) -> dict[str, Any]:
+    """Regla de salida de una hipotesis del grafo: siempre por tiempo (pre-registrada asi; sin stop ni objetivo)."""
+    from ..lab.exits import HYPOTHESIS_EXIT
+
+    hs = int(h.horizon_s)
+    if h.timeframe == "1h" and h.horizon_bars:
+        txt = f"por tiempo: {h.horizon_bars} vela{'s' if h.horizon_bars != 1 else ''} de 1h"
+    elif hs % 3600 == 0:
+        txt = f"por tiempo: {hs // 3600} h"
+    else:
+        txt = f"por tiempo: {hs // 60} min"
+    return {**HYPOTHESIS_EXIT, "tipo": "tiempo", "texto": txt, "horizon_s": hs}
+
+
 def track_record(st: dict[str, Any] | None) -> dict[str, Any]:
     st = st or {}
     n, wins = st.get("resolved", 0), st.get("wins", 0)
@@ -718,6 +732,22 @@ def register_api(app: FastAPI, ctx: PanelContext, build_id: str) -> None:  # noq
                             "timeframe": timeframe},
                 "rule": "htf-trend-v1 (features/htf.py)", **trend_segments(rows)}
 
+    @app.get("/api/hypotheses/excursions")
+    async def hypotheses_excursions(strategy_id: UUID | None = None) -> dict[str, Any]:
+        """MAE/MFE de las hipotesis resueltas por estrategia y corte "¿un stop de X ATR la hubiera sacado antes?".
+        DESCRIPTIVO: no pre-registrado, no se usa para decidir nada (evaluation/excursion.py)."""
+        _require_eval()
+        from ..evaluation.excursion import NOT_PREREGISTERED
+
+        rows = await asyncio.to_thread(ctx.store.excursion_summary, strategy_id)
+        for r in rows:
+            try:
+                s = ctx.registry.get(UUID(r["strategy_id"]))
+            except ValueError:
+                s = None
+            r["name"] = None if s is None else s.description
+        return {"strategies": rows, "nota": NOT_PREREGISTERED, "descriptivo": True}
+
     @app.get("/api/hypotheses/{hypothesis_id}")
     async def hypothesis_detail(hypothesis_id: UUID) -> dict[str, Any]:
         _require_eval()
@@ -729,6 +759,8 @@ def register_api(app: FastAPI, ctx: PanelContext, build_id: str) -> None:  # noq
         out["strategy"] = None if s is None else {
             "strategy_id": str(s.strategy_id), "description": s.description, "status": s.status.value,
             "entry_conditions": s.entry_conditions, "exit_conditions": s.exit_conditions}
+        out["exit_rule"] = exit_rule(rec.hypothesis)
+        out["excursion"] = ctx.store.excursion(hypothesis_id) if hasattr(ctx.store, "excursion") else None
         cycle = None
         run_id = rec.hypothesis.run_id
         if run_id and ctx.cycle_log is not None:
@@ -1334,7 +1366,12 @@ def register_api(app: FastAPI, ctx: PanelContext, build_id: str) -> None:  # noq
         view = _lab_view(ctx)
         if view is None:
             raise HTTPException(status_code=404, detail="no hay resumen del laboratorio publicado (lab.publish --upload)")
-        return view
+        if not isinstance(view, dict) or not isinstance(view.get("strategies"), list):
+            return view
+        from ..lab.exits import ficha_json  # ficha de salidas (mapa aparte del Spec: no cambia spec_hash)
+
+        return {**view, "strategies": [{**s, "exits": ficha_json(str(s.get("strategy_id")))} if isinstance(s, dict) else s
+                                       for s in view["strategies"]]}
 
     @app.get("/api/lab/{strategy_id}")
     async def lab_detail(strategy_id: str = PathParam(..., max_length=100)) -> Any:
@@ -1353,7 +1390,9 @@ def register_api(app: FastAPI, ctx: PanelContext, build_id: str) -> None:  # noq
             except (OSError, ValueError):
                 raise HTTPException(status_code=500, detail=f"{path.name} ilegible") from None
             _lab_detail_cache[strategy_id] = hit
-        return hit[1]
+        from ..lab.exits import ficha_json
+
+        return {**hit[1], "exits": ficha_json(strategy_id)} if isinstance(hit[1], dict) else hit[1]
 
     # ---------------------------------------------------------------- paper trading (Freqtrade dry-run)
 

@@ -69,6 +69,20 @@
   laboratorio: `lab/macro_features.py`. Falta: deploy, instalar el timer macro, recargar el eval.service (MemoryMax 400M)
   y reiniciar la ingesta. `calendar.json` hay que actualizarlo cuando el BLS/Fed publiquen fechas nuevas (el panel avisa).
 
+- **Stop loss y take profit en todo el sistema (2026-10-19, sin desplegar):** ficha de salidas por estrategia
+  `lab/exits.py` (`EXITS`, mapa aparte del Spec: ningún spec_hash cambia; test de que los valores coinciden con
+  `spec.params`); la cartera hereda de sus componentes. Atribución de salidas (cuántas cerraron por stop, objetivo,
+  tiempo, señal o rebalanceo) con `python -m heatsignal.lab.diagnostics salidas <id>` (también dentro de `ambos`):
+  reconstruye los motivos con la misma lógica de `exits_with_levels` y verifica que coincida; sin holdout, no suma
+  intentos. Panel: columna "Salidas" y tarjeta "Cómo sale" en Laboratorio; ficha, cierres por motivo y motivo por
+  trade en Bot paper (tabla nueva append-only `exit_reasons` en `paperbot.sqlite`, solo para lo nuevo); stop/ROI de
+  cada Freqtrade y `exit_reason` por trade en Paper; regla de salida + MAE/MFE en el detalle de cada hipótesis (tabla
+  append-only `hypothesis_excursions` en la base de evaluación, la llena el job de evaluación) con el corte "¿un stop
+  de X ATR la hubiera sacado antes?" marcado como NO pre-registrado; motivos de cierre por fuente en Semanal.
+  **Plata real:** toda orden lleva stop del lado del exchange (STOP_MARKET reduce-only), obligatorio aunque la regla
+  salga por tiempo (`plan-entrenamiento.md`, etapa 5). Falta: deploy del código, reiniciar la ingesta (endpoints),
+  republicar el laboratorio y correr `diagnostics salidas --all` en la PC.
+
 ## Estado por fase
 
 | Fase | Estado | Dónde |
@@ -80,7 +94,7 @@
 | 4 — Producto | Panel **interno** listo (no público); dashboard/API pública/reporte no iniciados | `phase-4-product.md` |
 
 Código: rama `ingestion-binance-bybit`, pusheada a GitHub (sin PR).
-Tests: 847 pasando, 1 skipped (2026-10-19) (`backend/`, `.venv/bin/pytest -q`).
+Tests: 923 pasando, 1 skipped (2026-10-19, con salidas) (`backend/`, `.venv/bin/pytest -q`).
 
 ## Qué corre hoy (VM de prueba)
 

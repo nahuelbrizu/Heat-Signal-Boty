@@ -30,6 +30,7 @@ from pathlib import Path
 from typing import Any
 
 from . import freqtrade_db as ftdb
+from ..lab.exits import HYPOTHESIS_EXIT, freqtrade_exits  # sin pandas
 from .ft_bridge import RETRY_MIN_LEFT_S, connect_ro, decode_tag, strategy_name
 
 DISCLAIMER = ("SIMULADO: Freqtrade en DRY-RUN (sin plata real ni API keys de exchange), precios reales de Binance. "
@@ -222,6 +223,7 @@ def overview(bridge_db: str | Path, eval_db: str | Path, ft_db: str | Path, *, a
             "mean_entry_delay_s": _mean([(o["cmp"] or {}).get("entry_delay_s") for o in sent]),
             "mean_exit_delay_s": _mean([o["cmp"].get("exit_delay_s") for o in compared]),
             "safety_stops": sum(1 for o in sent if o["cmp"] and o["cmp"].get("safety_stop")),
+            "exit_reasons": _reasons(closed),
             "ops": mine,
         })
     total_closed = sum(s["closed"] for s in out_strats)
@@ -244,5 +246,18 @@ def overview(bridge_db: str | Path, eval_db: str | Path, ft_db: str | Path, *, a
                    "errors": sum(s["errors"] for s in out_strats), "open": sum(s["open"] for s in out_strats),
                    "closed": total_closed, "ft_pnl_abs": sum(s["ft_pnl_abs"] for s in out_strats)},
         "strategies": out_strats,
+        "exits": freqtrade_exits("HypothesisBridgeV1", api.get("show_config") if api else None),
+        "hypothesis_exit": HYPOTHESIS_EXIT,
+        "exit_reasons": _reasons([o for s in out_strats for o in s["ops"] if o["status"] == "sent" and o["ft"]
+                                  and not o["ft"]["is_open"]]),
         "notes": notes,
     }
+
+
+def _reasons(closed: list[dict[str, Any]]) -> dict[str, int]:
+    """exit_reason de Freqtrade de las operaciones cerradas (hyp_due = por tiempo; stop_loss = stop de seguridad)."""
+    out: dict[str, int] = {}
+    for o in closed:
+        k = (o.get("ft") or {}).get("exit_reason") or "sin_dato"
+        out[k] = out.get(k, 0) + 1
+    return out

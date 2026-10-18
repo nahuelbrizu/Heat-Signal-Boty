@@ -7,6 +7,7 @@ import {
   signedFrac, rateText, sym as toSym, DASH,
 } from "../core.js";
 import { css, signedBars, legend, xyChart } from "../charts.js";
+import { exitChips, exitRows, reasonBars, motivoChip, MOTIVO } from "../exits-ui.js";
 
 const NAMES = {
   "tsmom-diario-v1": "Momentum diario (tsmom)",
@@ -29,6 +30,8 @@ const sMoney = (v) => isNum(v) ? el("span", { class: Math.abs(v) < 0.005 ? "" : 
 const sFrac = (v, d = 2) => isNum(v) ? el("span", { class: Math.abs(v) < 5e-5 ? "" : v > 0 ? "pos" : "neg" }, signedFrac(v, d)) : DASH;
 const statusChip = (s) => { const [k, t] = STATUS[s] || ["", s || DASH]; return chip(t, k); };
 const name = (sid) => NAMES[sid] || sid;
+const countsLine = (c) => c && Object.keys(c).length ? el("div", { class: "small muted" },
+  Object.entries(c).map(([m, n]) => (MOTIVO[m] || m) + " " + int(n)).join(" · ")) : null;
 
 /** Peso objetivo como chip: L/S y fraccion del capital del simbolo. */
 function weightChip(symbol, w) {
@@ -145,7 +148,8 @@ export function renderOverview(ov, href, sel) {
   const stTable = table([{ label: "Estrategia" }, { label: "Equity", cls: "n" }, { label: "Retorno", cls: "n" },
     { label: "Canasta", cls: "n", title: "buy & hold igual-ponderado de los mismos símbolos desde el inicio del paper" },
     { label: "Realizado", cls: "n" }, { label: "No realizado", cls: "n" }, { label: "Funding", cls: "n" }, { label: "Costos", cls: "n", title: "comisiones + slippage" },
-    { label: "Exposición", cls: "n", title: "nocional bruto / capital" }, { label: "Órdenes", cls: "n" }, { label: "Trades cerrados", cls: "n" }, { label: "Posición actual" },
+    { label: "Exposición", cls: "n", title: "nocional bruto / capital" }, { label: "Órdenes", cls: "n" }, { label: "Trades cerrados", cls: "n" },
+    { label: "Salidas", title: "stop / objetivo / tiempo de la regla y cierres por motivo (desde que se registra el motivo)" }, { label: "Posición actual" },
     { label: "Backtest (laboratorio)", title: "veredicto del walk-forward OOS publicado (lab_summary.json)" }],
   strategies.map((s) => [
     el("a", { href: href("paperbot", [s.strategy_id]), "aria-current": s.strategy_id === sel ? "true" : null }, el("b", {}, name(s.strategy_id)),
@@ -154,6 +158,7 @@ export function renderOverview(ov, href, sel) {
     money(s.equity), sFrac(s.return), sFrac(s.basket_return), sMoney(s.realized), sMoney(s.unrealized), sMoney(s.funding),
     money((s.fees || 0) + (s.slippage || 0)), num(s.exposure, 2) + "×", int(s.n_orders),
     s.n_trades ? int(s.wins) + "/" + int(s.n_trades) + " ganadores" : "0",
+    { v: el("div", { style: { minWidth: "160px" } }, exitChips(s.exits, { small: true }), countsLine(s.exit_counts)), cls: "wrap" },
     el("span", { class: "chips" }, ...(s.positions || []).map((p) => weightChip(p.symbol, p.weight)).filter(Boolean),
       (s.positions || []).some((p) => Math.abs(p.weight) > 1e-9) ? null : el("span", { class: "muted" }, "plana")), labCell(s.lab)]),
   { empty: "Todavía no hay corridas ok.", label: "Estrategias del bot", scroll: true });
@@ -211,10 +216,11 @@ export function renderDetail(d) {
   const trades = d.trades || [];
   const nW = trades.filter((t) => t.pnl_net > 0).length;
   const trTable = table([{ label: "Símbolo" }, { label: "Lado" }, { label: "Entrada" }, { label: "Salida" }, { label: "Precio entrada", cls: "n" },
-    { label: "Precio salida", cls: "n" }, { label: "Precio", cls: "n" }, { label: "Funding", cls: "n" }, { label: "Costos", cls: "n" }, { label: "Neto", cls: "n" }],
+    { label: "Precio salida", cls: "n" }, { label: "Precio", cls: "n" }, { label: "Funding", cls: "n" }, { label: "Costos", cls: "n" }, { label: "Neto", cls: "n" },
+    { label: "Motivo", title: "por qué cerró: stop, objetivo, tiempo, señal o rebalanceo (— = anterior al registro de motivos)" }],
   trades.map((t) => [el("b", {}, toSym(t.symbol)), el("span", { class: t.direction === "long" ? "buy" : "sell" }, t.direction === "long" ? "▲ long" : "▼ short"),
     when(t.entry_ms), when(t.exit_ms), price(t.entry_price), price(t.exit_price), sMoney(t.pnl_price), sMoney(t.funding),
-    money((t.fees || 0) + (t.slippage || 0)), sMoney(t.pnl_net)]),
+    money((t.fees || 0) + (t.slippage || 0)), sMoney(t.pnl_net), motivoChip(t.motivo)]),
   { empty: "Ningún trade cerrado todavía.", label: "Trades cerrados", scroll: true });
 
   const orders = d.orders || [];
@@ -252,6 +258,11 @@ export function renderDetail(d) {
           el("p", { class: "small muted" }, "Precio = realizado + no realizado (precios crudos); el slippage va aparte, así la suma es exacta."))),
       el("div", {}, el("h3", {}, "Posiciones actuales"), posTable),
       el("div", {}, el("h3", {}, "Descomposición por símbolo"), bySym),
+      el("div", { class: "grid two" },
+        el("div", {}, el("h3", {}, "Cómo sale"), exitChips(d.exits), exitRows(d.exits)),
+        el("div", {}, el("h3", {}, "Cierres por motivo"), reasonBars(d.exit_counts),
+          el("p", { class: "small muted" }, "El motivo se registra desde el 2026-10-19 (tabla aditiva exit_reasons); los trades anteriores figuran como «sin registro». ",
+            "Re-sincronización / inicio / hueco = la orden la pidió el bot para volver al objetivo de la regla, no una salida de la regla."))),
       el("div", {}, el("h3", {}, "Trades cerrados"), trTable),
       el("div", {}, el("h3", {}, "Órdenes simuladas"), orTable,
         el("p", { class: "small muted" }, "Fill al open de la vela 1m siguiente a la decisión (convención del laboratorio). ",

@@ -5,6 +5,7 @@
 import {
   el, clear, api, errorBox, when, int, num, price, dur, card, table, chip, stat, isNum, dirSpan, rateText, ciBar, sym as toSym, DASH,
 } from "./core.js";
+import { ftExitsBlock, FT_REASON } from "./exits-ui.js";
 
 const STATUS = {
   sent: ["ok", "enviada"], skipped_pair_busy: ["warn", "omitida: par ocupado"], skipped_late: ["warn", "omitida: tarde"],
@@ -41,7 +42,8 @@ function ftState(o) {
   if (!f) return o.status === "sent" ? el("span", { class: "muted" }, "sin trade en la base") : DASH;
   if (f.is_open) return chip("abierta", "info");
   return el("span", {}, chip("cerrada", ""), f.exit_reason === "stop_loss" ? chip("stop de seguridad", "warn", "Stop de -20 % (no es parte de la hipótesis)") :
-    f.exit_reason && f.exit_reason !== "hyp_due" ? chip(f.exit_reason, "warn") : null);
+    f.exit_reason === "hyp_due" ? chip("por tiempo", "info", "hyp_due: venció la hipótesis") :
+    f.exit_reason ? chip(FT_REASON[f.exit_reason] || f.exit_reason, "warn", f.exit_reason) : null);
 }
 
 /** Tabla de operaciones de una estrategia (detalle). */
@@ -104,7 +106,11 @@ export function renderOverview(d, _href) {
   const per = (d.strategies || []).filter((s) => (s.ops || []).length).map(renderDetail);
   const foot = el("p", { class: "small muted" }, "Bases (solo lectura): ", el("code", {}, src.bridge_db || DASH), " · ", el("code", {}, src.ft_db || DASH),
     src.api ? (src.api.ok ? " · API del Freqtrade de hipótesis OK" : " · API: " + (src.api.error || "sin respuesta")) : "", ". Se refresca cada 30 s.");
-  return [disclaimer(d), stats, ...notes, summary, ...per, foot];
+  const he = d.hypothesis_exit;
+  const exits = card("Cómo salen", "regla de la hipótesis y configuración del Freqtrade de hipótesis",
+    he ? el("p", {}, el("b", {}, "Hipótesis: "), he.nota) : null,
+    ftExitsBlock(d.exits, d.exit_reasons) || el("p", { class: "muted small" }, "Sin datos de salida."));
+  return [disclaimer(d), stats, ...notes, exits, summary, ...per, foot];
 }
 
 /** Monta la seccion en un contenedor (lo usa la vista Paper). */

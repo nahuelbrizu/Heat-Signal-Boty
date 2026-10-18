@@ -8,6 +8,7 @@ import {
 import { makeChart, disposeChart, css, xyChart, signedBars, legend } from "../charts.js";
 import { labRequestAction, labRequestsBlock } from "../actions.js";
 import { seg, base, norm, sym as toSym, dur } from "../core.js";
+import { exitChips, exitsCard } from "../exits-ui.js";
 
 const CHECK = {
   opera: ["opera", "hizo operaciones en el período fuera de muestra"],
@@ -16,6 +17,8 @@ const CHECK = {
   le_gana_a_la_canasta: ["canasta", "Sharpe mayor que la canasta igual-ponderada"],
   le_gana_al_buy_and_hold_medio: ["B&H", "Sharpe mayor que el buy & hold medio"],
   le_gana_al_azar: ["azar", "p contra entradas al azar ≤ máximo"],
+  p_bootstrap_ajustado: ["p bootstrap", "(iii) p ajustado de Romano–Wolf ≤ 0,05"],
+  dsr_corregido: ["DSR corregido", "(ii) DSR corregido ≥ 0,95"],
 };
 const checkChips = (checks) => el("div", { class: "chips" }, Object.entries(checks || {}).map(([k, ok]) =>
   chip((ok ? "✓ " : "✗ ") + (CHECK[k] || [k])[0], ok ? "ok" : "bad", (CHECK[k] || [0, k])[1])));
@@ -44,13 +47,72 @@ function holdoutCell(s) {
     el("div", { class: "muted" }, "Sharpe " + fixed(r.sharpe, 2) + " · " + signedFrac(r.total_return) + " · " + int(r.trades) + " trades"));
 }
 
-/** Listón de todo el programa: con K intentos, el mejor Sharpe que daría el puro azar (SR0). */
-function programNote(p) {
-  if (!p || !isNum(p.sr0_annual)) return null;
-  return el("div", { class: "note warn" }, el("b", {}, "Listón del programa: "),
-    "llevamos " + int(p.k) + " intentos (" + int(p.k_lab) + " combinaciones del laboratorio + " + int(p.k_benchmark) + " estrategias del benchmark). " +
-    "Con tantos intentos, el mejor Sharpe que daría el azar ronda " + fixed(p.sr0_annual, 2) + " anual. La columna «DSR prog.» mide cada estrategia contra ese listón; " +
-    "el DSR de la tabla solo corrige por sus propias combinaciones. Un DSR prog. bajo significa que el resultado todavía puede ser suerte.");
+/** Chip del veredicto del programa (regla del 2026-10-19): (iii) p ajustado ≤ 0,05 y (ii) DSR corregido ≥ 0,95 + resto de los checks del lab. */
+export function programChip(v) {
+  if (!v || v.pasa === null || v.pasa === undefined) return chip("listón sin calcular", "", "todavía no se corrió python -m heatsignal.lab.program");
+  if (v.estado === "desactualizado") return chip("listón desactualizado", "warn", "el listón se calculó con un resultado anterior de esta estrategia");
+  if (v.estado && v.estado !== "valido") return chip("intento " + v.estado.replace("_", " "), "warn", "fuera de la dispersión y de la matriz; sigue en el conteo K");
+  const crit = v.criterios || {};
+  return chip(v.pasa ? "pasa el listón" : "no pasa el listón", v.pasa ? "ok" : "bad",
+    "p bootstrap ajustado ≤ " + fixed(crit.p_ajustado_max, 2) + " y DSR corregido ≥ " + fixed(crit.dsr_corregido_min, 2) + ", más costos, canasta, B&H y azar del lab");
+}
+const names = (xs) => (xs || []).length ? xs.join(", ") : "ninguna";
+const methodBox = (title, value, foot, body, pasan) => el("div", { class: "card", style: { margin: 0 } },
+  el("h3", {}, title), el("div", { class: "stats" }, stat(value[0], value[1], foot)),
+  el("p", { class: "small muted" }, body), el("p", { class: "small" }, el("b", {}, "Pasan: "), names(pasan)));
+
+/** Detalle: la estrategia contra el listón del programa (tres métodos). */
+function programDetailCard(pr) {
+  if (!pr) return null;
+  const v = pr.veredicto_programa || {}, mo = pr.dsr_corr_moments || {};
+  return card("Listón del programa", programChip(v),
+    el("div", { class: "stats" },
+      stat("(i) DSR prog.", fixed(pr.dsr_program, 3), "referencia: dispersión observada de todos los intentos"),
+      stat("(ii) DSR corregido", fixed(pr.dsr_corr, 3), isNum(mo.sr0_annual) ? "SR0 anual " + fixed(mo.sr0_annual, 2) + " · asimetría " + fixed(mo.skew, 2) + " · curtosis " + fixed(mo.kurt, 1) : "sin calcular"),
+      stat("(iii) p bootstrap (ajustado)", fixed(pr.p_boot_adj, 3), "Romano–Wolf sobre el Sharpe máximo"),
+      stat("DSR propio", pr.dsr_label || "—", pr.dsr_label && pr.dsr_label !== "DSR" ? "una sola combinación: no corrige ninguna selección" : "corrige solo por sus combinaciones")),
+    v.checks && Object.keys(v.checks).length ? el("div", { style: { marginTop: "8px" } }, checkChips(v.checks)) : null,
+    el("p", { class: "small muted" }, "Criterio: (iii) p ajustado ≤ 0,05 y (ii) DSR corregido ≥ 0,95, más costos, canasta, buy & hold y azar del laboratorio."));
+}
+
+/** Listón de todo el programa: los tres métodos de la regla del 2026-10-19, lado a lado. */
+export function programCard(p) {
+  if (!p) return null;
+  const m = p.metodos;
+  const crit = "Para aprobar: (iii) p ajustado ≤ 0,05 (principal) y (ii) DSR corregido ≥ 0,95 (confirmación). " +
+    "Nada pasa a plata real sin paper trading. Si los métodos no coinciden se investiga; no se elige el que aprueba.";
+  const ref = methodBox("(i) DSR del programa (referencia)", ["SR0 anual", isNum(p.sr0_annual) ? fixed(p.sr0_annual, 2) : "—"],
+    "K = " + int(p.k) + " (" + int(p.k_lab) + " del laboratorio + " + int(p.k_benchmark) + " de Freqtrade)",
+    "El cálculo de siempre: la dispersión es la varianza de los Sharpe observados de todos los intentos. Las estrategias rotas la inflan, " +
+    "así que el listón queda muy alto (columna «DSR prog.»). Sin asimetría ni curtosis.",
+    m ? (m.i || {}).pasan : null);
+  if (!m) {
+    return card("Listón del programa", chip("regla 2026-10-19", "info"), el("p", { class: "small" }, crit), el("div", { class: "grid" }, ref),
+      el("div", { class: "note" }, "Los métodos (ii) y (iii) todavía no se calcularon. En la PC: python -m heatsignal.lab.program y después python -m heatsignal.lab.publish --upload"));
+  }
+  const ii = m.ii || {}, iii = m.iii || {}, al = m.alineacion || {};
+  const sr0 = Object.values(ii.sr0_annual || {}).filter(isNum), sdn = Object.values(ii.sd_null_annual || {}).filter(isNum);
+  const rng = (xs) => xs.length ? (Math.min(...xs) === Math.max(...xs) ? fixed(xs[0], 2) : fixed(Math.min(...xs), 2) + "–" + fixed(Math.max(...xs), 2)) : "—";
+  const bad = Object.entries(m.estados || {}).filter(([, e]) => e.status !== "valido");
+  return card("Listón del programa", el("span", {}, chip("regla 2026-10-19", "info"), m.stale ? chip("desactualizado", "warn", "hay resultados nuevos: " + (m.stale_strategies || []).join(", ")) : null),
+    el("p", { class: "small" }, crit),
+    el("div", { class: "grid" },
+      ref,
+      methodBox("(ii) DSR corregido", ["K efectivo", fixed(m.k_eff, 1)],
+        "K real " + int(m.k_real) + " · estrategias " + fixed(ii.k_eff_estrategias, 1) + " + combinaciones extra " + fixed(ii.k_combinaciones_extra, 0) +
+        " + Freqtrade " + int(ii.k_benchmark) + (ii.k_no_validas ? " + no válidas " + int(ii.k_no_validas) : ""),
+        "Dispersión nula analítica por estrategia (1/T: lo que se espera del puro azar, desvío anual " + rng(sdn) + ") y K efectivo por correlación de retornos diarios. " +
+        "El DSR final usa la asimetría y la curtosis de cada estrategia. SR0 anual " + rng(sr0) + ". Combinaciones: " + (ii.combinaciones_fuente || "—") + ".",
+        ii.pasan),
+      methodBox("(iii) Bootstrap de Sharpe máximo", ["p del máximo", fixed(iii.p_max, 3)],
+        "máximo " + fixed(iii.max_observed, 2) + " (" + (iii.estrategia_max || "—") + ") · B = " + int(iii.n_boot) + " · bloques de " + int(iii.block_len) + " días",
+        "Se centran los retornos de todas las estrategias (ninguna con ventaja) y se remuestrean juntas por bloques: ¿qué tan seguido el azar da un Sharpe máximo así? " +
+        "Romano–Wolf da un p ajustado por estrategia (columna «p bootstrap (ajustado)»). " + int(al.days) + " días comunes (" + (al.desde || "?") + " → " + (al.hasta || "?") + ").",
+        iii.pasan)),
+    el("p", {}, el("b", {}, "Pasan los dos criterios del programa: "), names((m.pasan || {}).programa)),
+    bad.length ? el("p", { class: "small muted" }, "Fuera de la dispersión y de la matriz (siguen contando en K): " +
+      bad.map(([s, e]) => s + " (" + e.status.replace("_", " ") + (e.motivo ? ": " + e.motivo : "") + ")").join("; ")) : null,
+    el("p", { class: "small muted" }, "Calculado " + (m.generated_at ? new Date(m.generated_at).toLocaleString("es-AR") : "—") + " · holdout no usado."));
 }
 
 /** Benchmark: estrategias de TA públicas de Freqtrade, sin modificar, sobre las mismas monedas y período. */
@@ -87,8 +149,13 @@ export function pboCell(dg) {
 
 /** Tabla del lote (la usan mount y renderOverview). */
 function labTable(items, href, onOpen) {
-  return card(null, null, table([{ label: "Estrategia" }, { label: "Veredicto" }, { label: "Sharpe OOS", cls: "n" }, { label: "IC 95 %", cls: "n" },
-    { label: "PSR / DSR", cls: "n" }, { label: "DSR prog.", cls: "n", title: "DSR contra el listón de todo el programa (todas las combinaciones probadas)" },
+  return card(null, null, table([{ label: "Estrategia" },
+    { label: "Salidas", title: "stop, objetivo y tope de tiempo de la regla (lab/exits.py); sin stop = sale por canal, señal, rebalanceo o tiempo" },
+    { label: "Veredicto" }, { label: "Sharpe OOS", cls: "n" }, { label: "IC 95 %", cls: "n" },
+    { label: "PSR / DSR", cls: "n" }, { label: "DSR prog.", cls: "n", title: "(i) DSR contra el listón de todo el programa (todas las combinaciones probadas), referencia" },
+    { label: "DSR corregido", cls: "n", title: "(ii) dispersión nula analítica, K efectivo por correlación, con asimetría y curtosis" },
+    { label: "p bootstrap (ajustado)", cls: "n", title: "(iii) p de Romano–Wolf del test de Sharpe máximo por bootstrap" },
+    { label: "Listón programa", title: "veredicto del programa: (iii) p ajustado ≤ 0,05 y (ii) DSR corregido ≥ 0,95, más el resto de los criterios del lab" },
     { label: "PBO", cls: "n", title: "probabilidad de sobreajuste de la grilla (CSCV) y meseta de parámetros vecinos; diagnóstico, no suma intentos" },
     { label: "Retorno", cls: "n" }, { label: "Máx. DD", cls: "n" }, { label: "Trades", cls: "n" }, { label: "Acierto", cls: "n" },
     { label: "Break-even", cls: "n", title: "costo por lado que deja el Sharpe en 0" }, { label: "Canasta", cls: "n", title: "Sharpe de la canasta" },
@@ -97,8 +164,11 @@ function labTable(items, href, onOpen) {
     { v: el("div", { style: { minWidth: "300px" } }, s.has_detail ? el("a", { href: href("laboratorio", [s.strategy_id]) }, el("b", {}, s.strategy_id)) : el("b", {}, s.strategy_id),
       el("div", { class: "small muted mono" }, (s.oos_range || []).join(" → ") + " · " + int(s.windows) + " ventanas · " + int(s.n_combinations) + " comb."),
       el("div", { class: "muted", style: { marginTop: "4px" } }, specBlock(s))), cls: "wrap" },
+    { v: el("div", { style: { minWidth: "170px" } }, exitChips(s.exits, { small: true })), cls: "wrap" },
     verdictChip(s.verdict), fixed(s.sharpe, 2), s.sharpe_ci95 ? fixed(s.sharpe_ci95[0], 2) + " / " + fixed(s.sharpe_ci95[1], 2) : "—",
-    fixed(s.psr, 3) + " / " + fixed(s.dsr, 3), fixed(s.dsr_program, 3), pboCell(s.diagnostics), signedFrac(s.total_return), frac(s.max_drawdown), int(s.trades), frac(s.hit_rate, 0),
+    s.dsr_label && s.dsr_label !== "DSR" ? el("div", {}, fixed(s.psr, 3) + " / " + fixed(s.dsr, 3), el("div", { class: "small muted", title: "una sola combinación: el DSR propio es el PSR" }, s.dsr_label))
+      : fixed(s.psr, 3) + " / " + fixed(s.dsr, 3),
+    fixed(s.dsr_program, 3), fixed(s.dsr_corr, 3), fixed(s.p_boot_adj, 3), programChip(s.veredicto_programa), pboCell(s.diagnostics), signedFrac(s.total_return), frac(s.max_drawdown), int(s.trades), frac(s.hit_rate, 0),
     isNum(s.breakeven_bps) ? num(s.breakeven_bps, 1) + " bps" : "—", fixed(s.basket_sharpe, 2), fixed(s.random_p, 3),
     { v: el("div", { style: { minWidth: "200px" } }, checkChips(s.verdict && s.verdict.checks)), cls: "wrap" }, holdoutCell(s),
   ]), { empty: "Sin estrategias en el lote.", label: "Lote del laboratorio",
@@ -109,7 +179,7 @@ function labTable(items, href, onOpen) {
 
 /** Render puro del resumen (tabla + listón del programa). */
 export function renderOverview(d, href) {
-  return [labTable(d.strategies || [], href, null), programNote(d.program)].filter(Boolean);
+  return [labTable(d.strategies || [], href, null), programCard(d.program)].filter(Boolean);
 }
 
 const STEP_COLOR = { "-0.4": ["--s2", 1], "-0.2": ["--s2", 0.5], "0.2": ["--s1", 0.5], "0.4": ["--s1", 1] };
@@ -235,7 +305,7 @@ export async function mount(root, ctx) {
       ", costo de equilibrio ≥ " + fixed(crit.criterios.breakeven_vs_cost_min, 1) + "× el esperado, p contra azar ≤ " + fixed(crit.criterios.p_random_max, 2) +
       ", y ganarle a la canasta y al buy & hold medio.") : null,
     labTable(items, ctx.href, (id) => ctx.navigate(ctx.href("laboratorio", [id]))),
-    programNote(d.program),
+    programCard(d.program),
     benchmarkCard(d.benchmark_ta),
     card("Pedidos al laboratorio", el("span", { class: "small muted" }, "los corre tu PC (worker); pueden tardar minutos u horas"),
       el("div", { style: { marginBottom: "12px" } }, labRequestAction(ctx, coin ? [coin] : symbols, all, () => reqs.reload())),
@@ -299,15 +369,17 @@ function detailBody(d, charts) {
       el("a", { href: "#/laboratorio" }, "← Laboratorio")),
     holdoutNote(d.data && d.data.holdout_start, d.holdout && typeof d.holdout === "object" ? "ABIERTO" : (d.data && d.data.holdout) || "SELLADO"),
     d.spec ? card("Ficha de la estrategia", d.spec.family ? chip(d.spec.family) : "", specBlock(d.spec, { full: true })) : null,
+    d.exits || (d.diagnostics && d.diagnostics.salidas) ? exitsCard(d.exits, d.diagnostics && d.diagnostics.salidas) : null,
     el("div", { class: "stats" },
       stat("Sharpe OOS", fixed(o.sharpe, 2), o.sharpe_ci95 ? "IC 95 % " + fixed(o.sharpe_ci95[0], 2) + " a " + fixed(o.sharpe_ci95[1], 2) : ""),
-      stat("PSR / DSR", fixed(o.psr, 3) + " / " + fixed(o.dsr, 3), "SR0 anual " + fixed(o.sr0_annual, 3) + " · " + int(d.n_combinations) + " combinaciones"),
+      stat("PSR / DSR", fixed(o.psr, 3) + " / " + fixed(o.dsr, 3), (d.n_combinations === 1 ? "PSR (sin corrección de selección) · " : "") + "SR0 anual " + fixed(o.sr0_annual, 3) + " · " + int(d.n_combinations) + " combinaciones"),
       stat("Retorno total", signedFrac(o.total_return), int(o.days) + " días fuera de muestra"),
       stat("Máx. drawdown", frac(o.max_drawdown), ""),
       stat("Trades", int(o.trades), isNum(hr.hit_rate) ? "acertó " + frac(hr.hit_rate, 0) + " de " + int(hr.n) + " (IC " + frac(hr.lo, 0) + "–" + frac(hr.hi, 0) + ")" : ""),
       stat("Track record mínimo", isNum(o.min_trl_days) ? int(o.min_trl_days) + " días" : "—", "para que el Sharpe sea distinguible de SR0")),
     card("Veredicto", pass ? chip("cumple todos los criterios", "ok") : chip("no cumple", "warn"), checkChips(d.verdict && d.verdict.checks),
       d.verdict && d.verdict.criterios ? el("p", { class: "small muted", style: { marginTop: "8px" } }, "Criterios: " + Object.entries(d.verdict.criterios).map(([k, v]) => k + " = " + v).join(" · ")) : null),
+    programDetailCard(d.programa),
     card("Curva de capital fuera de muestra", "estrategia vs canasta y buy & hold", eqBox),
     diagnosticsCard(d.diagnostics),
     d.holdout && typeof d.holdout === "object" ? holdoutCard(d.holdout, charts) : null,

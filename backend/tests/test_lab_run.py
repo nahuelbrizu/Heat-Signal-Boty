@@ -47,6 +47,7 @@ def test_evaluate_end_to_end_keeps_holdout_sealed(tmp_path) -> None:
     oos_end = pd.Timestamp(rep["walk_forward"]["oos"][1], tz="UTC")
     assert oos_end <= holdout  # nada del holdout entra al resultado
     assert rep["walk_forward"]["windows"] >= 2 and rep["n_combinations"] == 1
+    assert rep["oos"]["dsr_label"] == "PSR (sin corrección de selección)"  # K = 1: el DSR propio es el PSR
     assert set(rep["oos"]) >= {"sharpe", "dsr", "psr", "breakeven_bps_per_side", "cost_curve", "trades", "breakdown"}
     assert rep["baselines"]["random_entries"]["n"] == 5
     assert rep["oos"]["trades"] > 0

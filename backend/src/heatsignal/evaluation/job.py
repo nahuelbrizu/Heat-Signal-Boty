@@ -7,6 +7,8 @@ Job de evaluacion (Fase 3): `python -m heatsignal.evaluation.job`.
    logueando cada evaluacion en `HypothesisLog` y el reporte completo en `ReportLog`.
 3. Escribe el diario de lecciones de las hipotesis recien resueltas (`lessons.py`: una leccion corta por
    hipotesis, LLM barato o version por codigo). Son SOLO para el usuario: no vuelven a ningun prompt.
+3b. Calcula el MAE/MFE de las resueltas que no lo tienen (`excursion.py`: cuanto fue en contra y a favor, con velas
+   1m de la base historica o 1h de Binance). Dato descriptivo, append-only; no vuelve al grafo ni a la evaluacion.
 4. Imprime un JSON con el resumen de resolucion, las lecciones y los reportes.
 
 Por defecto registry, pendientes, log y reportes viven en el mismo archivo SQLite
@@ -60,6 +62,7 @@ def run_once(
     config: JobConfig | None = None,
     now: datetime | None = None,
     lesson_writer: Any = None,
+    excursion_writer: Any = None,
 ) -> dict[str, Any]:
     """Una corrida completa: resolver vencidas y evaluar todas las estrategias."""
     config = config or JobConfig()
@@ -75,6 +78,12 @@ def run_once(
             lessons = lesson_writer(now)
         except Exception as exc:  # noqa: BLE001 - las lecciones nunca frenan la evaluacion
             lessons = {"error": f"{type(exc).__name__}: {exc}"}
+    excursions = None
+    if excursion_writer is not None:  # MAE/MFE descriptivo (nunca frena la evaluacion)
+        try:
+            excursions = excursion_writer(now)
+        except Exception as exc:  # noqa: BLE001
+            excursions = {"error": f"{type(exc).__name__}: {exc}"}
     reporter = StrategyReporter(
         store,
         registry,
@@ -89,6 +98,7 @@ def run_once(
         "resolution": summary.model_dump(mode="json"),
         "pending_count": store.pending_count(),
         "lessons": lessons,
+        "excursions": excursions,
         "reports": [r.model_dump(mode="json") for r in reports],
         "public": [r.public_view() for r in reports],
     }
@@ -108,6 +118,9 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument("--no-lessons", action="store_true",
                         help="no escribir el diario de lecciones (tambien HEATSIGNAL_LESSONS=0)")
     parser.add_argument("--no-lesson-llm", action="store_true", help="lecciones solo por codigo (sin LLM)")
+    parser.add_argument("--no-excursions", action="store_true", help="no calcular el MAE/MFE de las hipotesis resueltas")
+    parser.add_argument("--history-db", default=os.environ.get("HEATSIGNAL_HISTORY_DB"),
+                        help="base historica (velas 1m para el MAE/MFE); default: heatsignal_history.sqlite junto a --db")
     return parser.parse_args(argv)
 
 
@@ -147,6 +160,14 @@ def main(argv: list[str] | None = None) -> int:
             if llm is None:
                 out["sin_llm"] = why
             return out
+    excursion_writer = None
+    if not args.no_excursions:
+        from .excursion import CandleSource, write_missing as write_excursions
+
+        candles = CandleSource(Path(args.history_db) if args.history_db else db_path.parent / "heatsignal_history.sqlite")
+
+        def excursion_writer(now: datetime) -> dict[str, Any]:
+            return write_excursions(db_path, store, candles, now=now)
     try:
         result = run_once(
             registry=registry,
@@ -157,13 +178,15 @@ def main(argv: list[str] | None = None) -> int:
             hourly_price_source=BinanceHourlyClosePriceSource(price_kind=args.price_kind),
             config=config,
             lesson_writer=lesson_writer,
+            excursion_writer=excursion_writer,
         )
     finally:
         for closable in (report_log, hypothesis_log, store, registry, lesson_store, cycle_log):
             if closable is not None:
                 closable.close()
 
-    output = ({"ran_at": result["ran_at"], "lessons": result["lessons"], "public": result["public"]}
+    output = ({"ran_at": result["ran_at"], "lessons": result["lessons"], "excursions": result["excursions"],
+               "public": result["public"]}
               if args.public_only else result)
     print(json.dumps(output, indent=2, default=str))
     # Exit code != 0 si hubo errores transitorios de la fuente: que el scheduler lo vea.

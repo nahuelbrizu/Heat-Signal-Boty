@@ -75,6 +75,24 @@ Mínimo 3 meses hacia adelante y:
 2. Brier mejor que la tasa base y calibración razonable.
 3. El paper replica al backtest (diferencias explicadas por costos y ejecución).
 4. Límites duros de `decisions.md` implementados: riesgo 0,5–1 % por trade, pérdida diaria máxima, kill switch.
+5. **Stop del lado del exchange en TODA orden real (2026-10-19, obligatorio).** Cada entrada lleva, en el mismo
+   envío, una orden `STOP_MARKET` con `reduceOnly` (o `closePosition`) en el exchange, aunque la regla salga por
+   tiempo, canal o señal. Es un seguro ante caídas del bot, de la VM o de la red, no parte de la regla:
+   - si la regla tiene stop (ema-cruce 1,5 ATR, rango y vwap 1,5 ATR, pares |z| > 4, ...), el stop del exchange es
+     ese mismo nivel (el de `lab/exits.py`, calculado al entrar);
+   - si la regla no tiene stop (Donchian, tsmom, max-ruptura, carteras, hipótesis por tiempo), stop de catástrofe
+     fijado de antemano y documentado por estrategia antes de operar. **PROPUESTA (a confirmar por el usuario en `decisions.md`): 3 ATR(14) de la temporalidad de la
+     regla desde la entrada, con piso de 8 % y techo de 20 % del precio** (el −20 % es el mismo stop de seguridad que
+     ya usa el Freqtrade de hipótesis). Cambiar ese valor es una decisión nueva en `decisions.md`, nunca un ajuste
+     mirando resultados;
+   - el valor de cada estrategia queda escrito en su ficha de salidas (`lab/exits.py`) y en `decisions.md`; la
+     orden se verifica después de enviarla (que exista en el exchange); si no se puede colocar el stop, la entrada se
+     cancela y la posición se cierra (sin stop no hay posición);
+   - el stop de catástrofe NO se simula como parte de la regla en el laboratorio (no cambia los resultados ni los
+     spec_hash). El MAE/MFE de paper y de las hipótesis (`evaluation/excursion.py`) sirve para ver cuántas veces lo
+     habría tocado (solo descriptivo).
+   - Antes de codear la ejecución real: verificar contra la doc oficial vigente de Binance USDS-M el tipo de orden
+     (`STOP_MARKET`, `reduceOnly`/`closePosition`, `workingType` MARK_PRICE vs CONTRACT_PRICE) — principio de grounding.
 
 Recién ahí, dinero chico y escalado gradual.
 

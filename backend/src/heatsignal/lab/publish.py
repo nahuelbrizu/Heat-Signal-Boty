@@ -15,6 +15,11 @@ Los resultados viejos (antes de `oos.equity_daily`) se publican igual, con `equi
 Diagnosticos (`lab.diagnostics`, results/<id>/diagnostics_<ts>.json): el resumen y el detalle llevan un bloque
 `diagnostics` con el ultimo PBO (CSCV) y la ultima robustez por vecinos (meseta, caida maxima, Sharpe del desarrollo
 con costos x3). Son diagnostico: no entran al conteo K del programa (`program` solo lee `lab_trials`).
+
+Liston del programa (regla del 2026-10-19): `program` es el metodo (i) de referencia; `attach_program_methods` suma el
+bloque `program.metodos` con los tres metodos del ultimo `results/_program/program_<ts>.json` (`lab.program`) y, por
+estrategia, `dsr_corr` (ii), `p_boot_adj` (iii), `dsr_label` (PSR si tiene una sola combinacion) y `veredicto_programa`.
+Los JSON de resultados no se reescriben.
 """
 
 from __future__ import annotations
@@ -70,10 +75,10 @@ def _latest_diagnostics(folder: Path) -> dict[str, tuple[dict[str, Any], dict[st
             rep = json.loads(f.read_text())
         except (OSError, ValueError):
             continue
-        for kind in ("pbo", "robustez"):
+        for kind in ("pbo", "robustez", "salidas"):  # salidas: atribucion de salidas (lab/exits.py)
             if kind not in out and isinstance(rep.get(kind), dict):
                 out[kind] = (rep, rep[kind])
-        if len(out) == 2:
+        if len(out) == 3:
             break
     return out
 
@@ -105,6 +110,22 @@ def diagnostics_block(folder: Path, current_run: str | None, full: bool = False)
         out["robustez_detail"] = r or None
         out["development"] = (rr or pr).get("development")
         out["holdout"] = (rr or pr).get("holdout")
+    out["salidas"] = _salidas_block(found.get("salidas"), full)
+    return out
+
+
+def _salidas_block(found: tuple[dict[str, Any], dict[str, Any]] | None, full: bool) -> dict[str, Any] | None:
+    """Atribucion de salidas del desarrollo (stop / objetivo / tiempo / senal / rebalanceo). None si no se corrio."""
+    if not found:
+        return None
+    rep, s = found
+    keys = ("por_motivo", "trades", "abiertas_al_final", "ajustes", "metodo", "verificacion", "window", "holdout",
+            "base_params", "adds_trials")
+    out = {k: s.get(k) for k in keys}
+    out.update({"generated_at": rep.get("generated_at"), "run": rep.get("run")})
+    if full:
+        out["por_simbolo"] = s.get("por_simbolo")
+        out["componentes"] = {c: {k: v.get(k) for k in keys} for c, v in (s.get("componentes") or {}).items()} or None
     return out
 
 
@@ -145,6 +166,7 @@ def summarize(results_dir: Path) -> dict[str, Any]:
         })
     out["benchmark_ta"] = benchmark_ta(results_dir / "_benchmark_ta")
     out["program"] = program(results_dir.parent / "trials.sqlite", out)
+    attach_program_methods(out, results_dir)  # metodos (ii) y (iii) + veredicto_programa (regla 2026-10-19)
     return out
 
 
@@ -168,20 +190,29 @@ def benchmark_ta(folder: Path) -> dict[str, Any] | None:
                                                 "funding_total", "days", "leverage_max")} for x in r.get("results") or []]}
 
 
-def program(trials_db: Path, summary: dict[str, Any]) -> dict[str, Any] | None:
+def program(trials_db: Path, summary: dict[str, Any], exclude: Iterable[str] | None = None) -> dict[str, Any] | None:
     """Liston del programa entero: K = combinaciones registradas en trials + estrategias del benchmark; SR0 =
     E[max] de K Sharpe ruido con la varianza de los Sharpe OOS observados (lab + benchmark). Agrega a cada
     estrategia `dsr_program`: su DSR contra ese liston (el DSR de la tabla solo corrige por sus propias combinaciones).
 
     K se cuenta SOLO de `lab_trials`. Los diagnosticos (PBO y vecinos de robustez, `lab.diagnostics`) viven en la
-    tabla aparte `lab_diagnostics` y NO son intentos: no suman a K ni sus Sharpe entran a la varianza."""
+    tabla aparte `lab_diagnostics` y NO son intentos: no suman a K ni sus Sharpe entran a la varianza.
+
+    Es el metodo (i) "referencia" de la regla del 2026-10-19 (`lab.program`), con la formula sin cambios. Unico
+    agregado: las estrategias con un intento no valido (`exclude`, o por defecto los estados de `lab_trial_status`)
+    no entran a la varianza ni reciben `dsr_program`; siguen contando en K."""
     import math
     import sqlite3
 
     from .stats import deflated_sharpe_ratio, expected_max_sharpe
+    from .trials import read_statuses
 
     if not trials_db.exists():
         return None
+    if exclude is None:
+        exclude = [sid for sid, st in read_statuses(trials_db).items() if st["status"] != "valido"]
+    excluded = set(exclude)
+    summary = {**summary, "strategies": [s for s in summary["strategies"] if s.get("strategy_id") not in excluded]}
     con = sqlite3.connect(f"file:{trials_db}?mode=ro", uri=True)
     try:
         k_lab = con.execute("SELECT COUNT(DISTINCT strategy_id || '|' || params) FROM lab_trials "
@@ -201,7 +232,85 @@ def program(trials_db: Path, summary: dict[str, Any]) -> dict[str, Any] | None:
         s["dsr_program"] = (deflated_sharpe_ratio(sr / math.sqrt(365), int(n), k, var_d)
                             if isinstance(sr, (int, float)) and n else None)
     return {"k": k, "k_lab": k_lab, "k_benchmark": len(bench), "n_sharpes": len(srs),
-            "sr0_annual": expected_max_sharpe(k, var_d) * math.sqrt(365)}
+            "sr0_annual": expected_max_sharpe(k, var_d) * math.sqrt(365), "excluidas": sorted(excluded)}
+
+
+PSR_LABEL = "PSR (sin corrección de selección)"  # = lab.program.PSR_LABEL (lab.program arrastra numpy/stats)
+PROGRAM_CRITERIA = {"p_ajustado_max": 0.05, "dsr_corregido_min": 0.95}  # = lab.program.P_MAX / DSR_MIN
+
+
+def _latest_program_file(results_dir: Path) -> dict[str, Any] | None:
+    """Ultimo results/_program/program_<ts>.json (lo escribe `python -m heatsignal.lab.program`)."""
+    for f in sorted((results_dir / "_program").glob("program_*.json"), reverse=True):
+        try:
+            rep = json.loads(f.read_text())
+        except (OSError, ValueError):
+            continue
+        rep["_file"] = f.name
+        return rep
+    return None
+
+
+def attach_program_methods(summary: dict[str, Any], results_dir: Path) -> None:
+    """Bloque `program.metodos` con los tres metodos (del ultimo program_<ts>.json) y, por estrategia: `dsr_label`
+    (PSR cuando tiene 1 combinacion), `p_boot_adj` (iii), `dsr_corr` (ii) y `veredicto_programa` = los checks del
+    lab con el check `dsr` reemplazado por el criterio del programa: (iii) p ajustado <= 0,05 y (ii) >= 0,95.
+    No reescribe ningun JSON de resultados. `stale` si el liston se calculo sobre otras corridas."""
+    rep = _latest_program_file(results_dir)
+    prog = summary.get("program") or {}
+    summary["program"] = prog
+    current = {s.get("strategy_id"): s.get("run") for s in summary["strategies"]}
+    if rep is None:
+        prog["metodos"] = None
+    else:
+        m1, m2, m3 = rep.get("metodo_i") or {}, rep.get("metodo_ii") or {}, rep.get("metodo_iii") or {}
+        runs = rep.get("runs") or {}
+        stale = sorted(s for s, r in current.items() if runs.get(s) != r)
+        prog["metodos"] = {
+            "generated_at": rep.get("generated_at"), "file": rep.get("_file"), "regla": rep.get("regla"),
+            "criterio": rep.get("criterio"), "k_real": rep.get("k_real"), "k_eff": rep.get("k_eff"),
+            "alineacion": rep.get("alineacion"), "stale": bool(stale), "stale_strategies": stale,
+            "estados": {s: {k: e.get(k) for k in ("status", "motivo", "fuente", "n_combinations")}
+                        for s, e in (rep.get("estados") or {}).items()},
+            "i": {"k": m1.get("k"), "sr0_annual": m1.get("sr0_annual"), "pasan": m1.get("pasan"), "nota": m1.get("nota")},
+            "ii": {"k_eff": m2.get("k_eff"), "k_eff_estrategias": m2.get("k_eff_estrategias"),
+                   "k_eff_multiplicativa": m2.get("k_eff_multiplicativa"), "k_combinaciones_extra": m2.get("k_combinaciones_extra"),
+                   "combinaciones_fuente": m2.get("combinaciones_fuente"), "k_benchmark": m2.get("k_benchmark"),
+                   "k_no_validas": m2.get("k_no_validas"), "dispersion": m2.get("dispersion"),
+                   "sd_null_annual": {s: d.get("sd_null_annual") for s, d in (m2.get("dispersiones") or {}).items()},
+                   "sr0_annual": {s: d.get("sr0_annual") for s, d in (m2.get("por_estrategia") or {}).items()},
+                   "pasan": m2.get("pasan")},
+            "iii": {k: m3.get(k) for k in ("p_max", "max_observed", "estrategia_max", "boot_max_quantiles", "block_len",
+                                           "n_boot", "seed", "days", "n", "nula", "pasan")},
+            "pasan": rep.get("pasan"),
+        }
+    p_adj = ((rep or {}).get("metodo_iii") or {}).get("p_ajustado") or {}
+    per2 = ((rep or {}).get("metodo_ii") or {}).get("por_estrategia") or {}
+    crit = (rep or {}).get("criterio") or {}
+    p_max = crit.get("p_ajustado_max", PROGRAM_CRITERIA["p_ajustado_max"])
+    dsr_min = crit.get("dsr_corregido_min", PROGRAM_CRITERIA["dsr_corregido_min"])
+    for s in summary["strategies"]:
+        sid = s.get("strategy_id")
+        s["dsr_label"] = PSR_LABEL if s.get("n_combinations") == 1 else "DSR"
+        s["p_boot_adj"] = p_adj.get(sid)
+        d2 = per2.get(sid) or {}
+        s["dsr_corr"] = d2.get("dsr")
+        s["dsr_corr_moments"] = {"skew": d2.get("skew"), "kurt": d2.get("kurt"), "sr0_annual": d2.get("sr0_annual"),
+                                 "dsr_sin_momentos": d2.get("dsr_sin_momentos")} if d2 else None
+        checks = dict(((s.get("verdict") or {}).get("checks")) or {})
+        checks.pop("dsr", None)
+        if rep is None:
+            s["veredicto_programa"] = {"pasa": None, "estado": "sin calcular", "checks": checks,
+                                       "criterios": {"p_ajustado_max": p_max, "dsr_corregido_min": dsr_min}}
+            continue
+        checks["p_bootstrap_ajustado"] = isinstance(s["p_boot_adj"], (int, float)) and s["p_boot_adj"] <= p_max
+        checks["dsr_corregido"] = isinstance(s["dsr_corr"], (int, float)) and s["dsr_corr"] >= dsr_min
+        status = ((rep.get("estados") or {}).get(sid) or {}).get("status", "valido")
+        s["veredicto_programa"] = {
+            "pasa": bool(checks) and all(checks.values()) and status == "valido",
+            "estado": "desactualizado" if current.get(sid) != (rep.get("runs") or {}).get(sid) else status,
+            "checks": checks, "criterios": {"p_ajustado_max": p_max, "dsr_corregido_min": dsr_min},
+        }
 
 
 def cost_curve_rows(curve: Any) -> list[dict[str, Any]] | None:
@@ -306,6 +415,9 @@ def write_all(home: Path) -> list[Path]:
         d = detail(run, runs)
         d["holdout"] = _holdout(runs[-1].parent)
         d["spec"] = _spec_info(sid)
+        row = next((s for s in summary["strategies"] if s.get("strategy_id") == sid), {})
+        d["programa"] = {k: row.get(k) for k in ("dsr_label", "dsr_program", "dsr_corr", "dsr_corr_moments", "p_boot_adj",
+                                                  "veredicto_programa")}
         d["generated_at"] = generated_at
         path = home / f"lab_detail_{sid}.json"
         path.write_text(json.dumps(_nan_to_null(d), ensure_ascii=False, separators=(",", ":")))
