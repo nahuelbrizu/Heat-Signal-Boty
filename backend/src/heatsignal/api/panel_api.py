@@ -1493,6 +1493,29 @@ def register_api(app: FastAPI, ctx: PanelContext, build_id: str) -> None:  # noq
             raise HTTPException(status_code=500, detail=cmp["error"])
         return cmp
 
+    @app.get("/api/paper/hypotheses")
+    async def paper_hypotheses() -> Any:
+        """Hipotesis de 1h mandadas al Freqtrade de hipotesis (dry-run) y su comparacion con la resolucion."""
+        src = ctx.hyp_bridge
+        if src is None:
+            raise HTTPException(status_code=503, detail="puente de hipotesis a Freqtrade no configurado en este proceso")
+
+        def work() -> Any:
+            import sqlite3
+
+            from ..paper import freqtrade_db as ftdb
+            from ..paper import ft_bridge_view as fbv
+
+            api = ftdb.api_snapshot(src.api_url, src.secrets_path, fetch=src.fetch) if src.api_url else None
+            try:
+                return json_safe(fbv.overview(src.bridge_db, src.eval_db, src.ft_db, api=api))
+            except FileNotFoundError as exc:
+                raise HTTPException(status_code=503, detail=f"{exc} (el puente todavia no corrio: heatsignal-ft-bridge.timer)") from None
+            except sqlite3.Error as exc:
+                raise HTTPException(status_code=503, detail=f"no se pudo leer la base del puente o de evaluacion: {exc}") from None
+
+        return await _paper_cached("hyp_bridge", 10.0, work)
+
     # ---------------------------------------------------------------- bot propio de paper trading (lote 3)
 
     def _paperbot_read(fn: Callable[[Path], Any]) -> Callable[[], Any]:
@@ -1711,6 +1734,9 @@ def register_api(app: FastAPI, ctx: PanelContext, build_id: str) -> None:  # noq
         if ctx.lab_summary_path is not None:
             dbs["lab_summary"] = _file_info(ctx.lab_summary_path)
             dbs["lab_details"] = len(list(ctx.lab_summary_path.parent.glob("lab_detail_*.json")))
+        if ctx.hyp_bridge is not None:
+            dbs["ft_bridge"] = _file_info(Path(ctx.hyp_bridge.bridge_db))
+            dbs["freqtrade_hyp"] = _file_info(Path(ctx.hyp_bridge.ft_db))
         if ctx.paper is not None:
             dbs["freqtrade"] = _file_info(Path(ctx.paper.db_path))
             if ctx.paper.summary_path is not None:

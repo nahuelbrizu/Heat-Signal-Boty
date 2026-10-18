@@ -136,6 +136,31 @@ def _funding(data: dict[str, MarketData]) -> dict[str, pd.Series]:
     return {s: md.funding for s, md in data.items() if md.funding is not None}
 
 
+def holdout_start_of(data: dict[str, MarketData], holdout_months: int) -> pd.Timestamp:
+    """Inicio del holdout sellado: `holdout_months` antes del ultimo dato comun, al inicio del dia UTC."""
+    last = min(md.klines.index[-1] for md in data.values()) + pd.Timedelta(minutes=1)
+    return (last - pd.DateOffset(months=holdout_months)).floor("D")
+
+
+def development(data: dict[str, MarketData], holdout_start: pd.Timestamp) -> dict[str, MarketData]:
+    """Solo el periodo de desarrollo [inicio, holdout_start): velas, funding y metrics cortados antes del holdout."""
+    return {s: MarketData(md.klines[md.klines.index < holdout_start],
+                          None if md.funding is None else md.funding[md.funding.index < holdout_start],
+                          None if md.metrics is None else md.metrics[md.metrics.index < holdout_start])
+            for s, md in data.items()}
+
+
+def simulate_combo(rule, dev: dict[str, MarketData], params: dict[str, Any], costs: Costs,
+                   prices: dict[str, pd.DataFrame] | None = None,
+                   funding: dict[str, pd.Series] | None = None) -> tuple[dict[str, pd.Series], _Daily]:
+    """Una combinacion de parametros simulada sobre `dev` (lo mismo que hace `evaluate` con cada combinacion de la
+    grilla). Devuelve la senal y solo las series diarias: el resultado minuto a minuto pesa GBs."""
+    sig = rule(dev, params)
+    res = simulate(prices if prices is not None else _prices(dev), sig,
+                   funding if funding is not None else _funding(dev), costs)
+    return sig, _Daily(res.daily_returns, res.daily_gross_returns, res.daily_turnover)
+
+
 def evaluate(cfg: RunConfig, registry: TrialRegistry | None = None, data: dict[str, MarketData] | None = None) -> dict[str, Any]:
     spec, rule = CATALOG[cfg.strategy_id]
     if not spec.backtestable:
@@ -143,23 +168,18 @@ def evaluate(cfg: RunConfig, registry: TrialRegistry | None = None, data: dict[s
     data = data or load_market(cfg.symbols, spec.needs, cfg.start, cfg.end)
     first = max(md.klines.index[0] for md in data.values())
     last = min(md.klines.index[-1] for md in data.values()) + pd.Timedelta(minutes=1)
-    holdout_start = (last - pd.DateOffset(months=cfg.holdout_months)).floor("D")
-    dev = {s: MarketData(md.klines[md.klines.index < holdout_start],
-                         None if md.funding is None else md.funding[md.funding.index < holdout_start],
-                         None if md.metrics is None else md.metrics[md.metrics.index < holdout_start])
-           for s, md in data.items()}
+    holdout_start = holdout_start_of(data, cfg.holdout_months)
+    dev = development(data, holdout_start)
     prices, funding = _prices(dev), _funding(dev)
     data = None  # liberar la copia completa: solo se usa el desarrollo (el holdout queda sellado)
 
     combos = grid_combos(spec)
     sims = []
     for params in combos:
-        sig = rule(dev, params)
-        res = simulate(prices, sig, funding, cfg.costs)
         # solo lo necesario: el resultado minuto a minuto de cada combinacion pesa GBs (OOM con 4 en paralelo)
-        sims.append((params, sig, _Daily(res.daily_returns, res.daily_gross_returns, res.daily_turnover)))
-        log.info("%s %s: Sharpe dev %.2f", cfg.strategy_id, {k: params[k] for k in spec.grid}, stats.sharpe_ratio(res.daily_returns))
-        del res
+        sig, daily = simulate_combo(rule, dev, params, cfg.costs, prices, funding)
+        sims.append((params, sig, daily))
+        log.info("%s %s: Sharpe dev %.2f", cfg.strategy_id, {k: params[k] for k in spec.grid}, stats.sharpe_ratio(daily.daily_returns))
 
     windows = list(walk_forward_windows(first.floor("D"), holdout_start, cfg.train_days, cfg.test_days))
     if not windows:
@@ -275,12 +295,9 @@ def open_holdout(cfg: RunConfig, registry: TrialRegistry, data: dict[str, Market
         raise HoldoutAlreadyOpenedError(f"el holdout de {cfg.strategy_id} ya se abrio")
     data = data or load_market(cfg.symbols, spec.needs, cfg.start, cfg.end)
     last = min(md.klines.index[-1] for md in data.values()) + pd.Timedelta(minutes=1)
-    holdout_start = (last - pd.DateOffset(months=cfg.holdout_months)).floor("D")
+    holdout_start = holdout_start_of(data, cfg.holdout_months)
     sel0 = holdout_start - pd.Timedelta(days=cfg.train_days)
-    dev = {s: MarketData(md.klines[md.klines.index < holdout_start],
-                         None if md.funding is None else md.funding[md.funding.index < holdout_start],
-                         None if md.metrics is None else md.metrics[md.metrics.index < holdout_start])
-           for s, md in data.items()}
+    dev = development(data, holdout_start)
     dev_prices, dev_funding = _prices(dev), _funding(dev)
     scores = []
     for params in grid_combos(spec):

@@ -7,6 +7,7 @@ import {
   signedFrac, field, select, wilson, rateText, ciBar, sym as toSym, parseMs, extLink, DASH,
 } from "../core.js";
 import { makeChart, disposeChart, css, signedBars, legend, toChartTime, xyChart } from "../charts.js";
+import { mountHypFt } from "../hyp-ft-ui.js";
 
 const COMP = {
   timing: ["Timing", "Estar en el mercado cuando el otro no: entradas/salidas en otro momento u operaciones que hizo uno solo."],
@@ -33,11 +34,13 @@ const pairName = (s) => s ? toSym(s) : DASH;
 export async function mount(root, ctx) {
   const q = ctx.route.query;
   const f = { symbol: q.get("symbol") || "", result: q.get("result") || "", since: q.get("since") || "" };
-  const head = pageHead("Paper trading", "Freqtrade en dry-run de donchian-ensemble-v1: dinero simulado, precios reales de Binance. Solo lectura.",
+  const head = pageHead("Paper trading", "Freqtrade en dry-run de donchian-ensemble-v1 y, abajo, las hipótesis de 1h en una segunda instancia: dinero simulado, precios reales de Binance. Solo lectura.",
     el("a", { class: "btn", href: ctx.href("paperbot") }, "Bot paper del lote 3 →"));
   const top = el("div", {}, loading());
   const cmpBox = el("div", {}, loading("Cargando la comparación con el backtest…"));
-  clear(root, head, top, cmpBox);
+  // Segunda instancia de Freqtrade (hipotesis de 1h del grafo): seccion aparte, independiente del bot de Donchian
+  const hypBox = el("div", { class: "stack", style: { marginTop: "24px" } }, loading("Cargando las hipótesis en Freqtrade…"));
+  clear(root, head, top, cmpBox, hypBox);
   const charts = [];
   let paper = null;
 
@@ -65,9 +68,10 @@ export async function mount(root, ctx) {
     }
   }
   ctx.redraw = () => { if (paper) { charts.splice(0).forEach(disposeChart); clear(top, ...renderPaper(paper, f, ctx, charts)); loadCompare(); } };
-  await Promise.all([load(), loadCompare()]);
-  ctx.every(30000, load);
-  return { refresh: () => { load(); loadCompare(); }, unmount: () => charts.forEach(disposeChart) };
+  let loadHyp = null;
+  await Promise.all([load(), loadCompare(), mountHypFt(hypBox, ctx).then((f) => { loadHyp = f; })]);
+  ctx.every(30000, () => { load(); if (loadHyp) loadHyp(); });
+  return { refresh: () => { load(); loadCompare(); if (loadHyp) loadHyp(); }, unmount: () => charts.forEach(disposeChart) };
 }
 
 // FreqUI: puerto local del tunel hs-ft (la URL viene de /api/paper; sin respuesta se arma con el mismo esquema que el panel)

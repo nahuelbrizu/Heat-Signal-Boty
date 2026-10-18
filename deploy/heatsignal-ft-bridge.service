@@ -1,0 +1,28 @@
+# Puente hipotesis de 1h -> Freqtrade de hipotesis (dry-run). Una corrida: lee hipotesis nuevas de
+# heatsignal_eval.sqlite (solo lectura), hace forceenter en 127.0.0.1:8082 y registra cada envio en
+# data/ft_bridge.sqlite (append-only, idempotente). Solo libreria estandar. Lo dispara heatsignal-ft-bridge.timer.
+# Sale con codigo 1 si la API no respondio o hubo errores (queda "failed" en systemctl: nada silencioso).
+[Unit]
+Description=HeatSignal puente hipotesis de 1h -> Freqtrade dry-run (una corrida)
+After=network-online.target heatsignal-freqtrade-hyp.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=nahue
+WorkingDirectory=/home/nahue/heatsignal/backend
+Environment=PYTHONPATH=/home/nahue/heatsignal/backend/src
+Environment=HEATSIGNAL_EVAL_DB=/home/nahue/heatsignal/data/heatsignal_eval.sqlite
+Environment=HEATSIGNAL_FT_BRIDGE_DB=/home/nahue/heatsignal/data/ft_bridge.sqlite
+Environment=HEATSIGNAL_FT_HYP_API=http://127.0.0.1:8082
+Environment=HEATSIGNAL_FT_HYP_SECRETS=/home/nahue/heatsignal/freqtrade/config.hyp.secrets.json
+Environment=HEATSIGNAL_FT_HYP_STAKE=1000
+ExecStart=/home/nahue/heatsignal/backend/.venv/bin/python -m heatsignal.paper.ft_bridge run
+MemoryMax=120M
+MemorySwapMax=0
+Nice=5
+TimeoutStartSec=3min
+ProtectSystem=strict
+ReadWritePaths=/home/nahue/heatsignal/data
+PrivateTmp=true
+NoNewPrivileges=true

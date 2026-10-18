@@ -44,6 +44,8 @@ API de solo lectura para la single page (`api/panel_api.py`; contrato y ejemplos
     GET /api/paper                       paper trading: estado del dry-run de Freqtrade (base read-only + API REST),
                                          abiertas/cerradas con PnL, equity por operacion, resumen por par
     GET /api/paper/compare               ultima comparacion paper vs backtest (paper_summary.json) + historial
+    GET /api/paper/hypotheses            hipotesis de 1h ejecutadas en el Freqtrade de hipotesis (dry-run): envios del
+                                         puente, estado, PnL de Freqtrade vs resolucion de la hipotesis, por estrategia
     GET /api/paperbot                    bot propio de paper trading del lote 3 (paperbot.sqlite, solo lectura):
                                          corridas, huecos, equity vs canasta y posiciones por estrategia
     GET /api/paperbot/{strategy_id}      detalle: equity horaria, ordenes, trades, funding, descomposicion
@@ -118,6 +120,7 @@ class PanelContext:
     paper: PaperSources | None = None  # paper trading (Freqtrade dry-run): base, API REST y comparacion publicada
     archive: Any = None  # history.cold.ColdReader: lectura fria de lo archivado en Drive (almacenamiento por niveles)
     paperbot_db: Path | None = None  # data/paperbot.sqlite del bot propio de paper trading (lote 3), solo lectura
+    hyp_bridge: HypBridgeSources | None = None  # hipotesis de 1h en el Freqtrade de hipotesis (dry-run), solo lectura
 
 
 @dataclass
@@ -129,6 +132,18 @@ class PaperSources:
     api_url: str | None = None          # API REST de Freqtrade (HEATSIGNAL_FREQTRADE_API; "" = no consultarla)
     summary_path: Path | None = None    # paper_summary.json subido por lab/paper_compare.py --upload
     wallet: float = 10_000.0            # dry_run_wallet (si la API no responde)
+    fetch: Any = None                   # inyectable en tests: (url, headers, timeout) -> (status, bytes)
+
+
+@dataclass
+class HypBridgeSources:
+    """Hipotesis de 1h ejecutadas en el Freqtrade de hipotesis (paper/ft_bridge_view.py). Todo de solo lectura."""
+
+    bridge_db: Path                     # data/ft_bridge.sqlite (HEATSIGNAL_FT_BRIDGE_DB), lo escribe el puente
+    ft_db: Path                         # data/freqtrade_hyp.sqlite (HEATSIGNAL_FT_HYP_DB)
+    eval_db: Path                       # heatsignal_eval.sqlite (hipotesis y resoluciones)
+    secrets_path: Path | None = None    # config.hyp.secrets.json (HEATSIGNAL_FT_HYP_SECRETS)
+    api_url: str | None = None          # API de la instancia (HEATSIGNAL_FT_HYP_API; "" = no consultarla)
     fetch: Any = None                   # inyectable en tests: (url, headers, timeout) -> (status, bytes)
 
 

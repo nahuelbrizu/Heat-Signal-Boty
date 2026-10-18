@@ -12,3 +12,8 @@ freqtrade/user_data/*.sqlite*
 freqtrade/user_data/logs/
 freqtrade/user_data/data/
 freqtrade/user_data/backtest_results/
+# Freqtrade de hipotesis (segunda instancia dry-run): secretos y datos solo en la VM
+freqtrade/config.hyp.secrets.json
+freqtrade/user_data_hyp/*
+!freqtrade/user_data_hyp/strategies/
+freqtrade/user_data_hyp/strategies/__pycache__/

@@ -1,0 +1,12 @@
+# Instalar: ver deploy de "Freqtrade de hipotesis" en decisions.md (no activar sin heatsignal-freqtrade-hyp).
+[Unit]
+Description=HeatSignal puente hipotesis -> Freqtrade cada 5 minutos
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=5min
+AccuracySec=10s
+# Sin Persistent: una corrida perdida no se recupera "hacia atras"; la siguiente marca como skipped_late lo vencido.
+
+[Install]
+WantedBy=timers.target

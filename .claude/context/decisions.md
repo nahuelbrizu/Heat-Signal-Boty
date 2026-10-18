@@ -281,6 +281,17 @@
   contratos), lotes de patrones de velas o SMC como estrategias (solo como features), cifras externas como
   umbrales sin validar.
 
+- **Hipótesis de 1h ejecutadas en un segundo Freqtrade dry-run (2026-10-18).** Pedido del usuario: "enviá algunas
+  operaciones al bot de freq". El Freqtrade de Donchian no sirve (solo long, `adjust_trade_position` lleva
+  cualquier trade a su objetivo, su salida cierra los trades y ensuciaría `paper_compare`). Segunda instancia
+  `heatsignal-freqtrade-hyp`: estrategia `HypothesisBridgeV1` sin señales, dry-run, futures, 7 pares, wallet 10.000,
+  stake 1.000 (redondeado a la precisión del par), leverage 1, base `data/freqtrade_hyp.sqlite`, API solo en
+  127.0.0.1:8082. Puente `paper/ft_bridge.py` (cada 5 min): `forceenter` por cada hipótesis nueva de 1h con tag
+  `hyp:<id8>:<due_epoch>`; cierra con `custom_exit` al vencer. Stop de seguridad −20 % (no es parte de la
+  hipótesis; el panel lo marca). Un trade por par: la segunda hipótesis del par queda "omitida: par ocupado".
+  Registro append-only `ft_bridge_orders`. RAM medida 405 MB estables / 465 MB pico (`MemoryMax=550M`); vigilar
+  swap: si crece, pasar a e2-medium. Mide la distancia simulación–ejecución; no aprueba estrategias.
+
 ## Abiertas
 - ~~Plan de CoinGlass a contratar.~~ **Ya no aplica al core** — la fuente primaria pasó a WS nativos.
   Solo se retomaría si se implementa la fuente BYOK opcional (y ahí el plan lo elige el usuario).

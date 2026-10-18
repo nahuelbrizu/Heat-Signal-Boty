@@ -727,6 +727,33 @@ el archivo está roto. Se relee solo si cambia.
 - `curves`: retorno acumulado sobre el capital (paso horario si la ventana es ≤ 31 días, si no diario).
 - `history`: una fila por fecha de corrida (cada corrida es acumulada desde el inicio del paper).
 
+## `GET /api/paper/hypotheses`
+
+Hipótesis de las estrategias de 1h mandadas al **Freqtrade de hipótesis** (segunda instancia en DRY-RUN,
+`heatsignal-freqtrade-hyp`, API en 127.0.0.1:8082) por el puente `paper/ft_bridge.py` (timer cada 5 min). Todo
+simulado. Lee en solo lectura `data/ft_bridge.sqlite` (envíos), `heatsignal_eval.sqlite` (hipótesis y resolución)
+y `data/freqtrade_hyp.sqlite` (trades); la API de esa instancia solo para el precio actual de las abiertas. Cache 10 s.
+Se ve en la vista `#/paper`, sección "Hipótesis de 1h en Freqtrade (dry-run)".
+
+| Variable | Default |
+|---|---|
+| `HEATSIGNAL_FT_BRIDGE_DB` | `ft_bridge.sqlite` junto a la base de evaluación |
+| `HEATSIGNAL_FT_HYP_DB` | `~/heatsignal/data/freqtrade_hyp.sqlite` |
+| `HEATSIGNAL_FT_HYP_API` | `http://127.0.0.1:8082` (`""` = no consultarla) |
+| `HEATSIGNAL_FT_HYP_SECRETS` | `~/heatsignal/freqtrade/config.hyp.secrets.json` (nunca se devuelve) |
+
+Respuesta: `disclaimer`, `source` (bases, `ft_available`, `api.ok/error`), `bridge` (`first_run_ms`, `last_run`,
+últimas `runs` con `status` idle/ok/api_down/partial), `totals` y `strategies[]` (una por estrategia de 1h registrada):
+conteos (`sent`, `pair_busy`, `late`, `unsupported`, `errors`, `open`, `closed`, `ft_wins` + `ft_ci95`, `ft_pnl_abs`,
+`compared`, `same_outcome`, `mean_pnl_diff_pp`, `mean_entry_effect_bps`, `mean_exit_effect_bps`, demoras medias,
+`safety_stops`) y `ops[]`. Cada op: estado del envío (`sent`, `skipped_pair_busy`, `skipped_late`,
+`skipped_unsupported`, `error_reintenta`, `error`), `hyp` (precio de referencia, precio de salida, `pnl_pct` neto
+con 10 bps, `win`), `ft` (precios de entrada/salida, `pnl_pct` = close_profit × 100 neto de comisiones y funding,
+`exit_reason`, precio actual si está abierta) y `cmp`:
+`entry_gap_bps`/`exit_gap_bps` (precio crudo FT vs hipótesis), `entry_effect_bps`/`exit_effect_bps` (con el signo de
+la dirección: + = a favor), `pnl_diff_pp` (PnL FT − PnL hipótesis), `entry_delay_s`, `exit_delay_s`, `same_outcome`,
+`safety_stop`. 503 si no está configurado o el puente nunca corrió (no existe `ft_bridge.sqlite`).
+
 ## `GET /api/paperbot`
 
 Bot propio de **paper trading del lote 3** (`heatsignal.paperbot`, timer horario a los :02 UTC). Todo SIMULADO: 10.000 USDT

@@ -133,6 +133,11 @@ class RunConfig:
     freqtrade_secrets: str = "~/heatsignal/freqtrade/config.secrets.json"
     freqtrade_api: str = "http://127.0.0.1:8081"
     paper_wallet: float = 10_000.0
+    # Freqtrade de hipotesis (segunda instancia dry-run) + puente: el panel los lee en modo solo lectura
+    ft_hyp_db: str = "~/heatsignal/data/freqtrade_hyp.sqlite"
+    ft_hyp_secrets: str = "~/heatsignal/freqtrade/config.hyp.secrets.json"
+    ft_hyp_api: str = "http://127.0.0.1:8082"
+    ft_bridge_db: str | None = None  # None = ft_bridge.sqlite junto a la base de evaluacion
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> RunConfig:
@@ -216,6 +221,10 @@ class RunConfig:
             freqtrade_secrets=_opt("HEATSIGNAL_FREQTRADE_SECRETS") or "~/heatsignal/freqtrade/config.secrets.json",
             freqtrade_api=env.get("HEATSIGNAL_FREQTRADE_API", "http://127.0.0.1:8081").strip(),
             paper_wallet=_float("HEATSIGNAL_PAPER_WALLET", 10_000.0),
+            ft_hyp_db=_opt("HEATSIGNAL_FT_HYP_DB") or "~/heatsignal/data/freqtrade_hyp.sqlite",
+            ft_hyp_secrets=_opt("HEATSIGNAL_FT_HYP_SECRETS") or "~/heatsignal/freqtrade/config.hyp.secrets.json",
+            ft_hyp_api=env.get("HEATSIGNAL_FT_HYP_API", "http://127.0.0.1:8082").strip(),
+            ft_bridge_db=_opt("HEATSIGNAL_FT_BRIDGE_DB"),
         )
 
     def enabled_exchanges(self) -> list[str]:
@@ -450,7 +459,7 @@ async def start_panel(
         return None
     import uvicorn
 
-    from ..api.panel import PanelContext, PaperSources, create_panel_app
+    from ..api.panel import HypBridgeSources, PanelContext, PaperSources, create_panel_app
 
     if cfg.panel_host not in ("127.0.0.1", "localhost", "::1"):
         log.warning("!!! panel interno escuchando en %s: queda expuesto fuera de la maquina !!!", cfg.panel_host)
@@ -478,6 +487,13 @@ async def start_panel(
         lab_summary_path=Path(cfg.eval_db).parent / "lab_summary.json",
         checkpoint_db=Path(cfg.checkpoint_db),
         paperbot_db=Path(cfg.eval_db).parent / "paperbot.sqlite",
+        hyp_bridge=HypBridgeSources(
+            bridge_db=Path(cfg.ft_bridge_db or Path(cfg.eval_db).parent / "ft_bridge.sqlite").expanduser(),
+            ft_db=Path(cfg.ft_hyp_db).expanduser(),
+            eval_db=Path(cfg.eval_db),
+            secrets_path=Path(cfg.ft_hyp_secrets).expanduser() if cfg.ft_hyp_secrets else None,
+            api_url=cfg.ft_hyp_api or None,
+        ),
         db_paths={"eval": Path(cfg.eval_db), "history": Path(cfg.history_db), "checkpoints": Path(cfg.checkpoint_db),
                   "paperbot": Path(cfg.eval_db).parent / "paperbot.sqlite"},
         settings={
@@ -489,6 +505,8 @@ async def start_panel(
             "log_level": cfg.log_level,
             "paper": {"freqtrade_db": cfg.freqtrade_db, "freqtrade_api": cfg.freqtrade_api or None,
                       "freqtrade_secrets_file": cfg.freqtrade_secrets, "wallet": cfg.paper_wallet},
+            "hyp_bridge": {"freqtrade_db": cfg.ft_hyp_db, "freqtrade_api": cfg.ft_hyp_api or None,
+                           "freqtrade_secrets_file": cfg.ft_hyp_secrets, "bridge_db": cfg.ft_bridge_db},
         },
         analysis=analysis.loop if analysis else None,
         registry=analysis.registry if analysis else None,

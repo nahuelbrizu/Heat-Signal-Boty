@@ -1,0 +1,36 @@
+# Freqtrade DRY-RUN de las hipotesis de 1h del grafo (dinero simulado, precios reales de Binance, sin API keys).
+# SEGUNDA instancia, separada del bot de Donchian (heatsignal-freqtrade): estrategia HypothesisBridgeV1 sin senales
+# propias, entra solo por forceenter del puente (heatsignal-ft-bridge.timer) y sale por tiempo (custom_exit).
+# Base data/freqtrade_hyp.sqlite. API REST solo en 127.0.0.1:8082 (config.hyp.secrets.json, generado en la VM con
+# deploy/gen-freqtrade-hyp-secrets.sh, fuera de git); sin FreqUI instalada, sin Telegram, sin puerto abierto.
+[Unit]
+Description=HeatSignal Freqtrade dry-run de hipotesis de 1h (HypothesisBridgeV1)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=nahue
+WorkingDirectory=/home/nahue/heatsignal/freqtrade
+# Menos arenas de malloc: baja la RSS de un proceso Python con hilos (API + bot) sin cambiar su comportamiento.
+Environment=MALLOC_ARENA_MAX=2
+ExecStart=/home/nahue/freqtrade/.venv/bin/freqtrade trade \
+  -c /home/nahue/heatsignal/freqtrade/config.hyp.json \
+  -c /home/nahue/heatsignal/freqtrade/config.hyp.secrets.json \
+  --userdir /home/nahue/heatsignal/freqtrade/user_data_hyp \
+  --db-url sqlite:////home/nahue/heatsignal/data/freqtrade_hyp.sqlite \
+  --logfile /home/nahue/heatsignal/freqtrade/user_data_hyp/logs/freqtrade.log
+Restart=always
+RestartSec=30
+# Medido 2026-10-18 en la VM (prueba en /tmp, 7 pares, 1h, una operacion abierta y cerrada por custom_exit):
+# ver decisions.md. El tope deja margen sobre el pico; el bot de Donchian tiene 700M.
+MemoryMax=550M
+MemoryHigh=500M
+Nice=5
+ProtectSystem=strict
+ReadWritePaths=/home/nahue/heatsignal/data /home/nahue/heatsignal/freqtrade/user_data_hyp -/home/nahue/.cache
+PrivateTmp=true
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target
