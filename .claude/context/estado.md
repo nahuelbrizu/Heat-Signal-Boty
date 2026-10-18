@@ -79,19 +79,25 @@ Tests: 787 pasando, 1 skipped (2026-10-18) (`backend/`, `.venv/bin/pytest -q`).
   y después `http://localhost:8000`. Muestra exchanges, ventana en memoria, último ciclo, features en
   vivo, estrategias e hipótesis. Solo lectura.
 
-## Pendientes — los define el usuario (bloquean el modo shadow)
+## Pendientes — los define el usuario (actualizado 2026-10-19)
 
-- [ ] **Rotar la `ANTHROPIC_API_KEY`**: la actual se pegó en el chat. Generar otra y cargarla a mano en el
-      `.env` de la VM. Definir presupuesto: ~670 llamadas/día con ciclo de 15 min.
-- [ ] **Pre-registrar las primeras estrategias** con
-      `python -m heatsignal.evaluation.register_strategy archivo.json` — antes de ver resultados.
-- [x] XRP sumado a `HEATSIGNAL_SYMBOLS` en la VM.
-- [x] `xrp-acumulacion-v1` registrada (LONG a 90 días, sin noticias).
-- [ ] `xrp-acumulacion-v2` (v1 + noticias): registrar tras el deploy de noticias.
+- [ ] **Listón del programa (SR0):** elegir (a) como está, (b) K efectivo por correlación, (c) por familia
+      (`decisions.md`, "Abiertas"). Decidir antes de mirar qué opción hace pasar a alguna estrategia.
+- [ ] **Seguridad de la VM (a hacer):**
+  - [ ] Activar *deletion protection* (hoy apagada).
+  - [ ] Borrar la regla de firewall `default-allow-rdp` (3389 abierto a internet, inútil en Linux).
+  - [ ] Más adelante: SSH solo por IAP (regla para 35.235.240.0/20, `--tunnel-through-iap` en nuestros
+        comandos y en `lab/publish.py`), y Secure Boot.
+- [ ] **Rotar keys pegadas en el chat:** `ANTHROPIC_API_KEY` (ya rotada una vez), la key vieja de Gemini (AI
+      Studio) y la de Vertex (`AQ.`, en uso). Cargar la nueva en `~/heatsignal/.env` de la VM.
+- [ ] **Crédito de Anthropic:** cuando se cargue, Claude vuelve a ser el primario (Haiku/Sonnet): medir costo.
+- [ ] **Métricas del grafo** (tokens y costo por ciclo y por modelo, en el panel): pedido pendiente.
+- [ ] **Plan de entrenamiento de bots:** `plan-entrenamiento.md` (para revisar y aprobar por etapas).
 - [ ] **METAL**: no existe como perpetuo; ¿es MTL (Metal DAO, solo Binance/Bybit) u otro token?
-- [ ] **Motor de reglas** para estrategias: espera los libros y la academia que va a pasar el usuario.
 - [ ] **ToS de Binance/Bybit/OKX**: lectura rápida (`phase-0-blockers.md`, Bloqueante A).
-- [ ] **Push / PR** de la rama `ingestion-binance-bybit`.
+- [x] Estrategias del grafo pre-registradas: las 5 de 1h (2026-10-18). `xrp-acumulacion-v1/v2` retiradas (XRP
+      pasa a la wallet).
+- [x] VM pasada a e2-medium (4 GB) con disco de 20 GB (2026-10-19).
 
 ## Pendientes — código / técnicos
 
