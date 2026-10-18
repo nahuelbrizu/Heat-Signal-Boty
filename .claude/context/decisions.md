@@ -390,6 +390,18 @@
   en contra y a favor). Agregar stop/objetivo a una estrategia ya registrada es una -v2. **Para la etapa de plata
   real:** toda orden lleva stop del lado del exchange (reduce-only), obligatorio aunque la regla salga por tiempo.
 
+- **Listón del programa: primer cálculo con la regla aprobada (2026-10-19). Ninguna estrategia pasa; los tres
+  métodos coinciden.** `lab/program.py` (resultado `results/_program/program_20261018T232331.json`). K real 51
+  (44 + 7), todas válidas; intersección de fechas 2021-03-13 → 2026-06-27 (1.933 días, sin holdout).
+  (i) referencia: SR0 4,48. (ii) DSR corregido: dispersión nula 1/T, K efectivo 47,1 (20,1 por correlación entre
+  estrategias + 20 combinaciones extra como independientes + 7 Freqtrade), SR0 0,975; DSR: donchian 0,60,
+  max-ruptura 0,50, cartera 0,35, ema-cruce 0,31, tsmom 0,24, ema-filtrado 0,22. (iii) bootstrap del Sharpe máximo:
+  máximo observado 1,08 (donchian), p = 0,24; el azar da un máximo mediano de 0,86 y un percentil 95 de 1,41;
+  Romano–Wolf: donchian 0,24, max-ruptura 0,36, cartera 0,49, ema-cruce 0,59, tsmom 0,69. Lectura: con 24
+  estrategias probadas sobre los mismos 5 años, el mejor Sharpe (1,08) está dentro de lo que el azar produce
+  (percentil ~76). Las de tendencia son las mejores del programa pero todavía no hay evidencia estadística de
+  ventaja. Seguir con: meta-labeling (plan de entrenamiento), datos nuevos hacia adelante y paper trading.
+
 ## Abiertas
 - ~~Plan de CoinGlass a contratar.~~ **Ya no aplica al core** — la fuente primaria pasó a WS nativos.
   Solo se retomaría si se implementa la fuente BYOK opcional (y ahí el plan lo elige el usuario).
