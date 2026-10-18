@@ -269,6 +269,18 @@
   `1h-retroceso-ema-a-favor-v1` da81e854-6cba-48b4-b6a3-8d8395f459d9. Corren en las sesiones (modo `sessions`).
   Cada una es una variante distinta: sus tasas se comparan entre sí y contra mantener, con n e IC.
 
+- **Base de conocimiento de análisis técnico del usuario (2026-10-18): qué se adopta.** Revisión en
+  `research/base-conocimiento-ta.md`. Se adopta: (1) lote 5 (cartera de tendencia, ruptura del máximo de 10 días,
+  reversión al VWAP), PROPUESTO en `estrategias-lote5.md`; (2) diagnósticos anti-sobreajuste en el lab: PBO por
+  CSCV y robustez por parámetros vecinos y costos ×3 (diagnóstico, nunca selección; no suman K); (3) etapa
+  "entrenar bots" con triple barrier + meta-labeling + purged K-fold, después de (2); (4) **límites duros
+  obligatorios para la etapa de ejecución**: riesgo 0,5–1 % por trade hasta el stop, pérdida diaria máxima con
+  corte hasta el día siguiente, máximo de operaciones por día, margen aislado y apalancamiento fijo con stop
+  antes de liquidación, tope de exposición total por correlación, sin órdenes market en baja liquidez, kill switch
+  si el drawdown supera 1,5 × el máximo histórico de la estrategia. No se adopta: ΔOI en USD (se mantiene en
+  contratos), lotes de patrones de velas o SMC como estrategias (solo como features), cifras externas como
+  umbrales sin validar.
+
 ## Abiertas
 - ~~Plan de CoinGlass a contratar.~~ **Ya no aplica al core** — la fuente primaria pasó a WS nativos.
   Solo se retomaría si se implementa la fuente BYOK opcional (y ahí el plan lo elige el usuario).

@@ -1048,3 +1048,118 @@ CATALOG.update({
                "ADX/DMI y RSI; Bollinger); sin paper academico"), ema_cruce),
 })
 LOTE4 = tuple(k for k in CATALOG if k not in LOTE1 and k not in LOTE2 and k not in LOTE3)
+
+
+# =====================================================================================================
+# Lote 5 (2026-10-18): de la base de conocimiento que paso el usuario, lo que se acordo usar.
+# =====================================================================================================
+
+
+def _combine(signals: list[Signals], weights: list[float]) -> Signals:
+    """Suma ponderada de senales esparsas (cambios de posicion) por simbolo: cada una se lleva a la union de
+    instantes con forward-fill y se suma. Sin renormalizar: con pesos que suman 1 la posicion queda en [-1, 1]."""
+    out: Signals = {}
+    for sym in sorted(set().union(*(s.keys() for s in signals))):
+        parts = [s.get(sym, _changes({})) for s in signals]
+        idx = pd.DatetimeIndex(sorted(set().union(*(p.index for p in parts))))
+        if idx.empty:
+            out[sym] = _changes({})
+            continue
+        total = sum(w * p.reindex(idx.union(p.index)).ffill().reindex(idx).fillna(0.0) for p, w in zip(parts, weights))
+        out[sym] = total[total.diff().fillna(total) != 0]
+    return out
+
+
+def cartera_tendencia(data: dict[str, MarketData], p: dict[str, Any]) -> Signals:
+    """Cartera de las 3 de tendencia mejor rankeadas del programa (donchian-ensemble-v1, tsmom-diario-v1,
+    ema-cruce-v1), cada una con sus parametros congelados POR DEFECTO de la spec (no los que eligio el
+    walk-forward: elegirlos mirando resultados seria ajustar) y un tercio del capital de cada simbolo."""
+    sigs, ws = [], []
+    for sid, w in p["components"].items():
+        spec, rule = CATALOG[sid]
+        sigs.append(rule(data, dict(spec.params)))
+        ws.append(w)
+    return _combine(sigs, ws)
+
+
+def max_ruptura_10d(data: dict[str, MarketData], p: dict[str, Any]) -> Signals:
+    """Velas diarias (cierre 00:00 UTC). Si el close del dia es el maximo de los ultimos `lookback_days`
+    closes (incluido el de hoy) -> long por `hold_days`. Solo long. Una posicion por simbolo a la vez."""
+    out: Signals = {}
+    for sym, md in data.items():
+        bars = resample_bars(md.klines, "1D")
+        if bars.empty:
+            out[sym] = _changes({})
+            continue
+        c = bars["close"]
+        is_max = c >= c.rolling(p["lookback_days"], min_periods=p["lookback_days"]).max()
+        entries = pd.Series(np.where(is_max, 1.0, 0.0), index=bars.index)
+        out[sym] = hold_events(entries, pd.Timedelta(days=p["hold_days"]), bars.index)
+    return out
+
+
+def _vwap_day(k1m: pd.DataFrame) -> pd.Series:
+    """VWAP anclado a las 00:00 UTC, con precio tipico (h+l+c)/3 de las velas 1m, indexado al CIERRE de cada vela
+    1m (cuando se conoce). Se reinicia cada dia UTC."""
+    tp = (k1m["high"] + k1m["low"] + k1m["close"]) / 3
+    v = k1m["volume"]
+    day = k1m.index.floor("D")
+    vwap = (tp * v).groupby(day).cumsum() / v.groupby(day).cumsum().where(lambda x: x > 0)
+    vwap.index = k1m.index + MIN
+    return vwap
+
+
+def vwap_reversion(data: dict[str, MarketData], p: dict[str, Any]) -> Signals:
+    """Velas 15m. d = (close - VWAP del dia UTC) / ATR(atr_n) de 15m. d < -k -> long; d > +k -> short; solo
+    desde `min_minutes` despues de las 00:00 UTC (VWAP con pocas velas no es referencia). Objetivo: el VWAP del
+    momento de entrada (nivel fijo); stop a sl_atr*ATR mas alla del close; salida a las `hold_hours`.
+    TP/SL en velas 1m (`exits_with_levels`: empate -> stop)."""
+    out: Signals = {}
+    for sym, md in data.items():
+        bars = resample_bars(md.klines, "15min") if sym in p["symbols"] else pd.DataFrame()
+        if bars.empty:
+            out[sym] = _changes({})
+            continue
+        close = bars["close"]
+        vwap = _vwap_day(md.klines).reindex(bars.index)
+        atr = F.atr(bars, p["atr_n"])
+        d = (close - vwap) / atr
+        mins = (bars.index - (bars.index - MIN).floor("D")) / MIN  # minutos desde el ancla del dia de la vela
+        ok = (mins >= p["min_minutes"]) & d.notna()
+        entries = pd.Series(0.0, index=bars.index)
+        entries[ok & (d < -p["k_atr"])] = 1.0
+        entries[ok & (d > p["k_atr"])] = -1.0
+        sl = close - entries * p["sl_atr"] * atr
+        out[sym] = exits_with_levels(entries, md.klines, pd.Timedelta(hours=p["hold_hours"]), tp=vwap, sl=sl)
+    return out
+
+
+CATALOG.update({
+    "cartera-tendencia-v1": (Spec(
+        "cartera-tendencia-v1", "cartera",
+        "Cartera de las 3 de tendencia: donchian-ensemble-v1 (4h, target_vol 0,20), tsmom-diario-v1 (target_vol "
+        "0,15) y ema-cruce-v1 (1h), con los parametros por defecto de cada spec congelada y un tercio del capital "
+        "de cada simbolo para cada una. Los 7 simbolos.",
+        "1h|4h", "both", "lo de cada componente",
+        {"components": {"donchian-ensemble-v1": 1 / 3, "tsmom-diario-v1": 1 / 3, "ema-cruce-v1": 1 / 3}},
+        source="base de conocimiento del usuario (2026-10-18): combinar estrategias poco correlacionadas suma "
+               "muestra sin bajar calidad (estudio Rulyfi, DSR 0,88 -> 0,95); diversificacion entre reglas de "
+               "tendencia"), cartera_tendencia),
+    "max-ruptura-10d-v1": (Spec(
+        "max-ruptura-10d-v1", "continuacion",
+        "Velas diarias. Si el cierre del dia es el maximo de los ultimos 10 cierres, long por 1 dia. Solo long, "
+        "los 7 simbolos.",
+        "1D", "long", "1 dia",
+        {"lookback_days": 10, "hold_days": 1},
+        source="base de conocimiento del usuario (2026-10-18): Quantpedia, 'Revisiting Trend-following and "
+               "Mean-reversion Strategies in Bitcoin' (pata MAX)"), max_ruptura_10d),
+    "vwap-reversion-v1": (Spec(
+        "vwap-reversion-v1", "reversion",
+        "Velas 15m, los 7. Distancia al VWAP del dia UTC en ATR(14) de 15m: < -2,5 -> long, > +2,5 -> short, desde "
+        "la 01:00 UTC. Objetivo en el VWAP del momento de entrada, stop a 1,5 ATR, salida a las 4 h.",
+        "15m", "both", "<=4h",
+        {"symbols": list(SEVEN), "k_atr": 2.5, "atr_n": 14, "sl_atr": 1.5, "hold_hours": 4, "min_minutes": 60},
+        source="base de conocimiento del usuario (2026-10-18): mean reversion a VWAP de sesion (sin evidencia "
+               "publicada citada: validar propio)"), vwap_reversion),
+})
+LOTE5 = tuple(k for k in CATALOG if k not in LOTE1 + LOTE2 + LOTE3 + LOTE4)
