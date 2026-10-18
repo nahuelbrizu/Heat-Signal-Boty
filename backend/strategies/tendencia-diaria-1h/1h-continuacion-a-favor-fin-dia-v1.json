@@ -1,0 +1,23 @@
+{
+  "description": "1h-continuacion-a-favor-fin-dia-v1: a favor de la tendencia diaria (htf-trend-v1) con el cierre de 1h del lado de la tendencia de la EMA20 1h, no extendido (<= 1.5 ATR) y fuera del extremo del rango; salida al fin del dia UTC",
+  "entry_conditions": {
+    "family": "1h-tendencia-diaria",
+    "scope": "rotation",
+    "timeframe": "1h",
+    "htf_model_id": "htf-trend-v1",
+    "htf_setup": "continuacion_a_favor",
+    "daily_trend_in": ["alcista", "bajista"],
+    "alignment": "a_favor",
+    "direction_rule": "LONG si daily_trend=alcista, SHORT si daily_trend=bajista",
+    "setup_rule": "ultimo cierre de 1h del lado de la tendencia de la EMA20 1h, a <= 1.5 ATR14 1h de ella, y fuera del 15% extremo del rango diario en la direccion de la tendencia",
+    "entry_price": "mark price al emitir (lo fija el codigo)"
+  },
+  "exit_conditions": {
+    "timeframe": "1h",
+    "horizon": "end_of_day_utc",
+    "min_bars": 2,
+    "exit_rule": "cierre (mark) de la vela 23:00-00:00 UTC del dia de emision; si quedan < 2 velas de 1h completas no se emite",
+    "costs": "10 bps ida y vuelta (resolver por defecto)"
+  },
+  "author": "nahue"
+}

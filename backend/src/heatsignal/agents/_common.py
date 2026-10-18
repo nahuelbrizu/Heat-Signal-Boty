@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import logging
 import math
+from datetime import datetime, timezone
 from typing import Callable, Iterable, Protocol, Sequence, TypeVar
 
 from ..schema.features import FeatureSet
@@ -88,11 +89,77 @@ def render_order_flow(fs: FeatureSet) -> str:
 def render_context(fs: FeatureSet) -> str:
     ctx = fs.context
     funding = ", ".join(f"{ex.value}={rate:+.7f}" for ex, rate in ctx.funding_rate_by_exchange.items())
-    return (
+    out = (
         f"{fs.symbol}: regimen (calculado por codigo) {ctx.regime}, mark {fmt_price(ctx.mark_price)}, "
         f"funding [{funding or 'n/d'}], OI ${_fmt(ctx.open_interest_usd, '{:,.0f}')}, "
         f"cambio OI {_fmt(ctx.oi_change_pct, '{:+.2f}')}%, ATR {fmt_price(ctx.atr)} "
         f"({_fmt(ctx.atr_pct, '{:.3f}')}%)\n  {format_data_gaps(fs)}"
+    )
+    if fs.htf is not None:
+        out += "\n" + render_htf(fs, n_candles=6)
+    return out
+
+
+def _hh(ms: int | None) -> str:
+    if ms is None:
+        return "n/d"
+    return datetime.fromtimestamp(ms / 1000, tz=timezone.utc).strftime("%d %H:%M")
+
+
+_SETUP_TEXT = {
+    "pullback_ema20_1h_a_favor": "retroceso a la EMA20 1h a favor de la tendencia",
+    "continuacion_a_favor": "continuacion a favor (cierre del lado de la tendencia, no extendido)",
+}
+
+
+def render_htf(fs: FeatureSet, n_candles: int = 6) -> str:
+    """Contexto 1h + tendencia del dia (calculado por CODIGO). Compacto: las 48 velas quedan en el estado/panel."""
+    h = fs.htf
+    if h is None:
+        return f"  {fs.symbol} [contexto 1h]: no calculado (apagado)"
+    head = (f"  {fs.symbol} [contexto 1h {h.htf_model_id}, SOLO velas de 1h CERRADAS hasta {_hh(h.last_closed_open_ms)} "
+            f"UTC (+1h), estado {h.status}, fuentes {h.sources or 'ninguna'}]")
+    if h.status == "missing":
+        return head + f"\n    tendencia diaria: sin_datos ({h.trend_reason})"
+    setups = [txt for k, txt in _SETUP_TEXT.items() if getattr(h.setups, k)]
+    if h.setups.extremo_rango_diario:
+        setups.append(f"cierre en el extremo {h.setups.extremo_rango_diario} del rango diario")
+    lines = [
+        head,
+        f"    tendencia diaria (codigo, regla fija): {h.daily_trend} — {h.trend_reason}",
+        f"    dia UTC ({h.day_hours_closed} velas cerradas): apertura {fmt_price(h.day_open)}, max {fmt_price(h.day_high)}, "
+        f"min {fmt_price(h.day_low)}, ultimo cierre {fmt_price(h.last_close)} "
+        f"({_fmt(h.change_from_open_pct, '{:+.2f}')}% / {_fmt(h.change_from_open_atr, '{:+.2f}')} ATR1h desde la apertura), "
+        f"posicion en el rango {_fmt(h.pos_in_day_range, '{:.2f}')}, rango {_fmt(h.day_range_atr, '{:.1f}')} ATR1h",
+        f"    dia anterior: " + ("n/d" if not h.prev_day else ", ".join(f"{k} {fmt_price(v)}" for k, v in h.prev_day.items())),
+        f"    EMA20 1h {fmt_price(h.ema20_1h)} (cierre a {_fmt(h.dist_ema20_1h_atr, '{:+.2f}')} ATR, pendiente "
+        f"{_fmt(h.ema20_1h_slope_atr, '{:+.2f}')} ATR en 4 velas), SMA50 1h {fmt_price(h.sma50_1h)}, "
+        f"EMA10 diaria {fmt_price(h.ema10_1d)} (cierre {_fmt(h.close_vs_ema10_1d_pct, '{:+.2f}')}%), "
+        f"SMA20 diaria {fmt_price(h.sma20_1d)}, ATR14 1h {fmt_price(h.atr14_1h)} ({_fmt(h.atr14_1h_pct, '{:.3f}')}%)",
+        f"    setups (codigo): {'; '.join(setups) or 'ninguno'}",
+    ]
+    if n_candles and h.candles_1h:
+        lines.append("    ultimas velas 1h (UTC, O/H/L/C): " + " | ".join(
+            f"{_hh(c.open_ms)[-5:]} {fmt_price(c.open)}/{fmt_price(c.high)}/{fmt_price(c.low)}/{fmt_price(c.close)}"
+            for c in h.candles_1h[-n_candles:]))
+    return "\n".join(lines)
+
+
+def htf_digest_line(fs: FeatureSet) -> str:
+    """Una linea para el digest del debate y del Sintetizador."""
+    h = fs.htf
+    if h is None:
+        return "- Contexto 1h / tendencia del dia: no calculado"
+    if h.status == "missing":
+        return f"- Contexto 1h / tendencia del dia (codigo): sin_datos ({h.trend_reason})"
+    setups = [k for k in _SETUP_TEXT if getattr(h.setups, k)]
+    if h.setups.extremo_rango_diario:
+        setups.append(f"extremo_rango_diario={h.setups.extremo_rango_diario}")
+    return (
+        f"- Contexto 1h / tendencia del dia (codigo, {h.htf_model_id}): daily_trend={h.daily_trend}; cambio desde la "
+        f"apertura UTC {_fmt(h.change_from_open_pct, '{:+.2f}')}% ({_fmt(h.change_from_open_atr, '{:+.2f}')} ATR1h); "
+        f"posicion en el rango diario {_fmt(h.pos_in_day_range, '{:.2f}')}; cierre vs EMA20 1h "
+        f"{_fmt(h.dist_ema20_1h_atr, '{:+.2f}')} ATR; setups: {', '.join(setups) or 'ninguno'}"
     )
 
 

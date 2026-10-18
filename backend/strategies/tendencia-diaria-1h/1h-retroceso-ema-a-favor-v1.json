@@ -1,0 +1,22 @@
+{
+  "description": "1h-retroceso-ema-a-favor-v1: a favor de la tendencia diaria (htf-trend-v1) tras retroceso de la ultima vela de 1h cerrada a la EMA20 de 1h; salida al cierre de la 4a vela de 1h completa",
+  "entry_conditions": {
+    "family": "1h-tendencia-diaria",
+    "scope": "rotation",
+    "timeframe": "1h",
+    "htf_model_id": "htf-trend-v1",
+    "htf_setup": "pullback_ema20_1h_a_favor",
+    "daily_trend_in": ["alcista", "bajista"],
+    "alignment": "a_favor",
+    "direction_rule": "LONG si daily_trend=alcista, SHORT si daily_trend=bajista",
+    "setup_rule": "ultima vela 1h cerrada toca la EMA20 1h desde el lado de la tendencia (low <= EMA20 + 0.25 ATR14 1h en alcista; high >= EMA20 - 0.25 ATR en bajista) y cierra a <= 0.5 ATR de la EMA20 sin cruzarla mas de 0.5 ATR",
+    "entry_price": "mark price al emitir (lo fija el codigo)"
+  },
+  "exit_conditions": {
+    "timeframe": "1h",
+    "horizon_bars": 4,
+    "exit_rule": "cierre (mark) de la 4a vela de 1h completa posterior a la emision; due_at = ceil_hora(emision) + 4 h",
+    "costs": "10 bps ida y vuelta (resolver por defecto)"
+  },
+  "author": "nahue"
+}

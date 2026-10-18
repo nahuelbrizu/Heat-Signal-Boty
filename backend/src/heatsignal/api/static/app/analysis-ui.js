@@ -1,6 +1,7 @@
 // Razonamiento del grafo para un simbolo: analistas, noticias, debate alcista/bajista, decision y reporte del Redactor.
 // Todo el texto viene del LLM: se muestra escapado (nodos de texto), nunca como HTML.
 import { el, chip, confChip, prose, statusChip, OUTCOME, TONE, analystParts, fixed, isNum, shortId } from "./core.js";
+import { htfBrief } from "./htf-ui.js";
 
 const ANALYSTS = [["liquidations", "Liquidaciones"], ["order_flow", "Order flow"], ["context", "Contexto de mercado"], ["news", "Noticias"]];
 
@@ -34,6 +35,7 @@ export function debateBlock(debate) {
 export function symbolAnalysis(a, d, href, { open = true } = {}) {
   if (!a) return el("p", { class: "muted" }, "No hay razonamiento guardado para este símbolo.");
   return el("div", {},
+    htfBrief(a.htf),
     el("h3", { style: { margin: "4px 0 6px" } }, "Decisión"), decisionLine(d, href),
     a.report ? el("div", { style: { marginTop: "12px" } }, el("h3", {}, "Reporte del Redactor"), prose(a.report, "")) : null,
     el("details", { class: "box", style: { marginTop: "12px" }, open },

@@ -1,0 +1,25 @@
+{
+  "description": "1h-apertura-reversion-en-contra-v1: al cerrar la vela de apertura (1h) de Londres o Nueva York, si rompio el extremo de la sesion anterior en la direccion de la tendencia diaria (htf-trend-v1) pero cerro de nuevo adentro, en contra de la tendencia; salida al cierre de la 3a vela de 1h completa",
+  "entry_conditions": {
+    "family": "1h-sesiones",
+    "scope": "rotation",
+    "timeframe": "1h",
+    "htf_model_id": "htf-trend-v1",
+    "session_model_id": "session-v1",
+    "htf_setup": "apertura_reversion_en_contra",
+    "sessions": ["europa", "eeuu"],
+    "max_minutes_after_trigger": 60,
+    "daily_trend_in": ["alcista", "bajista"],
+    "alignment": "en_contra",
+    "direction_rule": "SHORT si daily_trend=alcista, LONG si daily_trend=bajista",
+    "setup_rule": "alcista: high de la vela de apertura > maximo de la sesion anterior (desde su apertura hasta esta) y close <= ese maximo; bajista: low < minimo de la sesion anterior y close >= ese minimo",
+    "entry_price": "mark price al emitir (lo fija el codigo)"
+  },
+  "exit_conditions": {
+    "timeframe": "1h",
+    "horizon_bars": 3,
+    "exit_rule": "cierre (mark) de la 3a vela de 1h completa posterior a la emision; due_at = ceil_hora(emision) + 3 h",
+    "costs": "10 bps ida y vuelta (resolver por defecto)"
+  },
+  "author": "nahue"
+}

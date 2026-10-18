@@ -225,6 +225,30 @@
   04d0e50a506fde17. Grilla timeframe 1h/4h en las dos: K del programa = 48. Cruce en la vela (no estado), tope de
   tamaño 1×, sin salida por señal contraria. Umbrales fijos: cualquier ajuste es una -v2.
 
+- **Paper trading del lote 3 con bot propio (2026-10-18).** `heatsignal.paperbot`, corrida horaria a los :02 UTC
+  (`heatsignal-paperbot.timer`, `MemoryMax=400M`, pico medido 143 MB). No Freqtrade: 4 de las 6 son de pares /
+  cross-sectional y la VM no tiene RAM para otro Freqtrade. Llama a las mismas reglas congeladas del lab con velas
+  cerradas en H y 64 días de ventana; ejecución como `lab/sim.py` (open 1m siguiente, 5 + 2 bps, funding real,
+  10.000 USDT por estrategia sin reinversión). Base `data/paperbot.sqlite` append-only. Hueco de datos = la
+  corrida queda en error y no opera; las horas perdidas no se simulan (se marcan). Parámetros en
+  `paperbot/params.json` (tsmom target_vol 0,15 y pares entry_z 2,5 del walk-forward). El backtest no aprobó
+  estas estrategias: el paper mide la distancia simulación–realidad, no es aprobación. El archivado conserva 90
+  días de velas 1m (`--klines-keep-days 90`).
+- **Hipótesis de 1h con tendencia diaria y sesiones de mercado (2026-10-18).** Contexto multi-temporalidad por
+  código (`htf-trend-v1`, `features/htf.py`), solo velas de 1h cerradas de la base propia (REST solo para
+  huecos, declarados). `daily_trend`: alcista si el cambio desde la apertura UTC ≥ +1,5 ATR(1h), cierre sobre la
+  EMA10 diaria y EMA20 de 1h subiendo; bajista simétrico; resto lateral; `sin_datos` si falta historia. Cambiar
+  la regla = versión nueva. Cada hipótesis guarda temporalidad, tendencia, a favor / en contra y sesión
+  (`hypothesis_context`, aditiva). Las de 1h vencen en un cierre de vela y se resuelven con esa vela a mark
+  price. Sesiones (Asia 09:00 Tokio, Europa 08:00 Londres, EE.UU. 09:30 Nueva York, cierre 23:00 UTC; DST por
+  zoneinfo) se analizan al cerrar su primera vela de 1h y se suman a un diario append-only del día
+  (`session_journal`) que reciben los análisis siguientes. Modo `HEATSIGNAL_ANALYSIS_MODE=sessions`: el grafo
+  corre en cada sesión con todos los símbolos en las mismas llamadas. Las 5 familias nuevas
+  (`backend/strategies/tendencia-diaria-1h/`) se registran solo con aprobación del usuario.
+- **Gemini por Vertex AI exprés (2026-10-18).** La key nueva (formato `AQ.`) no sirve en AI Studio (403) y sí en
+  Vertex; `llm_factory.gemini_uses_vertex` lo detecta. Sin el tope gratis de 20 pedidos/día/modelo; se factura por
+  uso (`ON_DEMAND`) en el proyecto de Google Cloud de la key.
+
 ## Abiertas
 - ~~Plan de CoinGlass a contratar.~~ **Ya no aplica al core** — la fuente primaria pasó a WS nativos.
   Solo se retomaría si se implementa la fuente BYOK opcional (y ahí el plan lo elige el usuario).

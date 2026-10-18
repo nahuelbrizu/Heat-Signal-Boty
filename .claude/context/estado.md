@@ -19,6 +19,12 @@
   solo lectura, re-simula la regla congelada y descompone la diferencia (timing, tamano, fill, comisiones, slippage,
   funding); sube `paper_summary.json`. Timer semanal en `deploy/pc/` (domingos 01:00, falta instalarlo). Panel: vista
   `#/paper`, `GET /api/paper` y `GET /api/paper/compare` (requiere deploy del codigo y reinicio de la ingesta).
+- **Bot propio de paper del lote 3 (2026-10-18, sin desplegar):** `heatsignal.paperbot` (corrida horaria a los :02 UTC,
+  `deploy/heatsignal-paperbot.{service,timer}`, `MemoryMax=400M`; pico medido 143 MB). Llama a las mismas reglas de
+  `lab/strategies.py`, simula fills/costos/funding en `data/paperbot.sqlite` (append-only) y registra huecos sin rellenarlos.
+  Panel: vista `#/paperbot` (`GET /api/paperbot`, con el veredicto del backtest al lado). Falta: instalar pandas en el venv
+  de la VM (`requirements-paperbot.txt`), deploy del código, reiniciar la ingesta y activar el timer; el archivado tiene que
+  conservar >= 64 días de velas 1m (`--klines-keep-days 90` en `heatsignal-archive.service`).
 - **LLM:** Anthropic (sin crédito) → gemini-3.5 → gemini-3.8-flash / 3.1-flash-lite. Rotar ambas keys (quedaron en el chat).
 - **Laboratorio:** resultados del lote 1 y holdout en `decisions.md`.
 
@@ -26,6 +32,17 @@
   hora: al 80 % de disco sube lo viejo a `gdrive:archive/`, verifica md5 y borra) y lectura fría en el panel
   (`/api/history/storage`, badge "desde Drive"). Respaldo semanal `heatsignal-backup.timer`. Falta: deploy del código,
   instalar los timers y reiniciar la ingesta (nuevo `ReadWritePaths` para rclone). Ver `decisions.md`.
+
+- **Velas de 1h + tendencia del día + sesiones (2026-10-18, sin desplegar):** contexto multi-temporalidad por código
+  (`features/htf.py`, regla fija `htf-trend-v1`; velas de 1h CERRADAS desde `klines`/`bars_1m` de la base, REST de Binance
+  solo para huecos, declarado; cache incremental en `history/hourly.py`). Sesiones Asia/Europa/EE.UU./cierre con DST
+  (`features/sessions.py`): al cerrar la 1ª vela de 1h de cada una se guarda un análisis por código en el diario
+  append-only `session_journal` (base de evaluación) y el grafo recibe el diario del día. Modo `HEATSIGNAL_ANALYSIS_MODE=sessions`:
+  4 corridas del grafo por día con TODAS las criptos batcheadas (sin llamadas extra). Hipótesis con `timeframe`,
+  `daily_trend`, `trend_alignment`, `session` (tabla nueva `hypothesis_context`, migración aditiva); las de 1h vencen en
+  un cierre de vela y se resuelven con la vela de 1h (mark). Panel: vista `#/sesiones`, tarjeta de 1h en Moneda, columnas
+  y corte por tendencia/sesión (n e IC) en Hipótesis. 5 estrategias nuevas en `backend/strategies/tendencia-diaria-1h/`
+  **sin registrar** (las registra el usuario). Falta: deploy + `HEATSIGNAL_ANALYSIS_MODE=sessions` + reinicio.
 
 ## Estado por fase
 
@@ -38,7 +55,7 @@
 | 4 — Producto | Panel **interno** listo (no público); dashboard/API pública/reporte no iniciados | `phase-4-product.md` |
 
 Código: rama `ingestion-binance-bybit`, pusheada a GitHub (sin PR).
-Tests: 408 pasando, 1 skipped (`backend/`, `.venv/bin/pytest -q`).
+Tests: 787 pasando, 1 skipped (2026-10-18) (`backend/`, `.venv/bin/pytest -q`).
 
 ## Qué corre hoy (VM de prueba)
 

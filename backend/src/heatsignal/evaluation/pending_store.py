@@ -33,6 +33,7 @@ epoch en segundos para poder consultar "vencidas" con aritmetica simple.
 
 from __future__ import annotations
 
+import json
 import logging
 import sqlite3
 import threading
@@ -115,6 +116,11 @@ def _require_aware(dt: datetime, field: str) -> datetime:
     return dt.astimezone(timezone.utc)
 
 
+def _has_context(h: PendingHypothesis) -> bool:
+    return any(v is not None for v in (h.timeframe, h.horizon_bars, h.daily_trend, h.trend_alignment,
+                                       h.htf_model_id, h.htf_snapshot, h.session, h.session_day))
+
+
 def due_at(h: PendingHypothesis) -> datetime:
     """Momento en que vence la ventana de la hipotesis (created_at + horizon_s)."""
     return _require_aware(h.created_at, "created_at") + timedelta(seconds=h.horizon_s)
@@ -125,6 +131,12 @@ _HYP_COLUMNS = (
     "confidence_score, entry_reference_price, horizon_s, atr_normalized_trigger, rationale, "
     "heatmap_model_id, run_id"
 )
+_P_COLUMNS = ", ".join("p." + c.strip() for c in _HYP_COLUMNS.split(","))
+# Contexto multi-temporalidad (tabla aparte, migracion aditiva: las hipotesis viejas no tienen fila -> NULLs)
+_CTX_COLUMNS = ("c.timeframe, c.horizon_bars, c.daily_trend, c.trend_alignment, c.htf_model_id, c.htf_snapshot, "
+                "c.session, c.session_day")
+_N_CTX = 8
+_CTX_JOIN = "LEFT JOIN hypothesis_context c ON c.hypothesis_id = p.hypothesis_id "
 _RES_COLUMNS = (
     "r.status, r.resolved_at, r.exit_price, r.pnl_pct, r.win, r.gross_pnl_pct, r.cost_bps, "
     "r.benchmark_pnl_pct, r.alpha_pct, r.exit_price_ts"
@@ -218,8 +230,45 @@ class PendingHypothesisStore:
             BEGIN
                 SELECT RAISE(ABORT, 'hypothesis_resolutions es append-only: DELETE no permitido');
             END;
+
+            -- 2026-10-18: contexto multi-temporalidad de cada hipotesis (temporalidad, tendencia del dia, a favor /
+            -- en contra). Tabla NUEVA (migracion aditiva): las bases viejas la crean vacia y sus hipotesis se
+            -- siguen leyendo igual (LEFT JOIN -> NULL). Append-only como el resto.
+            CREATE TABLE IF NOT EXISTS hypothesis_context (
+                hypothesis_id   TEXT PRIMARY KEY,
+                timeframe       TEXT,
+                horizon_bars    INTEGER CHECK (horizon_bars IS NULL OR horizon_bars >= 1),
+                daily_trend     TEXT CHECK (daily_trend IS NULL OR daily_trend IN
+                                            ('alcista', 'bajista', 'lateral', 'sin_datos')),
+                trend_alignment TEXT CHECK (trend_alignment IS NULL OR trend_alignment IN
+                                            ('a_favor', 'en_contra', 'lateral', 'sin_datos')),
+                htf_model_id    TEXT,
+                htf_snapshot    TEXT,
+                session         TEXT,
+                session_day     TEXT,
+                FOREIGN KEY (hypothesis_id) REFERENCES pending_hypotheses (hypothesis_id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_hypothesis_context_trend
+                ON hypothesis_context (daily_trend, trend_alignment);
+
+            CREATE TRIGGER IF NOT EXISTS trg_hypothesis_context_no_update
+            BEFORE UPDATE ON hypothesis_context
+            BEGIN
+                SELECT RAISE(ABORT, 'hypothesis_context es append-only: UPDATE no permitido');
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS trg_hypothesis_context_no_delete
+            BEFORE DELETE ON hypothesis_context
+            BEGIN
+                SELECT RAISE(ABORT, 'hypothesis_context es append-only: DELETE no permitido');
+            END;
             """
         )
+        # Columnas agregadas despues de crear la tabla (migracion aditiva: ADD COLUMN no toca filas ni triggers).
+        have = {r[1] for r in self._conn.execute("PRAGMA table_info(hypothesis_context)")}
+        for col in ("session", "session_day"):
+            if col not in have:
+                self._conn.execute(f"ALTER TABLE hypothesis_context ADD COLUMN {col} TEXT")
         self._conn.commit()
 
     # ------------------------------------------------------------------ escritura
@@ -265,6 +314,15 @@ class PendingHypothesisStore:
                         h.run_id,
                     ),
                 )
+                if _has_context(h):
+                    self._conn.execute(
+                        "INSERT INTO hypothesis_context (hypothesis_id, timeframe, horizon_bars, daily_trend, "
+                        "trend_alignment, htf_model_id, htf_snapshot, session, session_day) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        (str(h.hypothesis_id), h.timeframe, h.horizon_bars, h.daily_trend, h.trend_alignment,
+                         h.htf_model_id, None if h.htf_snapshot is None else json.dumps(h.htf_snapshot),
+                         h.session, h.session_day),
+                    )
                 self._conn.commit()
             except sqlite3.IntegrityError as exc:
                 self._conn.rollback()
@@ -373,7 +431,7 @@ class PendingHypothesisStore:
         now_ts = _require_aware(now, "now").timestamp()
         with self._lock:
             rows = self._conn.execute(
-                f"SELECT {_HYP_COLUMNS} FROM pending_hypotheses p "
+                f"SELECT {_P_COLUMNS}, {_CTX_COLUMNS} FROM pending_hypotheses p {_CTX_JOIN}"
                 "WHERE p.due_ts <= ? AND NOT EXISTS "
                 "(SELECT 1 FROM hypothesis_resolutions r WHERE r.hypothesis_id = p.hypothesis_id) "
                 "ORDER BY p.due_ts ASC, p.hypothesis_id ASC",
@@ -385,8 +443,8 @@ class PendingHypothesisStore:
         """Todas las hipotesis de una estrategia (con su resolucion), por created_at."""
         with self._lock:
             rows = self._conn.execute(
-                f"SELECT {', '.join('p.' + c.strip() for c in _HYP_COLUMNS.split(','))}, {_RES_COLUMNS} "
-                "FROM pending_hypotheses p "
+                f"SELECT {_P_COLUMNS}, {_CTX_COLUMNS}, {_RES_COLUMNS} "
+                f"FROM pending_hypotheses p {_CTX_JOIN}"
                 "LEFT JOIN hypothesis_resolutions r ON r.hypothesis_id = p.hypothesis_id "
                 "WHERE p.strategy_id = ? ORDER BY p.created_ts ASC, p.hypothesis_id ASC",
                 (str(strategy_id),),
@@ -437,6 +495,10 @@ class PendingHypothesisStore:
         since_ts: float | None = None,
         until_ts: float | None = None,
         run_id: str | None = None,
+        timeframe: str | None = None,
+        daily_trend: str | None = None,
+        trend_alignment: str | None = None,
+        session: str | None = None,
         limit: int = 50,
         offset: int = 0,
         newest_first: bool = True,
@@ -471,13 +533,23 @@ class PendingHypothesisStore:
         if run_id is not None:
             where.append("p.run_id = ?")
             params.append(run_id)
+        for col, val in (("timeframe", timeframe), ("daily_trend", daily_trend), ("trend_alignment", trend_alignment),
+                         ("session", session)):
+            if val is None:
+                continue
+            if val == "none":  # hipotesis sin el dato (las viejas, previas al contexto 1h)
+                where.append(f"c.{col} IS NULL")
+            else:
+                where.append(f"c.{col} = ?")
+                params.append(val)
         clause = f"WHERE {' AND '.join(where)}" if where else ""
-        base = "FROM pending_hypotheses p LEFT JOIN hypothesis_resolutions r ON r.hypothesis_id = p.hypothesis_id "
+        base = (f"FROM pending_hypotheses p {_CTX_JOIN}"
+                "LEFT JOIN hypothesis_resolutions r ON r.hypothesis_id = p.hypothesis_id ")
         order = "DESC" if newest_first else "ASC"
         with self._lock:
             total = int(self._conn.execute(f"SELECT COUNT(*) {base}{clause}", params).fetchone()[0])
             rows = self._conn.execute(
-                f"SELECT {', '.join('p.' + c.strip() for c in _HYP_COLUMNS.split(','))}, {_RES_COLUMNS} "
+                f"SELECT {_P_COLUMNS}, {_CTX_COLUMNS}, {_RES_COLUMNS} "
                 f"{base}{clause} ORDER BY p.created_ts {order}, p.hypothesis_id {order} LIMIT ? OFFSET ?",
                 [*params, int(limit), int(offset)],
             ).fetchall()
@@ -487,8 +559,8 @@ class PendingHypothesisStore:
         """Una hipotesis con su resolucion, o None."""
         with self._lock:
             row = self._conn.execute(
-                f"SELECT {', '.join('p.' + c.strip() for c in _HYP_COLUMNS.split(','))}, {_RES_COLUMNS} "
-                "FROM pending_hypotheses p "
+                f"SELECT {_P_COLUMNS}, {_CTX_COLUMNS}, {_RES_COLUMNS} "
+                f"FROM pending_hypotheses p {_CTX_JOIN}"
                 "LEFT JOIN hypothesis_resolutions r ON r.hypothesis_id = p.hypothesis_id "
                 "WHERE p.hypothesis_id = ?",
                 (str(hypothesis_id),),
@@ -539,6 +611,34 @@ class PendingHypothesisStore:
             }
         return out
 
+    def trend_rows(
+        self, *, strategy_id: UUID | None = None, symbol: str | None = None, timeframe: str | None = None
+    ) -> list[tuple]:
+        """(daily_trend, trend_alignment, status, win, pnl_pct, benchmark_pnl_pct, alpha_pct, session) por hipotesis.
+
+        Insumo de `evaluation.segments.trend_segments` (corte por tendencia del dia y a favor / en contra).
+        `status` es 'pending' si no tiene resolucion. Hipotesis viejas: daily_trend/trend_alignment = None.
+        """
+        where, params = [], []
+        if strategy_id is not None:
+            where.append("p.strategy_id = ?")
+            params.append(str(strategy_id))
+        if symbol is not None:
+            where.append("p.symbol = ?")
+            params.append(symbol)
+        if timeframe is not None:
+            where.append("c.timeframe IS NULL" if timeframe == "none" else "c.timeframe = ?")
+            if timeframe != "none":
+                params.append(timeframe)
+        clause = f"WHERE {' AND '.join(where)}" if where else ""
+        with self._lock:
+            return self._conn.execute(
+                "SELECT c.daily_trend, c.trend_alignment, COALESCE(r.status, 'pending'), r.win, r.pnl_pct, "
+                f"r.benchmark_pnl_pct, r.alpha_pct, c.session FROM pending_hypotheses p {_CTX_JOIN}"
+                f"LEFT JOIN hypothesis_resolutions r ON r.hypothesis_id = p.hypothesis_id {clause}",
+                params,
+            ).fetchall()
+
     def calibration_pairs(self, strategy_id: UUID | None = None) -> list[tuple[float, bool]]:
         """(confidence_score, win) de las resueltas: insumo de la curva de calibracion."""
         sql = ("SELECT p.confidence_score, r.win FROM pending_hypotheses p "
@@ -570,7 +670,9 @@ class PendingHypothesisStore:
             rationale,
             heatmap_model_id,
             run_id,
-        ) = row
+        ) = row[:14]
+        ctx = row[14:14 + _N_CTX] if len(row) >= 14 + _N_CTX else (None,) * _N_CTX
+        timeframe, horizon_bars, daily_trend, alignment, htf_model_id, htf_snapshot, session, session_day = ctx
         return PendingHypothesis(
             hypothesis_id=UUID(hypothesis_id),
             strategy_id=UUID(strategy_id),
@@ -584,11 +686,19 @@ class PendingHypothesisStore:
             rationale=rationale,
             heatmap_model_id=heatmap_model_id,
             run_id=run_id,
+            timeframe=timeframe,
+            horizon_bars=horizon_bars,
+            daily_trend=daily_trend,
+            trend_alignment=alignment,
+            htf_model_id=htf_model_id,
+            htf_snapshot=None if htf_snapshot is None else json.loads(htf_snapshot),
+            session=session,
+            session_day=session_day,
         )
 
     @classmethod
     def _hydrate_record(cls, row: tuple) -> HypothesisRecord:
-        hypothesis = cls._hydrate_hypothesis(row[:14])
+        hypothesis = cls._hydrate_hypothesis(row[:14 + _N_CTX])
         (
             status,
             resolved_at,
@@ -600,7 +710,7 @@ class PendingHypothesisStore:
             benchmark_pnl_pct,
             alpha_pct,
             exit_price_ts,
-        ) = row[14:]
+        ) = row[14 + _N_CTX:]
         if status is None:
             return HypothesisRecord(hypothesis=hypothesis)
         resolution = Resolution(

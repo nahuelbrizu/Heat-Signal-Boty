@@ -471,3 +471,21 @@ async def test_market_snapshot(tmp_path) -> None:
     assert (await c.get("/api/market/sol-usdt")).status_code == 200
     assert (await c.get("/api/market/DOGEUSDT")).status_code == 404
     assert (await c.get("/api/market/SOLUSDT", params={"trades": 501})).status_code == 422
+
+
+async def test_wallet_reports_holding_vs_live_mark_and_is_optional(tmp_path, monkeypatch) -> None:
+    import json
+
+    ctx, _ = await _full_ctx(tmp_path)
+    wallet = tmp_path / "wallet.json"
+    monkeypatch.setenv("HEATSIGNAL_WALLET_FILE", str(wallet))
+    async with _client(ctx) as c:
+        assert (await c.get("/api/wallet")).json()["configured"] is False  # sin archivo: no es un error
+        wallet.write_text(json.dumps({"holdings": [
+            {"asset": "X", "symbol": SYM, "avg_price_usd": 200.0, "qty": 10, "note": "largo plazo"},
+            {"asset": "Y", "symbol": "NO-USDT", "avg_price_usd": 1.0}]}))
+        body = (await c.get("/api/wallet")).json()
+    x, y = body["holdings"]
+    assert body["configured"] and x["price_usd"] == pytest.approx(150.15)  # mark medio binance/okx
+    assert x["pnl_pct"] == pytest.approx(150.15 / 200 - 1) and x["pnl_usd"] == pytest.approx(-498.5)
+    assert y["price_usd"] is None and y["pnl_pct"] is None and y["value_usd"] is None

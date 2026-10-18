@@ -17,6 +17,7 @@ from pydantic import BaseModel, Field
 
 from .events import Exchange, Side
 from .news import NewsItem
+from .sessions import SessionSymbolAnalysis
 
 
 class LiquidationCluster(BaseModel):
@@ -100,6 +101,85 @@ class DataQuality(BaseModel):
     )
 
 
+HTF_MODEL_ID = "htf-trend-v1"
+
+DailyTrend = Literal["alcista", "bajista", "lateral", "sin_datos"]
+TrendAlignment = Literal["a_favor", "en_contra", "lateral", "sin_datos"]
+CandleSource = Literal["klines", "bars_1m", "rest"]
+
+
+class Candle1h(BaseModel):
+    """Vela de 1h CERRADA (open_ms + 1h <= momento de calculo), alineada a UTC."""
+
+    open_ms: int
+    open: float
+    high: float
+    low: float
+    close: float
+    source: CandleSource = Field(description="klines 1m de Binance (base), bars_1m propios o REST 1h de Binance")
+    minutes: int = Field(default=60, description="Minutos de 1m con precio usados (60 = completa; REST = 60)")
+
+
+class HtfSetups(BaseModel):
+    """Banderas de setup calculadas por CODIGO (las estrategias 1h las exigen en `entry_conditions`)."""
+
+    pullback_ema20_1h_a_favor: bool = Field(
+        default=False, description="Tendencia alcista/bajista y la ultima vela de 1h retrocedio a la EMA20 de 1h")
+    extremo_rango_diario: Literal["maximo", "minimo"] | None = Field(
+        default=None, description="Ultimo cierre en el 15% superior/inferior de un rango diario >= 2 ATR(1h)")
+    continuacion_a_favor: bool = Field(
+        default=False, description="Tendencia alcista/bajista, cierre del lado de la tendencia de la EMA20 1h, "
+                                   "a <= 1.5 ATR de ella y fuera del 15% extremo del rango diario")
+
+
+class HtfContext(BaseModel):
+    """Contexto multi-temporalidad (1h + dia UTC) desde nuestra base historica; ver features/htf.py."""
+
+    htf_model_id: str = HTF_MODEL_ID
+    symbol: str
+    ts_ms: int
+    status: Literal["ok", "partial", "missing"]
+    candles_1h: list[Candle1h] = Field(default_factory=list, description="Ultimas <= 48 velas de 1h cerradas")
+    last_closed_open_ms: int | None = None
+    day_start_ms: int
+    day_hours_closed: int = 0
+    day_open: float | None = None
+    day_high: float | None = None
+    day_low: float | None = None
+    last_close: float | None = None
+    change_from_open_pct: float | None = None
+    change_from_open_atr: float | None = None
+    pos_in_day_range: float | None = Field(default=None, description="(cierre - min) / (max - min) del dia, 0..1")
+    day_range_atr: float | None = None
+    prev_day: dict[str, float] | None = Field(default=None, description="open/high/low/close del dia UTC anterior")
+    ema20_1h: float | None = None
+    sma50_1h: float | None = None
+    dist_ema20_1h_atr: float | None = Field(default=None, description="(cierre - EMA20 1h) / ATR(1h)")
+    ema20_1h_slope_atr: float | None = Field(default=None, description="(EMA20 ahora - EMA20 hace 4 velas) / ATR(1h)")
+    ema10_1d: float | None = None
+    sma20_1d: float | None = None
+    close_vs_ema10_1d_pct: float | None = None
+    daily_closes: int = Field(default=0, description="Dias UTC completos usados para las medias diarias")
+    atr14_1h: float | None = None
+    atr14_1h_pct: float | None = None
+    daily_trend: DailyTrend = "sin_datos"
+    trend_reason: str = ""
+    setups: HtfSetups = Field(default_factory=HtfSetups)
+    sources: dict[str, int] = Field(default_factory=dict, description="Velas por fuente (klines/bars_1m/rest)")
+    data_gaps: list[str] = Field(default_factory=list)
+
+    def snapshot(self) -> dict:
+        """Resumen chico que se guarda con cada hipotesis (auditoria del corte por tendencia)."""
+        return {
+            "htf_model_id": self.htf_model_id, "status": self.status, "last_closed_open_ms": self.last_closed_open_ms,
+            "day_open": self.day_open, "last_close": self.last_close, "change_from_open_pct": self.change_from_open_pct,
+            "change_from_open_atr": self.change_from_open_atr, "pos_in_day_range": self.pos_in_day_range,
+            "dist_ema20_1h_atr": self.dist_ema20_1h_atr, "ema20_1h_slope_atr": self.ema20_1h_slope_atr,
+            "close_vs_ema10_1d_pct": self.close_vs_ema10_1d_pct, "atr14_1h": self.atr14_1h,
+            "setups": self.setups.model_dump(),
+        }
+
+
 class FeatureSet(BaseModel):
     """Todo lo que el grafo de agentes recibe para un simbolo en una corrida."""
 
@@ -117,3 +197,6 @@ class FeatureSet(BaseModel):
     )
     news_model_id: str | None = Field(default=None, description="Version del lector/etiquetado de noticias")
     quality: DataQuality | None = Field(default=None, description="Calidad de datos estructurada (panel)")
+    htf: HtfContext | None = Field(default=None, description="Velas de 1h cerradas + tendencia del dia UTC")
+    session: SessionSymbolAnalysis | None = Field(
+        default=None, description="Ultimo analisis de sesion del dia para este simbolo (schema/sessions.py)")

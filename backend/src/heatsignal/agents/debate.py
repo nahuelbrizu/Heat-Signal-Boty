@@ -18,7 +18,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 
 from ..schema.features import FeatureSet
-from ._common import HISTORICAL_LANGUAGE_RULE, format_data_gaps
+from ._common import HISTORICAL_LANGUAGE_RULE, format_data_gaps, htf_digest_line
 
 if TYPE_CHECKING:
     from .state import GraphState
@@ -71,8 +71,15 @@ def render_analyst_digest(state: "GraphState") -> str:
     ctx = {a.symbol: a for a in state.get("market_context_analyses") or []}
     news = {a.symbol: a for a in state.get("news_analyses") or []}
     blocks: list[str] = []
+    sess = state.get("session") or {}
+    if sess.get("name"):
+        blocks.append(f"# Sesion de esta corrida: {sess.get('label') or sess['name']} (dia UTC {sess.get('day')})")
+    if state.get("day_journal"):
+        blocks.append("# Diario del dia (analisis de sesiones previas de HOY, sumar a esto)\n" + str(state["day_journal"]))
     for symbol, fs in features.items():
-        lines = [f"## {symbol}", f"- {format_data_gaps(fs)}"]
+        lines = [f"## {symbol}", f"- {format_data_gaps(fs)}", htf_digest_line(fs)]
+        if fs.session is not None:
+            lines.append(f"- Ultima sesion (codigo, {fs.session.session}): {fs.session.summary}")
         if (a := liq.get(symbol)) is not None:
             lines.append(
                 f"- Liquidaciones (conf {a.confidence:.2f}): {a.cluster_summary} "

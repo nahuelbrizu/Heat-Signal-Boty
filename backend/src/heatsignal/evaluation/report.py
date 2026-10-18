@@ -37,6 +37,7 @@ from .evaluator import EvalResult, Evaluator
 from .hypothesis_log import HypothesisLog
 from .pending_store import HypothesisRecord, PendingHypothesisStore
 from .resolver import record_to_signal
+from .segments import trend_segments
 from .strategy_registry import StrategyRegistry, UnknownStrategyError
 
 DEFAULT_SHADOW_PERIOD = timedelta(days=14)
@@ -80,6 +81,8 @@ class StrategyReport(BaseModel):
     shadow: ShadowStatus
     publishable: bool
     publish_blockers: list[str]
+    trend_segments: dict[str, Any] | None = Field(
+        default=None, description="Corte por daily_trend y a favor / en contra (n, IC de Wilson, alfa); segments.py")
 
     def public_view(self) -> dict[str, Any]:
         """Vista segura para API/dashboard publico: sin numeros de performance en shadow."""
@@ -111,6 +114,7 @@ class StrategyReport(BaseModel):
                 "brier_skill": self.calibration.brier_skill,
                 "ece": self.calibration.ece,
                 "calibration_buckets": [b.model_dump(mode="json") for b in self.calibration.buckets],
+                "trend_segments": self.trend_segments,
             }
         )
         return base
@@ -234,6 +238,8 @@ class StrategyReporter:
             shadow=shadow,
             publishable=not blockers,
             publish_blockers=blockers,
+            trend_segments=trend_segments(self._store.trend_rows(strategy_id=strategy_id))
+            if hasattr(self._store, "trend_rows") else None,
         )
         # Se loguea SIEMPRE, pase o no (anti-p-hacking).
         self._log.log_result(strategy, eval_result)

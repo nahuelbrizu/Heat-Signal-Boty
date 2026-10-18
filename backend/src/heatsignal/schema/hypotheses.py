@@ -46,6 +46,17 @@ class PendingHypothesis(BaseModel):
     rationale: str = Field(description="Justificacion en lenguaje historico, no predictivo")
     heatmap_model_id: str | None = None
     run_id: str | None = Field(default=None, description="Corrida del grafo que la emitio")
+    # --- contexto multi-temporalidad (2026-10-18). Opcionales: las hipotesis viejas no los tienen (None). ---
+    timeframe: str | None = Field(
+        default=None, description="'1h' si la estrategia es de velas de 1h (horizonte alineado al cierre de vela)")
+    horizon_bars: int | None = Field(default=None, description="Velas de 1h completas que cubre el horizonte")
+    daily_trend: str | None = Field(default=None, description="alcista | bajista | lateral | sin_datos al emitir")
+    trend_alignment: str | None = Field(
+        default=None, description="a_favor | en_contra | lateral | sin_datos (direccion vs daily_trend, por codigo)")
+    htf_model_id: str | None = Field(default=None, description="Version de la regla de tendencia, p.ej. htf-trend-v1")
+    htf_snapshot: dict | None = Field(default=None, description="Numeros del contexto 1h al emitir (auditoria)")
+    session: str | None = Field(default=None, description="Sesion de la que salio (asia/europa/eeuu/cierre)")
+    session_day: str | None = Field(default=None, description="Dia UTC del diario de esa sesion (YYYY-MM-DD)")
 
 
 class Resolution(BaseModel):

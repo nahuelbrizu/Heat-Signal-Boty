@@ -1,0 +1,3 @@
+# Bot de paper trading del lote 3 (heatsignal.paperbot), en la VM. numpy ya esta en requirements.txt.
+# Version fijada = la del laboratorio en la PC (mismas reglas, mismos resultados).
+pandas==3.0.6

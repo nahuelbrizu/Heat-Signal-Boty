@@ -33,6 +33,9 @@ _SYSTEM_PROMPT = (
     "(tendencia/rango) YA calculado por codigo. Describi el contexto (posicionamiento via "
     "funding y OI, volatilidad via ATR) y si los datos son consistentes con el regimen "
     "calculado. No reemplaces el regimen: si discrepas, explicalo en `regime_commentary`. "
+    "Tambien recibis el contexto de velas de 1h CERRADAS y la tendencia del dia UTC (`daily_trend`, regla fija "
+    "calculada por codigo): describi donde esta el precio respecto de la apertura del dia, la EMA20 de 1h y el "
+    "rango diario, sin reemplazar la etiqueta. "
     + HISTORICAL_LANGUAGE_RULE
 )
 
@@ -77,7 +80,9 @@ def make_market_context_analyst_node(llm: BaseChatModel) -> Callable[["GraphStat
             return {"market_context_analyses": []}
         messages = [
             SystemMessage(content=_SYSTEM_PROMPT),
-            HumanMessage(content="\n".join(render_context(fs) for fs in features.values())),
+            HumanMessage(content="\n".join(
+                render_context(fs) + (f"\n  ultima sesion (codigo): {fs.session.summary}" if fs.session else "")
+                for fs in features.values())),
         ]
         result: MarketContextAnalysisBatch = await structured_llm.ainvoke(messages)
         return {

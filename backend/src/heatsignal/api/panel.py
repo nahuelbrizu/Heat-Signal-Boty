@@ -20,7 +20,12 @@ API de solo lectura para la single page (`api/panel_api.py`; contrato y ejemplos
     GET /api/summary                     estado liviano para el polling frecuente (workers, ventana resumida,
                                          ultimo ciclo resumido, conteos, build, frescura, LLM, grabacion)
     GET /api/hypotheses                  todas las hipotesis, filtradas y paginadas (strategy_id, symbol,
-                                         status, win, since, until, order, limit, offset)
+                                         status, win, since, until, timeframe, daily_trend, trend_alignment,
+                                         order, limit, offset)
+    GET /api/hypotheses/by-trend         tasa de acierto por tendencia del dia y a favor / en contra (n, IC Wilson)
+    GET /api/htf/{symbol}                velas de 1h cerradas + tendencia del dia UTC (htf-trend-v1)
+    GET /api/sessions?day=YYYY-MM-DD     diario del dia: sesiones Asia/Europa/EE.UU./cierre (DST), vela de apertura,
+                                         analisis por codigo y del LLM (session_journal)
     GET /api/hypotheses/{id}             una hipotesis con su resolucion, su estrategia y el ciclo que la genero
     GET /api/strategies                  estrategias con track record (n, aciertos, IC Wilson, PnL, alpha, Brier)
     GET /api/strategies/{id}             spec completo, historial de estados, calibracion e hipotesis
@@ -39,6 +44,9 @@ API de solo lectura para la single page (`api/panel_api.py`; contrato y ejemplos
     GET /api/paper                       paper trading: estado del dry-run de Freqtrade (base read-only + API REST),
                                          abiertas/cerradas con PnL, equity por operacion, resumen por par
     GET /api/paper/compare               ultima comparacion paper vs backtest (paper_summary.json) + historial
+    GET /api/paperbot                    bot propio de paper trading del lote 3 (paperbot.sqlite, solo lectura):
+                                         corridas, huecos, equity vs canasta y posiciones por estrategia
+    GET /api/paperbot/{strategy_id}      detalle: equity horaria, ordenes, trades, funding, descomposicion
     GET /api/system                      operacion: uptime, version, tamanos de bases, export/backup, config,
                                          errores recientes
 
@@ -109,6 +117,7 @@ class PanelContext:
     lab_requests: Any = None  # evaluation.lab_requests.LabRequestStore: cola "Mandar al laboratorio"
     paper: PaperSources | None = None  # paper trading (Freqtrade dry-run): base, API REST y comparacion publicada
     archive: Any = None  # history.cold.ColdReader: lectura fria de lo archivado en Drive (almacenamiento por niveles)
+    paperbot_db: Path | None = None  # data/paperbot.sqlite del bot propio de paper trading (lote 3), solo lectura
 
 
 @dataclass

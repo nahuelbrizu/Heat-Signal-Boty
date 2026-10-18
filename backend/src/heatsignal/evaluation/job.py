@@ -26,7 +26,7 @@ from typing import Any
 
 from .hypothesis_log import HypothesisLog
 from .pending_store import PendingHypothesisStore
-from .price_source import BinanceKlinePriceSource, PriceSource
+from .price_source import BinanceHourlyClosePriceSource, BinanceKlinePriceSource, PriceSource
 from .report import (
     DEFAULT_MAX_EXPIRED_RATE,
     DEFAULT_SHADOW_PERIOD,
@@ -54,6 +54,7 @@ def run_once(
     hypothesis_log: HypothesisLog,
     report_log: ReportLog | None,
     price_source: PriceSource,
+    hourly_price_source: PriceSource | None = None,
     config: JobConfig | None = None,
     now: datetime | None = None,
 ) -> dict[str, Any]:
@@ -61,7 +62,8 @@ def run_once(
     config = config or JobConfig()
     now = now or datetime.now(timezone.utc)
     resolver = Resolver(
-        store, price_source, cost_bps=config.cost_bps, no_data_grace=config.no_data_grace
+        store, price_source, cost_bps=config.cost_bps, no_data_grace=config.no_data_grace,
+        hourly_price_source=hourly_price_source,
     )
     summary = resolver.resolve_due(now)
     reporter = StrategyReporter(
@@ -123,6 +125,7 @@ def main(argv: list[str] | None = None) -> int:
             hypothesis_log=hypothesis_log,
             report_log=report_log,
             price_source=price_source,
+            hourly_price_source=BinanceHourlyClosePriceSource(price_kind=args.price_kind),
             config=config,
         )
     finally:

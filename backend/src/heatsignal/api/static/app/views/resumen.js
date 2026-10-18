@@ -2,17 +2,43 @@
 // laboratorio y alertas. Todo sale de /api/summary (se redibuja con cada poll de 5 s).
 import {
   el, clear, int, dur, pct, frac, price, bytes, ago, when, chip, stat, card, kv, table, pageHead, statusChip, CYCLE_STATUS,
-  OUTCOME, wilson, rateText, ciBar, providersText, loading, isNum, num,
+  OUTCOME, wilson, rateText, ciBar, providersText, loading, isNum, num, api, fixed, usd, signedFrac,
 } from "../core.js";
 import { computeAlerts } from "../alerts.js";
+
+// Wallet personal (/api/wallet): se pide aparte cada 60 s; el resumen se redibuja cada 5 s con lo ultimo que llego.
+let walletData = null;
+let walletAt = 0;
 
 export async function mount(root, ctx) {
   const render = (s) => {
     if (!s) { clear(root, pageHead("Resumen"), loading("Esperando el primer dato del proceso…")); return; }
     clear(root, view(s, ctx));
   };
+  const loadWallet = async () => {
+    if (Date.now() - walletAt < 60000) return;
+    walletAt = Date.now();
+    try { walletData = await api("/api/wallet", null, ctx.signal); } catch (e) { walletData = { error: e.message || String(e) }; }
+    render(ctx.summary);
+  };
   render(ctx.summary);
-  return { onSummary: (s) => render(s) };
+  loadWallet();
+  return { onSummary: (s) => { render(s); loadWallet(); } };
+}
+
+/** Tenencias de largo plazo del usuario: no son estrategias (no entran al grafo ni al laboratorio). */
+function walletCard(w) {
+  if (!w || (w.configured === false && !w.error)) return null;
+  if (w.error) return card("Mi wallet", null, el("div", { class: "note warn" }, "No se pudo leer: " + w.error));
+  return card("Mi wallet", el("span", { class: "small muted" }, "tenencias de largo plazo · no son estrategias"),
+    table([{ label: "Activo" }, { label: "Precio de compra", cls: "n" }, { label: "Precio actual", cls: "n" }, { label: "Resultado", cls: "n" },
+      { label: "Cantidad", cls: "n" }, { label: "Valor", cls: "n" }, { label: "Nota" }],
+    (w.holdings || []).map((h) => [el("b", {}, h.asset), price(h.avg_price_usd), price(h.price_usd),
+      el("span", { class: isNum(h.pnl_pct) ? (h.pnl_pct >= 0 ? "pos" : "neg") : "" }, signedFrac(h.pnl_pct)),
+      isNum(h.qty) ? num(h.qty) : "—", isNum(h.value_usd) ? usd(h.value_usd) + (isNum(h.pnl_usd) ? " (" + (h.pnl_usd >= 0 ? "+" : "") + usd(h.pnl_usd) + ")" : "") : "—",
+      { v: el("span", { class: "small muted" }, h.note || ""), cls: "wrap" }]),
+    { empty: "Sin tenencias cargadas.", label: "Mi wallet" }),
+    el("p", { class: "small muted", style: { marginTop: "8px" } }, "Precio actual: mark medio de los exchanges en vivo. Para cargar la cantidad, editá wallet.json en la VM (campo qty)."));
 }
 
 function view(s, ctx) {
@@ -128,6 +154,7 @@ function view(s, ctx) {
     el("div", { class: "note info" }, "Lenguaje histórico: todo lo que muestra el panel describe lo que pasó (\"acertó en X % de N casos\"), nunca lo que va a pasar."),
     statsRow,
     alertsBox,
+    walletCard(walletData),
     el("div", { class: "grid two" }, graph, track),
     el("div", { class: "grid two" }, exchanges, fresh),
     market,

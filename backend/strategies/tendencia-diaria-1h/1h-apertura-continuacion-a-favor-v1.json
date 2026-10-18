@@ -1,0 +1,25 @@
+{
+  "description": "1h-apertura-continuacion-a-favor-v1: al cerrar la vela de apertura (1h) de Londres o Nueva York, si su cuerpo es >= 50% del rango y va en la direccion de la tendencia diaria (htf-trend-v1), a favor de la tendencia; salida al cierre de la 3a vela de 1h completa",
+  "entry_conditions": {
+    "family": "1h-sesiones",
+    "scope": "rotation",
+    "timeframe": "1h",
+    "htf_model_id": "htf-trend-v1",
+    "session_model_id": "session-v1",
+    "htf_setup": "apertura_continuacion_a_favor",
+    "sessions": ["europa", "eeuu"],
+    "max_minutes_after_trigger": 60,
+    "daily_trend_in": ["alcista", "bajista"],
+    "alignment": "a_favor",
+    "direction_rule": "LONG si daily_trend=alcista, SHORT si daily_trend=bajista",
+    "setup_rule": "vela de apertura de la sesion [apertura local, +1h) armada desde 1m: |close-open| >= 0.5 * (high-low) y close-open con el signo de la tendencia diaria",
+    "entry_price": "mark price al emitir (lo fija el codigo)"
+  },
+  "exit_conditions": {
+    "timeframe": "1h",
+    "horizon_bars": 3,
+    "exit_rule": "cierre (mark) de la 3a vela de 1h completa posterior a la emision; due_at = ceil_hora(emision) + 3 h",
+    "costs": "10 bps ida y vuelta (resolver por defecto)"
+  },
+  "author": "nahue"
+}

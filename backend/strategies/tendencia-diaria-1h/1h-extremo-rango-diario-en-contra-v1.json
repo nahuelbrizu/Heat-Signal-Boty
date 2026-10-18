@@ -1,0 +1,22 @@
+{
+  "description": "1h-extremo-rango-diario-en-contra-v1: en contra de la tendencia diaria (htf-trend-v1) cuando la ultima vela de 1h cerrada cierra en el 15% extremo del rango del dia (rango >= 2 ATR14 1h); salida al cierre de la 4a vela de 1h completa",
+  "entry_conditions": {
+    "family": "1h-tendencia-diaria",
+    "scope": "rotation",
+    "timeframe": "1h",
+    "htf_model_id": "htf-trend-v1",
+    "htf_setup": "extremo_rango_diario_en_contra",
+    "daily_trend_in": ["alcista", "bajista"],
+    "alignment": "en_contra",
+    "direction_rule": "SHORT si daily_trend=alcista y el cierre esta en el 15% superior del rango diario; LONG si daily_trend=bajista y esta en el 15% inferior",
+    "setup_rule": "rango del dia UTC (velas de 1h cerradas) >= 2 ATR14 1h y posicion del ultimo cierre >= 0.85 (maximo) o <= 0.15 (minimo)",
+    "entry_price": "mark price al emitir (lo fija el codigo)"
+  },
+  "exit_conditions": {
+    "timeframe": "1h",
+    "horizon_bars": 4,
+    "exit_rule": "cierre (mark) de la 4a vela de 1h completa posterior a la emision; due_at = ceil_hora(emision) + 4 h",
+    "costs": "10 bps ida y vuelta (resolver por defecto)"
+  },
+  "author": "nahue"
+}

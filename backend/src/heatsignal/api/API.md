@@ -38,6 +38,7 @@ de ingesta, en `127.0.0.1:8000` de la VM (se abre con túnel SSH). Todo es `GET`
 | `/api/lab`, `/api/lab/{id}` | lee archivos (se releen solo si cambian) | al abrir; cambian cuando se publica desde la PC |
 | `/api/paper` | lee la base de Freqtrade (read-only) + 4 llamadas a su API REST, en otro hilo; cache 10 s | al abrir la vista; cada 30 s si está abierta |
 | `/api/paper/compare` | lee un archivo (se relee solo si cambia) | al abrir; cambia una vez por semana |
+| `/api/paperbot`, `/api/paperbot/{id}` | lee `paperbot.sqlite` (read-only, otro hilo); cache 10 s | al abrir la vista; cada 60 s si está abierta (el bot escribe una vez por hora) |
 | `/api/system` | liviano | al abrir la vista de sistema; cada 30–60 s si está abierta |
 | `/api/status` | **pesado** (todo junto, incluye features de todos los símbolos) | solo para el panel viejo; la SPA no lo necesita |
 
@@ -156,6 +157,47 @@ Todas las hipótesis, filtradas y paginadas (más nuevas primero por defecto).
   hold en la misma ventana; `alpha_pct` = neto − benchmark.
 - `entry`/`exit` son strings decimales exactos; `entry_price`/`exit_price` los mismos como número.
 - `overdue`: pendiente con la ventana ya vencida (la resuelve el job cada 5 min).
+
+## `GET /api/hypotheses/by-trend`
+
+Tasa de acierto cortada por la tendencia del día UTC al emitir (`daily_trend`) y por la dirección respecto de ella
+(`trend_alignment`). Filtros: `strategy_id`, `symbol`, `timeframe` (`1h` | `none`). Cada segmento trae `total`,
+`pending`, `expired_no_data`, `n` (resueltas), `wins`, `rate`, `ci95` (Wilson 95 %, `null` con n = 0),
+`mean_pnl_pct`, `mean_benchmark_pnl_pct` (buy & hold en la misma ventana) y `mean_alpha_pct`. Las hipótesis
+anteriores al contexto 1h caen en `sin_registro`.
+
+```json
+{"filters": {"strategy_id": null, "symbol": "XRP-USDT", "timeframe": "1h"}, "rule": "htf-trend-v1 (features/htf.py)",
+ "overall": {"total": 12, "pending": 2, "expired_no_data": 0, "n": 10, "wins": 6, "rate": 0.6, "ci95": [0.31, 0.83], "...": "..."},
+ "by_daily_trend": [{"daily_trend": "alcista", "n": 6, "wins": 4, "rate": 0.667, "ci95": [0.3, 0.9], "...": "..."}],
+ "by_alignment": [{"trend_alignment": "a_favor", "...": "..."}],
+ "by_trend_and_alignment": [{"daily_trend": "alcista", "trend_alignment": "a_favor", "...": "..."}]}
+```
+
+`GET /api/hypotheses` acepta además `timeframe`, `daily_trend` y `trend_alignment` (`none` = hipótesis sin el
+dato) y cada hipótesis trae `timeframe`, `horizon_bars`, `daily_trend`, `trend_alignment`, `htf_model_id` y
+`htf_snapshot` (números del contexto 1h al emitir; `null` en las viejas).
+
+## `GET /api/htf/{symbol}?candles=48`
+
+Contexto multi-temporalidad de una moneda (`HtfContext`, `schema/features.py`): últimas ≤ 48 velas de 1h CERRADAS
+(`candles_1h`: `open_ms`, `open_at`, OHLC, `source` = `klines` | `bars_1m` | `rest`, `minutes`), día UTC
+(`day_open`, `day_high`, `day_low`, `change_from_open_pct`/`_atr`, `pos_in_day_range`), EMA20/SMA50 de 1h y su
+pendiente, EMA10/SMA20 diarias, ATR14 de 1h, `daily_trend` + `trend_reason`, `setups` y `data_gaps`. 503 si el
+contexto está apagado (`HEATSIGNAL_HTF=0`), 404 si el símbolo no está configurado.
+
+## `GET /api/sessions?day=YYYY-MM-DD`
+
+Diario del día UTC (por defecto hoy): las sesiones configuradas (`HEATSIGNAL_SESSIONS`; por defecto Asia/Tokio 09:00,
+Europa/Londres 08:00, EE.UU./Nueva York 09:30 y el cierre UTC 23:00) con su hora local, `open_ms`/`open_at` (UTC,
+DST resuelto por zoneinfo), `trigger_ms` (cierre de la primera vela de 1h), `triggered`, y las filas del diario:
+`code` (análisis por código: `summary` + `data` = `SessionAnalysis` con la vela de apertura, tendencia del día,
+rango de la sesión anterior, datos propios del día y banderas por símbolo) y `llm` (`status` `con_llm` | `sin_llm` |
+`error`, `summary` del Redactor, `run_id`). Además `mode` (`sessions` | `interval`), `next` (próximo disparo) y
+`days` (días con diario). 503 si no hay sesiones configuradas; 400/422 si el día es inválido.
+
+`GET /api/hypotheses` acepta `session` (`asia` | `europa` | `eeuu` | `cierre` | `none`) y cada hipótesis trae
+`session` y `session_day`; `GET /api/hypotheses/by-trend` trae además `by_session`.
 
 ## `GET /api/hypotheses/{hypothesis_id}`
 
@@ -684,6 +726,44 @@ el archivo está roto. Se relee solo si cambia.
 - `design_differences`: diferencias de diseño ya documentadas (decisions.md), con el componente donde caen.
 - `curves`: retorno acumulado sobre el capital (paso horario si la ventana es ≤ 31 días, si no diario).
 - `history`: una fila por fecha de corrida (cada corrida es acumulada desde el inicio del paper).
+
+## `GET /api/paperbot`
+
+Bot propio de **paper trading del lote 3** (`heatsignal.paperbot`, timer horario a los :02 UTC). Todo SIMULADO: 10.000 USDT
+ficticios por estrategia, sin reinversión, precios reales de Binance, costos 5 + 2 bps por lado y funding liquidado real.
+Lee `data/paperbot.sqlite` en solo lectura (sin pandas). 503 si el bot nunca corrió o no está configurado.
+
+```json
+{"disclaimer": "SIMULADO: ...", "simulated": true, "read_at": "...", "started_ms": 1792...,
+ "last_run": {"run_id": "pb-...", "hour_ms": 1792..., "status": "ok|error|skipped", "reason": "...", "mode": "consecutiva|inicio|hueco",
+              "duration_s": 5.1, "peak_rss_kb": 142944, "detail": {"chequeo_velas": {...}, "estrategias": {...}}},
+ "last_ok": {...}, "stale": false, "counts": {"ok": 120, "error": 2, "skipped": 1},
+ "runs": [ ...últimas 72 corridas... ], "gaps": [{"from_ms": ..., "to_ms": ..., "hours": 3}],
+ "lab_generated_at": "2026-10-18T...",
+ "strategies": [{"strategy_id": "tsmom-diario-v1", "spec_hash": "7515d798e5d66a55", "params": {"target_vol": 0.15},
+                 "origen": "walk-forward del lab 2026-10-18 (...)", "universe": ["BTCUSDT", ...], "hour_ms": ...,
+                 "equity": 10012.3, "return": 0.0012, "basket_equity": 9990.1, "basket_return": -0.001,
+                 "realized": 3.1, "unrealized": 15.2, "funding": -1.2, "fees": 3.5, "slippage": 1.4, "exposure": 0.39,
+                 "positions": [{"symbol": "BTCUSDT", "weight": -0.437, "target": -0.437, "units": -0.0..., "entry_price": ...,
+                                "mark_price": ..., "notional": ..., "unrealized": ...}],
+                 "n_orders": 9, "n_trades": 2, "wins": 1, "win_ci95": [0.09, 0.91], "spark": [[hour_ms, equity, basket], ...],
+                 "lab": {"pasa": false, "sharpe": 0.67, "sharpe_ci95": [-0.18, 1.51], "dsr": 0.94, "checks": {...},
+                         "same_spec": true, "...": "veredicto del backtest (lab_summary.json); null si no hay"}}],
+ "notes": ["La ultima corrida termino en error: ..."]}
+```
+
+- Una corrida por hora; `error` = hueco de datos / fallo de descarga / regla rota: esa hora **no se opera**.
+- `gaps`: horas sin corrida ok (VM apagada o errores). No se simulan después: la corrida siguiente lleva las
+  posiciones al objetivo de la regla (órdenes con `reason` = `hueco`).
+
+## `GET /api/paperbot/{strategy_id}`
+
+Lo mismo que un elemento de `strategies` más: `equity_hourly` (`[[hour_ms, equity, basket_equity]]`), `breakdown`
+(`precio = realizado + no_realizado`, `funding`, `comisiones`, `slippage`, `total`; suma exacta), `breakdown_by_symbol`,
+`orders` (últimas 500: `decision_ms`, `fill_ms`, `price`, `price_source` = `open_1m_siguiente|ultimo_precio`,
+`weight_from/to`, `units_from/to`, `notional`, `fee`, `slippage`, `reason` = `senal|resincronizacion|inicio|hueco`),
+`trades` cerrados, `funding_events` (`rate`, `units` vigentes justo antes, `price`, `cash`), `basket`, `max_drawdown` y
+`lab` (veredicto del backtest). 400 si el id no es válido, 404 si el bot no tiene esa estrategia.
 
 ## `GET /api/market/{symbol}`
 

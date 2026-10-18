@@ -6,6 +6,7 @@ import {
 } from "../core.js";
 import { hypTable } from "../hyp-ui.js";
 import { symbolAnalysis } from "../analysis-ui.js";
+import { trendChip, alignChip, tfText, trendCuts, sessionText } from "../htf-ui.js";
 
 export async function mount(root, ctx) {
   if (ctx.route.parts[0]) return detail(root, ctx, ctx.route.parts[0]);
@@ -20,13 +21,16 @@ async function list(root, ctx) {
   const f = {
     strategy_id: q.get("strategy_id") || "", symbol: q.get("symbol") || "", status: q.get("status") || "", win: q.get("win") || "",
     since: q.get("since") || "", until: q.get("until") || "", order: q.get("order") || "desc",
+    timeframe: q.get("timeframe") || "", daily_trend: q.get("daily_trend") || "", trend_alignment: q.get("trend_alignment") || "", session: q.get("session") || "",
     limit: Math.min(500, Math.max(1, parseInt(q.get("limit") || "50", 10) || 50)), offset: Math.max(0, parseInt(q.get("offset") || "0", 10) || 0),
   };
   const form = el("form", { class: "filters", role: "search", "aria-label": "Filtros de hipótesis" });
   const body = el("div", {}, loading());
   const summaryBox = el("div");
+  const trendBox = el("div", {}, loading());
   clear(root, pageHead("Hipótesis", "Todas, incluidos los fallos (anti-sesgo de supervivencia). Cada una se resuelve contra el precio real al vencer."),
-    card(null, null, form, summaryBox, body));
+    card(null, null, form, summaryBox, body),
+    card("Acierto según la tendencia del día", "con los filtros de estrategia, símbolo y temporalidad", trendBox));
 
   let strategies = [];
   try { strategies = (await api("/api/strategies", null, ctx.signal)).items; } catch { /* filtro sin nombres */ }
@@ -41,14 +45,20 @@ async function list(root, ctx) {
     const iUntil = el("input", { type: "datetime-local", name: "until", value: toLocalInput(+f.until || null) });
     const sOrd = select("order", [["desc", "más nuevas primero"], ["asc", "más viejas primero"]], f.order);
     const sLim = select("limit", [["25", "25"], ["50", "50"], ["100", "100"], ["200", "200"]], String(f.limit));
+    const sTf = select("timeframe", [["", "todas"], ["1h", "velas de 1h"], ["none", "sin temporalidad (viejas)"]], f.timeframe);
+    const sTr = select("daily_trend", [["", "todas"], ["alcista", "alcista"], ["bajista", "bajista"], ["lateral", "lateral"], ["sin_datos", "sin datos"], ["none", "sin registro (viejas)"]], f.daily_trend);
+    const sSe = select("session", [["", "todas"], ["asia", "Asia"], ["europa", "Europa"], ["eeuu", "EE.UU."], ["cierre", "Cierre UTC"], ["none", "sin registro (viejas)"]], f.session);
+    const sAl = select("trend_alignment", [["", "todas"], ["a_favor", "a favor"], ["en_contra", "en contra"], ["lateral", "tendencia lateral"], ["sin_datos", "sin datos"], ["none", "sin registro (viejas)"]], f.trend_alignment);
     clear(form, field("Estrategia", sStrat), field("Símbolo", sSym), field("Estado", sSt), field("¿Acertó?", sWin),
+      field("Temporalidad", sTf), field("Tendencia del día", sTr), field("¿A favor de la tendencia?", sAl), field("Sesión", sSe),
       field("Creada desde (hora local)", iSince), field("hasta", iUntil), field("Orden", sOrd), field("Por página", sLim),
       el("button", { class: "btn primary", type: "submit" }, "Aplicar"),
-      el("button", { class: "btn", type: "button", onclick: () => { Object.assign(f, { strategy_id: "", symbol: "", status: "", win: "", since: "", until: "", order: "desc", offset: 0 }); sync(); } }, "Limpiar"));
+      el("button", { class: "btn", type: "button", onclick: () => { Object.assign(f, { strategy_id: "", symbol: "", status: "", win: "", since: "", until: "", order: "desc", timeframe: "", daily_trend: "", trend_alignment: "", session: "", offset: 0 }); sync(); } }, "Limpiar"));
     form.onsubmit = (ev) => {
       ev.preventDefault();
       Object.assign(f, { strategy_id: sStrat.value, symbol: sSym.value, status: sSt.value, win: sWin.value, since: fromLocalInput(iSince.value),
-        until: fromLocalInput(iUntil.value), order: sOrd.value, limit: +sLim.value, offset: 0 });
+        until: fromLocalInput(iUntil.value), order: sOrd.value, limit: +sLim.value, offset: 0,
+        timeframe: sTf.value, daily_trend: sTr.value, trend_alignment: sAl.value, session: sSe.value });
       sync();
     };
   }
@@ -64,7 +74,15 @@ async function list(root, ctx) {
       clear(body, hypTable(d.items, ctx, { empty: "Ninguna hipótesis con esos filtros." }),
         pager(d.total, f.limit, f.offset, (o) => { f.offset = o; sync(); }));
       filterRate();
+      trendRate();
     } catch (e) { const b = errorBox(e, "las hipótesis"); if (b) clear(body, b); }
+  }
+
+  async function trendRate() {
+    try {
+      const d = await api("/api/hypotheses/by-trend", { strategy_id: f.strategy_id, symbol: f.symbol, timeframe: f.timeframe }, ctx.signal);
+      clear(trendBox, trendCuts(d));
+    } catch (e) { const b = errorBox(e, "el corte por tendencia"); if (b) clear(trendBox, b); }
   }
 
   async function filterRate() {
@@ -124,6 +142,13 @@ async function detail(root, ctx, id) {
         kv([
           ["Dirección", dirSpan(h.direction)], ["Confidence", fixed(h.confidence, 2)], ["Horizonte", dur(h.horizon_s)],
           ["Creada", when(h.created_ms, true)], ["Vence", when(h.due_ms, true)], ["Resuelta", h.resolved_ms ? when(h.resolved_ms, true) : "—"],
+          ["Temporalidad", tfText(h)],
+          ["Tendencia del día al emitir", el("span", {}, trendChip(h.daily_trend), h.htf_model_id ? el("span", { class: "small muted" }, " " + h.htf_model_id) : null)],
+          ["Dirección vs tendencia", alignChip(h.trend_alignment)],
+          ["Sesión de la que salió", h.session ? el("a", { href: ctx.href("sesiones", [], { day: h.session_day || "", symbol: h.symbol }) }, sessionText(h), " · ", h.session_day || "") : sessionText(h)],
+          h.htf_snapshot ? ["Contexto 1h al emitir", el("span", { class: "small" }, "desde la apertura UTC " + (h.htf_snapshot.change_from_open_pct != null ? fixed(h.htf_snapshot.change_from_open_pct, 2) + " %" : "—") +
+            " · posición en el rango " + (h.htf_snapshot.pos_in_day_range != null ? fixed(h.htf_snapshot.pos_in_day_range * 100, 0) + " %" : "—") +
+            " · vs EMA20 1h " + (h.htf_snapshot.dist_ema20_1h_atr != null ? fixed(h.htf_snapshot.dist_ema20_1h_atr, 2) + " ATR" : "—"))] : null,
           ["Disparador (ATR normalizado)", isNum(h.atr_normalized_trigger) ? fixed(h.atr_normalized_trigger, 2) : "—"],
           ["Modelo de heatmap", h.heatmap_model_id || "—"],
           ["Estrategia", st ? el("a", { href: ctx.href("estrategias", [st.strategy_id]) }, st.description) : el("a", { href: ctx.href("estrategias", [h.strategy_id]) }, shortId(h.strategy_id))],

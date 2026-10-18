@@ -1,0 +1,11 @@
+[Unit]
+Description=HeatSignal paperbot cada hora (:02 UTC)
+
+[Timer]
+OnCalendar=*-*-* *:02:00 UTC
+# Si la VM estuvo apagada corre una vez al volver: esa corrida registra el hueco (no simula las horas perdidas).
+Persistent=true
+AccuracySec=10s
+
+[Install]
+WantedBy=timers.target

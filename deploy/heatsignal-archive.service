@@ -17,7 +17,8 @@ Environment=HEATSIGNAL_HISTORY_DB=/home/nahue/heatsignal/data/heatsignal_history
 Environment=HEATSIGNAL_CHECKPOINT_DB=/home/nahue/heatsignal/data/heatsignal_checkpoints.sqlite
 Environment=HEATSIGNAL_EXPORT_DIR=/home/nahue/heatsignal/data/export
 # Umbral / objetivo / dias a conservar: se pueden pisar en .env (HEATSIGNAL_ARCHIVE_THRESHOLD, _TARGET, _KEEP_DAYS)
-ExecStart=/home/nahue/heatsignal/backend/.venv/bin/python -m heatsignal.history.archive run
+# --klines-keep-days 90: el bot de paper (heatsignal-paperbot) necesita 64 dias de velas 1m en la base local
+ExecStart=/home/nahue/heatsignal/backend/.venv/bin/python -m heatsignal.history.archive run --klines-keep-days 90
 # Un mes de velas 1m (~300 mil filas) se escribe en streaming: el pico de RAM es chico. rclone suma ~50 MB.
 MemoryMax=300M
 Nice=10

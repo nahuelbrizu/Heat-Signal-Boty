@@ -19,6 +19,12 @@ Configuracion por variables de entorno (ver `.env.example` en la raiz del repo):
   HEATSIGNAL_ANALYSIS_INTERVAL_S 900   ciclo features -> grafo -> hipotesis (modo memory; 0 lo apaga)
   HEATSIGNAL_ANALYSIS_WINDOW_S  1800   ventana de features (<= retencion de trades)
   HEATSIGNAL_GRAPH_ROTATION     2      simbolos sin estrategia que el grafo analiza por turnos en cada ciclo (0 = ninguno)
+  HEATSIGNAL_ANALYSIS_MODE      interval  "sessions": el grafo corre al cerrar la 1a vela de 1h de cada sesion
+                                         (4 ciclos/dia, todas las criptos); "interval": cada ANALYSIS_INTERVAL_S
+  HEATSIGNAL_SESSIONS           asia=Asia/Tokyo@09:00,europa=Europe/London@08:00,eeuu=America/New_York@09:30,cierre=UTC@23:00
+                                         sesiones (zona IANA, hora local, DST por zoneinfo); "cierre" = ultima vela del dia UTC
+  HEATSIGNAL_HTF                1      contexto 1h + tendencia del dia (history/hourly.py) en cada ciclo (0 lo apaga)
+  HEATSIGNAL_HTF_REST           1      completar velas de 1h faltantes con REST de Binance (0 = solo la base)
   HEATSIGNAL_NEWS_INTERVAL_S    300    poll de noticias RSS (news/feeds.py), ventana en memoria de 48 h (0 lo apaga)
   HEATSIGNAL_RECORD             1      guardar agregados por minuto + liquidaciones + noticias (history/), 0 lo apaga
   HEATSIGNAL_HISTORY_DB         data/heatsignal_history.sqlite   base historica privada (respaldo diario a Drive)
@@ -384,12 +390,38 @@ async def start_analysis(
     loop = AnalysisLoop(
         memory, symbols, registry, graph_runner=runner,
         interval_s=cfg.analysis_interval_s, window_s=cfg.analysis_window_s, news=news, cycle_log=cycle_log,
-        rotation_per_cycle=cfg.graph_rotation,
+        rotation_per_cycle=cfg.graph_rotation, **_session_setup(cfg, stack),
     )
     loop.llm_providers = list(llms.providers) if runner is not None else []
     task = asyncio.create_task(loop.run_forever(stop), name="analysis")
     return AnalysisHandles(task=task, loop=loop, registry=registry, store=store, news=news, news_task=news_task,
                            cycle_log=cycle_log)
+
+
+def _htf_provider(cfg: RunConfig) -> Any:
+    """Velas de 1h desde la base historica (+ REST para lo que falte). Apagable con HEATSIGNAL_HTF=0."""
+    if os.environ.get("HEATSIGNAL_HTF", "1").strip() == "0":
+        log.info("contexto 1h / tendencia diaria apagado (HEATSIGNAL_HTF=0)")
+        return None
+    from ..history.hourly import HourlyCandleProvider
+
+    return HourlyCandleProvider(cfg.history_db, rest=os.environ.get("HEATSIGNAL_HTF_REST", "1").strip() != "0")
+
+
+def _session_setup(cfg: RunConfig, stack: Any) -> dict[str, Any]:
+    """Contexto 1h + sesiones + diario del dia, segun HEATSIGNAL_HTF / HEATSIGNAL_ANALYSIS_MODE / HEATSIGNAL_SESSIONS."""
+    from ..features.sessions import parse_sessions
+    from ..history.session_source import SessionDataSource
+    from ..pipeline.session_journal import SessionJournal
+
+    htf = _htf_provider(cfg)
+    mode = os.environ.get("HEATSIGNAL_ANALYSIS_MODE", "interval").strip().lower() or "interval"
+    sessions = parse_sessions(os.environ.get("HEATSIGNAL_SESSIONS") or None)
+    journal = SessionJournal(cfg.eval_db)
+    stack.callback(journal.close)
+    source = SessionDataSource(cfg.history_db, htf, rest=os.environ.get("HEATSIGNAL_HTF_REST", "1").strip() != "0")
+    log.info("modo de analisis: %s; sesiones: %s", mode, ", ".join(d.spec() for d in sessions))
+    return {"htf": htf, "mode": mode, "sessions": sessions, "session_source": source, "journal": journal}
 
 
 def _cold_reader(cfg: RunConfig, sinks: list[EventSink]) -> Any:
@@ -445,7 +477,9 @@ async def start_panel(
         cycle_log=analysis.cycle_log if analysis else None,
         lab_summary_path=Path(cfg.eval_db).parent / "lab_summary.json",
         checkpoint_db=Path(cfg.checkpoint_db),
-        db_paths={"eval": Path(cfg.eval_db), "history": Path(cfg.history_db), "checkpoints": Path(cfg.checkpoint_db)},
+        paperbot_db=Path(cfg.eval_db).parent / "paperbot.sqlite",
+        db_paths={"eval": Path(cfg.eval_db), "history": Path(cfg.history_db), "checkpoints": Path(cfg.checkpoint_db),
+                  "paperbot": Path(cfg.eval_db).parent / "paperbot.sqlite"},
         settings={
             "news_interval_s": cfg.news_interval_s, "graph_rotation": cfg.graph_rotation, "record": cfg.record,
             "retention_s": {"trade": cfg.mem_trades_s, "ticker": cfg.mem_tickers_s,

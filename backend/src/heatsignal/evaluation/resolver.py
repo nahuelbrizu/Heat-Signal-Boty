@@ -25,6 +25,9 @@ no agrega edge sobre "estar long". El edge aparece en cuando NO estar long. La
 comparacion contra los 3 baselines de `baseline.py` (random / always-long / momentum)
 la hace el `Evaluator` a nivel de estrategia (ver `report.py`).
 
+Hipotesis de 1h (`timeframe="1h"`, ver `timeframes.py`): `due_at` cae en un cierre de vela de 1h y el
+precio de salida es el CIERRE de esa vela (`BinanceHourlyClosePriceSource`), si el job recibe esa fuente.
+
 Sin datos: si la fuente no da un precio confiable (`None`) y ya paso el periodo de
 gracia `no_data_grace` desde el vencimiento, se registra `expired_no_data` (nunca se
 descarta). Si todavia no paso la gracia, queda pendiente. Un `PriceSourceError`
@@ -92,6 +95,7 @@ class Resolver:
         *,
         cost_bps: float = DEFAULT_COST_BPS,
         no_data_grace: timedelta = DEFAULT_NO_DATA_GRACE,
+        hourly_price_source: PriceSource | None = None,
     ) -> None:
         if cost_bps < 0:
             raise ValueError(f"cost_bps no puede ser negativo: {cost_bps}")
@@ -99,6 +103,7 @@ class Resolver:
         self._prices = price_source
         self._cost_bps = cost_bps
         self._grace = no_data_grace
+        self._hourly = hourly_price_source
 
     def resolve_due(self, now: datetime | None = None) -> ResolverRunSummary:
         now = now or datetime.now(timezone.utc)
@@ -118,6 +123,14 @@ class Resolver:
                 summary.expired_no_data += 1
         return summary
 
+    def source_for(self, h: PendingHypothesis) -> PriceSource:
+        """Hipotesis de 1h con vencimiento en cierre de vela -> vela de 1h; el resto, la fuente general."""
+        if h.timeframe == "1h" and self._hourly is not None:
+            due = due_at(h)
+            if due.minute == 0 and due.second == 0 and due.microsecond == 0:
+                return self._hourly
+        return self._prices
+
     def resolve_one(self, h: PendingHypothesis, now: datetime) -> Resolution | None:
         """Resuelve y persiste una hipotesis vencida. None = sin datos aun, dentro de la gracia.
 
@@ -126,7 +139,7 @@ class Resolver:
         exit_ts = due_at(h)
         if now < exit_ts:
             raise ValueError(f"hypothesis {h.hypothesis_id} todavia no vencio (due_at={exit_ts})")
-        exit_price = self._prices.price_at(h.symbol, exit_ts)
+        exit_price = self.source_for(h).price_at(h.symbol, exit_ts)
         if exit_price is not None and (not exit_price.is_finite() or exit_price <= 0):
             exit_price = None  # precio no confiable == sin dato
 

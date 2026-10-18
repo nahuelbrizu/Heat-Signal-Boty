@@ -8,6 +8,7 @@ import {
 import { candlePanel } from "../candles.js";
 import { symbolAnalysis } from "../analysis-ui.js";
 import { hypTable } from "../hyp-ui.js";
+import { htfPanel, trendCuts } from "../htf-ui.js";
 import { analyzeAction, labRequestAction, labRequestsBlock } from "../actions.js";
 
 const DAY = 86400e3;
@@ -30,6 +31,8 @@ export async function mount(root, ctx) {
   const box = (t) => el("div", {}, loading(t));
   const statsBox = box(), analysisBox = box(), cyclesBox = box(), hypBox = box(), newsBox = box(), dataBox = box(), labBox = box();
   const candles = candlePanel(ctx, symbol, { interval: "4h", tall: false });
+  const htf = htfPanel(ctx, symbol);
+  const trendBox = box();
   const reqs = labRequestsBlock(ctx, { symbol });
   const labActionSlot = el("div");
 
@@ -41,11 +44,13 @@ export async function mount(root, ctx) {
       el("div", {}, el("p", { class: "small muted" }, "Corre el grafo ahora solo para " + coin + " (analistas, debate y decisión). Tarda 1–2 min y usa llamadas al LLM."), analyzeAction(ctx, symbol)),
       el("div", {}, el("p", { class: "small muted" }, "Pide al laboratorio que pruebe estrategias del lote sobre " + coin + ". Lo corre tu PC; puede tardar horas."), labActionSlot))),
     statsBox,
+    htf.node,
     candles.node,
     el("div", { class: "grid two" },
       card("Último análisis del grafo", el("a", { href: "#/analisis" }, "todas las criptos →"), analysisBox),
       card("Ciclos que analizaron " + coin, el("a", { href: "#/ciclos" }, "historial completo →"), cyclesBox)),
     card("Hipótesis sobre " + coin, el("a", { href: ctx.href("hipotesis", [], { symbol }) }, "explorar con filtros →"), hypBox),
+    card("Acierto según la tendencia del día (" + coin + ")", "n e IC 95 % en cada tasa", trendBox),
     el("div", { class: "grid two" },
       card("Noticias de " + coin, el("a", { href: ctx.href("noticias", [], { symbol: coin }) }, "buscar →"), newsBox),
       card("Datos guardados", el("a", { href: ctx.href("datos", [], { symbol }) }, "explorador de barras →"), dataBox)),
@@ -108,6 +113,11 @@ export async function mount(root, ctx) {
     } catch (e) { const b = errorBox(e, "las hipótesis"); if (b) clear(hypBox, b); }
   }
 
+  async function loadTrend() {
+    try { clear(trendBox, trendCuts(await api("/api/hypotheses/by-trend", { symbol }, ctx.signal))); }
+    catch (e) { const b = errorBox(e, "el corte por tendencia"); if (b) clear(trendBox, b); }
+  }
+
   // ------------------------------------------------------------ noticias
   async function loadNews() {
     try {
@@ -163,19 +173,20 @@ export async function mount(root, ctx) {
       { empty: "Ninguna estrategia del lote incluye " + coin + ". Podés pedirlo con \"Mandar al laboratorio\".", label: "Laboratorio de " + coin }));
   }
 
-  loadMarket(); candles.reload(true); candles.reloadHyps(); loadAnalysis(); loadCycles(); loadHyps(); loadNews(); loadData(); loadLab();
+  loadMarket(); htf.reload(true); htf.reloadHyps(); loadTrend(); candles.reload(true); candles.reloadHyps(); loadAnalysis(); loadCycles(); loadHyps(); loadNews(); loadData(); loadLab();
   ctx.every(10000, loadMarket);
+  ctx.every(60000, () => htf.reload(false));
   let lastRun = ctx.summary && ctx.summary.analysis && ctx.summary.analysis.last_ran && ctx.summary.analysis.last_ran.run_id;
   let hk = null;
   return {
-    refresh: () => { loadMarket(); candles.reload(false); },
+    refresh: () => { loadMarket(); htf.reload(false); candles.reload(false); },
     onSummary: (s) => {
       const id = s.analysis && s.analysis.last_ran && s.analysis.last_ran.run_id;
       if (id && id !== lastRun) { lastRun = id; loadAnalysis(); loadCycles(); }
       const h = s.counts && s.counts.hypotheses, k = h ? h.total + "|" + h.resolved : null;
-      if (hk !== null && k !== hk) { loadHyps(); candles.reloadHyps(); }
+      if (hk !== null && k !== hk) { loadHyps(); loadTrend(); candles.reloadHyps(); htf.reloadHyps(); }
       hk = k;
     },
-    unmount: () => candles.dispose(),
+    unmount: () => { candles.dispose(); htf.dispose(); },
   };
 }

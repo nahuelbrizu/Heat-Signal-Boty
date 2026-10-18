@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import json
 import logging
+from datetime import datetime, timezone
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any, Callable, Literal
 from uuid import UUID
@@ -33,6 +34,8 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 
 from ..evaluation.strategy_registry import StrategyHypothesis
+from ..evaluation.timeframes import check_htf_entry, hourly_horizon, is_hourly
+from ..features.htf import trend_alignment
 from ..schema.features import FeatureSet
 from ..schema.hypotheses import PendingHypothesis
 from ..schema.signals import Direction
@@ -55,7 +58,13 @@ _SYSTEM_PROMPT = (
     "'no_hypothesis' explicando el motivo. NUNCA inventes una estrategia ni una variante: si "
     "ninguna estrategia listada encaja, la respuesta correcta es 'no_hypothesis'. No elijas el "
     "precio de entrada: lo fija el sistema. Los huecos de datos declarados deben bajar la "
-    "confianza o justificar 'no_hypothesis'. " + HISTORICAL_LANGUAGE_RULE
+    "confianza o justificar 'no_hypothesis'. "
+    "Estrategias de temporalidad 1h (salida con timeframe='1h'): formula la hipotesis sobre velas de 1h CERRADAS y "
+    "en relacion con la tendencia del dia UTC calculada por codigo (daily_trend), p.ej. 'a favor de la tendencia "
+    "diaria tras retroceso a la EMA de 1h' o 'contra la tendencia en el extremo del rango diario'. Solo propone una "
+    "si el setup que la estrategia exige figura como presente en 'setups (codigo)'; la direccion debe quedar a favor "
+    "o en contra segun lo pre-registrado. El horizonte lo fija el sistema (cierre de vela de 1h). "
+    + HISTORICAL_LANGUAGE_RULE
 )
 
 
@@ -99,6 +108,7 @@ def render_allowed_strategies(strategies: list[StrategyHypothesis]) -> str:
 
 
 def _horizon_for(strategy: StrategyHypothesis, default_horizon_s: int) -> int:
+    """Horizonte de estrategias NO 1h (las de 1h usan `timeframes.hourly_horizon`)."""
     raw = strategy.exit_conditions.get("horizon_s")
     if isinstance(raw, (int, float)) and not isinstance(raw, bool) and raw > 0:
         return int(raw)
@@ -117,6 +127,8 @@ def _validate(
     allowed: dict[str, StrategyHypothesis],
     run_id: str | None,
     default_horizon_s: int,
+    now: datetime | None = None,
+    session: dict | None = None,
 ) -> PendingHypothesis | str:
     """Devuelve la hipotesis valida o el motivo de rechazo (str)."""
     if p.strategy_id is None or p.strategy_id.strip().lower() not in allowed:
@@ -129,17 +141,41 @@ def _validate(
     mark = fs.context.mark_price
     if mark is None or mark <= 0:
         return "sin mark_price en FeatureSet.context: no hay precio de entrada de referencia"
+    created = (now or datetime.now(timezone.utc)).replace(microsecond=0)
+    timeframe = strategy.exit_conditions.get("timeframe")
+    bars = None
+    if is_hourly(strategy.exit_conditions):
+        entry_problem = check_htf_entry(strategy.entry_conditions, fs.htf, p.direction, fs.session,
+                                        int(created.timestamp() * 1000))
+        if entry_problem:
+            return f"no cumple la entrada pre-registrada de 1h: {entry_problem}"
+        hz = hourly_horizon(strategy.exit_conditions, created)
+        if isinstance(hz, str):
+            return hz
+        horizon_s, bars = hz
+    else:
+        horizon_s = _horizon_for(strategy, default_horizon_s)
+    htf = fs.htf
     return PendingHypothesis(
         strategy_id=strategy.strategy_id,
         symbol=fs.symbol,
+        created_at=created,
         direction=Direction(p.direction),
         confidence_score=p.confidence,
         entry_reference_price=Decimal(str(mark)),
-        horizon_s=_horizon_for(strategy, default_horizon_s),
+        horizon_s=horizon_s,
         atr_normalized_trigger=p.atr_normalized_trigger,
         rationale=p.rationale,
         heatmap_model_id=fs.heatmap.heatmap_model_id,
         run_id=run_id,
+        timeframe=timeframe if isinstance(timeframe, str) else None,
+        horizon_bars=bars,
+        daily_trend=None if htf is None else htf.daily_trend,
+        trend_alignment=None if htf is None else trend_alignment(p.direction, htf.daily_trend),
+        htf_model_id=None if htf is None else htf.htf_model_id,
+        htf_snapshot=None if htf is None else htf.snapshot(),
+        session=(session or {}).get("name"),
+        session_day=(session or {}).get("day"),
     )
 
 
@@ -151,6 +187,8 @@ def apply_proposals(
     run_id: str | None,
     default_horizon_s: int = DEFAULT_HORIZON_S,
     open_positions: set[tuple[str, str]] | None = None,
+    now: datetime | None = None,
+    session: dict | None = None,
 ) -> tuple[list[PendingHypothesis], list[SymbolDecision]]:
     """Validacion pura (sin LLM ni I/O): propuestas -> hipotesis + decisiones por simbolo.
 
@@ -173,7 +211,7 @@ def apply_proposals(
         if p.decision == "no_hypothesis":
             decisions.append(SymbolDecision(symbol=p.symbol, outcome="no_hypothesis", reason=p.rationale))
             continue
-        result = _validate(p, fs, allowed, run_id, default_horizon_s)
+        result = _validate(p, fs, allowed, run_id, default_horizon_s, now, session)
         if isinstance(result, str):
             logger.warning("synthesizer: propuesta RECHAZADA para %s: %s", p.symbol, result)
             decisions.append(
@@ -251,6 +289,7 @@ def make_synthesizer_node(
             run_id=state.get("run_id"),
             default_horizon_s=default_horizon_s,
             open_positions=open_positions,
+            session=state.get("session"),
         )
         if hypothesis_store is not None:
             for h in hypotheses:

@@ -35,7 +35,10 @@ _SYSTEM_PROMPT = (
     "(o por que no se registro ninguna, incluidos los rechazos). Las hipotesis son PENDIENTES de "
     "resolucion: no las presentes como senales confirmadas ni des win-rates. Menciona todos los "
     "huecos de datos declarados. PROHIBIDO lenguaje predictivo o de certeza ('va a subir', "
-    "'subira', 'garantiza', 'seguro que', 'will rise'). " + HISTORICAL_LANGUAGE_RULE
+    "'subira', 'garantiza', 'seguro que', 'will rise'). "
+    "Si la corrida es de una sesion de mercado (Asia, Europa, EE.UU. o cierre del dia UTC) y hay diario del dia, el "
+    "resumen es el analisis de ESA sesion: sumalo a lo que ya dijeron las sesiones previas de hoy (que se confirmo, "
+    "que cambio), con la vela de apertura y la tendencia del dia calculadas por codigo. " + HISTORICAL_LANGUAGE_RULE
 )
 
 ReportStatus = Literal["ok", "ok_after_retry", "guardrail_failed"]

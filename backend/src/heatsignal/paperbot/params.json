@@ -1,0 +1,90 @@
+{
+  "_doc": "Parametros del bot de paper trading del lote 3. Versionado: cambiar un valor = commit con su origen. Solo se pueden elegir valores de la grilla congelada del spec (el bot lo valida y falla si no). Nada se optimiza en vivo. Para tomar el valor que eligio el walk-forward del laboratorio: python -m heatsignal.paperbot params-from-lab <strategy_id> [--write].",
+  "strategies": {
+    "tsmom-diario-v1": {
+      "spec_hash": "7515d798e5d66a55",
+      "universe": [
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "ETHUSDT",
+        "XLMUSDT",
+        "BNBUSDT",
+        "TRXUSDT"
+      ],
+      "params": {
+        "target_vol": 0.15
+      },
+      "origen": "walk-forward del lab 2026-10-18 (ultima ventana: test 2026-06-15 a 2026-07-15, corrida 20261017T230238)",
+      "desde": "2026-10-18"
+    },
+    "low-vol-xs-v1": {
+      "spec_hash": "307d3572e576e4c2",
+      "universe": [
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "ETHUSDT",
+        "XLMUSDT",
+        "BNBUSDT",
+        "TRXUSDT"
+      ],
+      "params": {},
+      "origen": "spec congelada (sin grilla)",
+      "desde": "2026-10-18"
+    },
+    "pares-eth-btc-v1": {
+      "spec_hash": "c9c2243ebcef9393",
+      "universe": [
+        "ETHUSDT",
+        "BTCUSDT"
+      ],
+      "params": {
+        "entry_z": 2.5
+      },
+      "origen": "walk-forward del lab 2026-10-18 (ultima ventana: test 2026-05-29 a 2026-06-28, corrida 20261017T230544)",
+      "desde": "2026-10-18"
+    },
+    "rango-reversion-v1": {
+      "spec_hash": "a03dba31be20137f",
+      "universe": [
+        "BNBUSDT",
+        "TRXUSDT",
+        "XLMUSDT"
+      ],
+      "params": {},
+      "origen": "spec congelada (sin grilla)",
+      "desde": "2026-10-18"
+    },
+    "reversion-xs-1h-v1": {
+      "spec_hash": "e2a331826092f698",
+      "universe": [
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "ETHUSDT",
+        "XLMUSDT",
+        "BNBUSDT",
+        "TRXUSDT"
+      ],
+      "params": {},
+      "origen": "spec congelada (sin grilla)",
+      "desde": "2026-10-18"
+    },
+    "funding-prepago-v1": {
+      "spec_hash": "3fc248f8641d0402",
+      "universe": [
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "ETHUSDT",
+        "XLMUSDT",
+        "BNBUSDT",
+        "TRXUSDT"
+      ],
+      "params": {},
+      "origen": "spec congelada (sin grilla)",
+      "desde": "2026-10-18"
+    }
+  }
+}

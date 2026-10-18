@@ -202,3 +202,75 @@ def _safe_json(body: bytes) -> Any:
         return json.loads(body)
     except (ValueError, UnicodeDecodeError):
         return None
+
+
+class BinanceHourlyClosePriceSource:
+    """Precio de salida de las hipotesis de 1h: CIERRE de la vela de 1h que termina exactamente en `ts`.
+
+    Mismo endpoint que `BinanceKlinePriceSource` (`/fapi/v1/markPriceKlines` con `price_kind="mark"`, coherente
+    con la entrada a mark price; `/fapi/v1/klines` con "last"), pidiendo la vela por su openTime:
+        GET ...?symbol=XRPUSDT&interval=1h&startTime=<ts - 1h>&limit=1
+    Reglas (sin look-ahead y sin fallos silenciosos):
+      - `ts` tiene que estar alineado a la hora UTC (lo garantiza `evaluation/timeframes.py`); si no, ValueError.
+      - Si la vela devuelta no es la de openTime = ts - 1h (hueco/mantenimiento) -> None (expired_no_data al
+        vencer la gracia). Si todavia no cerro (closeTime >= ahora) -> None (se reintenta).
+      - Fallo de transporte -> `PriceSourceError` (queda pendiente).
+    """
+
+    BASE_URL = "https://fapi.binance.com"
+    _PATHS = BinanceKlinePriceSource._PATHS
+    HOUR_MS = 3_600_000
+
+    def __init__(
+        self,
+        *,
+        price_kind: str = "mark",
+        timeout_s: float = 10.0,
+        http_get: HttpGet | None = None,
+        base_url: str | None = None,
+        clock_ms: Callable[[], int] | None = None,
+    ) -> None:
+        if price_kind not in self._PATHS:
+            raise ValueError(f"price_kind debe ser uno de {sorted(self._PATHS)}, recibido {price_kind!r}")
+        self._path = self._PATHS[price_kind]
+        self._timeout_s = timeout_s
+        self._http_get = http_get or _urllib_get
+        self._base_url = (base_url or self.BASE_URL).rstrip("/")
+        self._clock_ms = clock_ms or (lambda: int(datetime.now(timezone.utc).timestamp() * 1000))
+
+    def build_url(self, symbol: str, ts: datetime) -> str:
+        end_ms = int(_to_utc(ts).timestamp() * 1000)
+        if end_ms % self.HOUR_MS:
+            raise ValueError(f"ts no esta alineado a la hora UTC: {ts.isoformat()}")
+        query = urllib.parse.urlencode({"symbol": to_binance_symbol(symbol), "interval": "1h",
+                                        "startTime": end_ms - self.HOUR_MS, "limit": 1})
+        return f"{self._base_url}{self._path}?{query}"
+
+    def price_at(self, symbol: str, ts: datetime) -> Decimal | None:
+        url = self.build_url(symbol, ts)
+        start_ms = int(_to_utc(ts).timestamp() * 1000) - self.HOUR_MS
+        status, body = self._http_get(url, self._timeout_s)
+        if status == 400:
+            payload = _safe_json(body)
+            if isinstance(payload, dict) and payload.get("code") == BinanceKlinePriceSource._INVALID_SYMBOL_CODE:
+                return None
+            raise PriceSourceError(f"HTTP 400 inesperado de Binance: {body[:200]!r}")
+        if status != 200:
+            raise PriceSourceError(f"HTTP {status} de Binance: {body[:200]!r}")
+        payload = _safe_json(body)
+        if not isinstance(payload, list):
+            raise PriceSourceError(f"respuesta de klines no es una lista: {body[:200]!r}")
+        if not payload:
+            return None
+        k = payload[0]
+        if not isinstance(k, list) or len(k) < 7:
+            raise PriceSourceError(f"kline con formato inesperado: {k!r}")
+        try:
+            open_ms, close_ms = int(k[0]), int(k[6])
+        except (TypeError, ValueError) as exc:
+            raise PriceSourceError(f"tiempos invalidos en kline: {k!r}") from exc
+        if open_ms != start_ms:
+            return None  # la vela de esa hora no existe (hueco): no se usa otra
+        if close_ms >= self._clock_ms():
+            return None  # todavia abierta: su close cambia
+        return _valid_price(k[4])

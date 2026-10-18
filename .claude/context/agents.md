@@ -92,3 +92,22 @@ del diseño de arriba:
 ## Lo que NO copiamos de TradingAgents
 - Su capa de datos (yfinance/Alpha Vantage por fecha) es point-in-time sobre equities. No sirve.
 - Sus analistas de fundamentals/earnings/Reddit — no aplican a derivados cripto.
+
+## Contexto multi-temporalidad y sesiones (2026-10-18)
+
+- `FeatureSet.htf` (`features/htf.py`, `htf-trend-v1`): últimas 48 velas de 1h CERRADAS, día UTC (apertura, máx/mín,
+  cambio en % y en ATR(1h), posición en el rango), EMA20/SMA50 de 1h y pendiente, EMA10/SMA20 diarias, ATR14 1h,
+  `daily_trend` (regla fija, la pone el CÓDIGO) y `setups` (banderas por código). Los huecos van a `data_gaps`.
+- `FeatureSet.session` (`features/sessions.py`, `session-v1`): último análisis de sesión del día para ese símbolo.
+- Estado del grafo: `session` (sesión de la corrida) y `day_journal` (diario del día: sesiones previas, código + Redactor).
+- Prompts: el Analista de Contexto recibe el bloque de 1h (6 velas compactas, no las 48) y la última sesión; el
+  digest que leen el debate, el Sintetizador y el Redactor suma una línea de tendencia por símbolo y el diario del día
+  al principio. **Mismas llamadas por ciclo** (test `test_budget_session_context_adds_no_llm_calls`).
+- Sintetizador: estrategias con `exit_conditions.timeframe = "1h"` → horizonte alineado al cierre de vela
+  (`evaluation/timeframes.py`) y entrada verificada por código (`htf_setup`, `daily_trend_in`, `alignment`, `sessions`).
+  Toda hipótesis nueva registra `daily_trend`, `trend_alignment`, `htf_snapshot` y la sesión de la que salió.
+- `entry_conditions.scope = "rotation"`: la estrategia aplica a los símbolos que el ciclo ya analiza y no obliga a
+  mandar todos al grafo.
+- Modo `sessions` (`pipeline/analysis.py`): el grafo corre al cerrar la 1ª vela de 1h de Asia/Europa/EE.UU. y la última
+  del día UTC (4 corridas/día, todos los símbolos). Sin LLM o sin estrategias, el análisis por código se guarda igual y
+  la fila `llm` del diario queda `sin_llm`.

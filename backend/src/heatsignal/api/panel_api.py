@@ -256,6 +256,15 @@ def hypothesis_json(rec: Any, now: datetime | None = None) -> dict[str, Any]:
         "real_move_pct": real_move,  # cuanto se movio el precio (sin importar la direccion)
         "benchmark_pnl_pct": None if met is None else met.benchmark_pnl_pct,  # buy & hold en la misma ventana
         "alpha_pct": None if met is None else met.alpha_pct,
+        # contexto multi-temporalidad (None en las hipotesis previas al 2026-10-18)
+        "timeframe": h.timeframe,
+        "horizon_bars": h.horizon_bars,
+        "daily_trend": h.daily_trend,
+        "trend_alignment": h.trend_alignment,
+        "htf_model_id": h.htf_model_id,
+        "htf_snapshot": h.htf_snapshot,
+        "session": h.session,
+        "session_day": h.session_day,
     }
 
 
@@ -669,6 +678,10 @@ def register_api(app: FastAPI, ctx: PanelContext, build_id: str) -> None:  # noq
         win: bool | None = None,
         since: str | None = Query(None, description="created_at >= since (epoch ms o ISO)"),
         until: str | None = Query(None, description="created_at < until (epoch ms o ISO)"),
+        timeframe: Literal["1h", "none"] | None = Query(None, description="'none' = sin temporalidad (viejas)"),
+        daily_trend: Literal["alcista", "bajista", "lateral", "sin_datos", "none"] | None = None,
+        trend_alignment: Literal["a_favor", "en_contra", "lateral", "sin_datos", "none"] | None = None,
+        session: str | None = Query(None, pattern=r"^[a-z0-9_]{1,20}$", description="'none' = sin sesion"),
         order: Literal["desc", "asc"] = "desc",
         limit: int = Query(50, ge=1, le=MAX_PAGE),
         offset: int = Query(0, ge=0, le=MAX_OFFSET),
@@ -679,11 +692,30 @@ def register_api(app: FastAPI, ctx: PanelContext, build_id: str) -> None:  # noq
         total, recs = ctx.store.query(
             strategy_id=strategy_id, symbol=sym, status=None if status is None else HypothesisStatus(status),
             win=win, since_ts=None if a is None else a / 1000, until_ts=None if b is None else b / 1000,
+            timeframe=timeframe, daily_trend=daily_trend, trend_alignment=trend_alignment, session=session,
             limit=limit, offset=offset, newest_first=order == "desc")
         now = datetime.now(timezone.utc)
         return page(total, limit, offset, [hypothesis_json(r, now) for r in recs],
                     filters={"strategy_id": None if strategy_id is None else str(strategy_id), "symbol": sym,
-                             "status": status, "win": win, "since_ms": a, "until_ms": b, "order": order})
+                             "status": status, "win": win, "since_ms": a, "until_ms": b, "order": order,
+                             "timeframe": timeframe, "daily_trend": daily_trend, "trend_alignment": trend_alignment,
+                             "session": session})
+
+    @app.get("/api/hypotheses/by-trend")
+    async def hypotheses_by_trend(
+        strategy_id: UUID | None = None,
+        symbol: str | None = Query(None, max_length=30),
+        timeframe: Literal["1h", "none"] | None = None,
+    ) -> dict[str, Any]:
+        """Tasa de acierto cortada por tendencia del dia y por a favor / en contra (n, IC de Wilson, alfa)."""
+        from ..evaluation.segments import trend_segments
+
+        _require_eval()
+        sym = internal_symbol(symbol) if symbol else None
+        rows = ctx.store.trend_rows(strategy_id=strategy_id, symbol=sym, timeframe=timeframe)
+        return {"filters": {"strategy_id": None if strategy_id is None else str(strategy_id), "symbol": sym,
+                            "timeframe": timeframe},
+                "rule": "htf-trend-v1 (features/htf.py)", **trend_segments(rows)}
 
     @app.get("/api/hypotheses/{hypothesis_id}")
     async def hypothesis_detail(hypothesis_id: UUID) -> dict[str, Any]:
@@ -1401,6 +1433,37 @@ def register_api(app: FastAPI, ctx: PanelContext, build_id: str) -> None:  # noq
 
     app.state.paper_brief = _paper_brief  # lo usa /api/summary (registrado antes; se resuelve al atender el pedido)
 
+    @app.get("/api/wallet")
+    async def wallet() -> dict[str, Any]:
+        """Tenencias personales de largo plazo (NO son estrategias: no entran al grafo ni al laboratorio).
+
+        Archivo `wallet.json` en el directorio de datos de la VM (fuera de git): {"holdings": [{"asset": "XRP",
+        "symbol": "XRP-USDT", "avg_price_usd": 2.5, "qty": null, "note": "..."}]}. `qty` es opcional: sin ella se
+        informa el resultado en % por unidad. El precio actual es el mark medio de la ventana en memoria.
+        """
+        path = _wallet_path(ctx)
+        if path is None or not path.exists():
+            return {"configured": False, "path": None if path is None else str(path), "holdings": []}
+        import json
+
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            raise HTTPException(status_code=500, detail=f"wallet.json ilegible: {exc}") from exc
+        marks = {} if ctx.memory is None else {
+            sym: (sum(r["mark_by_source"].values()) / len(r["mark_by_source"])) if r["mark_by_source"] else None
+            for sym, r in ctx.memory.summary().items()}
+        out = []
+        for h in raw.get("holdings") or []:
+            avg, qty, price = h.get("avg_price_usd"), h.get("qty"), marks.get(h.get("symbol"))
+            ok = isinstance(avg, (int, float)) and avg > 0 and isinstance(price, (int, float))
+            out.append({**h, "price_usd": price,
+                        "pnl_pct": (price / avg - 1) if ok else None,
+                        "value_usd": price * qty if isinstance(qty, (int, float)) and price is not None else None,
+                        "cost_usd": avg * qty if isinstance(qty, (int, float)) and isinstance(avg, (int, float)) else None,
+                        "pnl_usd": (price - avg) * qty if ok and isinstance(qty, (int, float)) else None})
+        return json_safe({"configured": True, "holdings": out, "ts_ms": now_ms()})
+
     @app.get("/api/paper")
     async def paper() -> dict[str, Any]:
         src = _paper_sources()
@@ -1429,6 +1492,46 @@ def register_api(app: FastAPI, ctx: PanelContext, build_id: str) -> None:  # noq
         if isinstance(cmp, dict) and "error" in cmp and len(cmp) == 1:
             raise HTTPException(status_code=500, detail=cmp["error"])
         return cmp
+
+    # ---------------------------------------------------------------- bot propio de paper trading (lote 3)
+
+    def _paperbot_read(fn: Callable[[Path], Any]) -> Callable[[], Any]:
+        """Lectura read-only de paperbot.sqlite (paperbot/view.py, sin pandas) con errores claros."""
+        import sqlite3
+
+        def work() -> Any:
+            if ctx.paperbot_db is None:
+                raise HTTPException(status_code=503, detail="bot de paper trading no configurado en este proceso")
+            try:
+                return json_safe(fn(Path(ctx.paperbot_db)))
+            except FileNotFoundError:
+                raise HTTPException(status_code=503, detail=f"el bot de paper trading todavia no corrio: no existe {ctx.paperbot_db} "
+                                    "(heatsignal-paperbot.timer)") from None
+            except sqlite3.Error as exc:
+                raise HTTPException(status_code=503, detail=f"no se pudo leer la base del bot: {exc}") from None
+        return work
+
+    @app.get("/api/paperbot")
+    async def paperbot() -> Any:
+        from ..paperbot import view as pbv
+
+        out = await _paper_cached("paperbot", 10.0, _paperbot_read(pbv.overview))
+        lab = _lab_view(ctx)  # veredicto del backtest junto a cada estrategia del paper
+        return {**out, "lab_generated_at": lab.get("generated_at") if isinstance(lab, dict) else None,
+                "strategies": [{**s, "lab": pbv.lab_verdict(lab, s["strategy_id"], s.get("spec_hash"))}
+                               for s in out.get("strategies") or []]}
+
+    @app.get("/api/paperbot/{strategy_id}")
+    async def paperbot_detail(strategy_id: str = PathParam(..., max_length=100)) -> Any:
+        if not LAB_ID.match(strategy_id):
+            raise HTTPException(status_code=400, detail=f"strategy_id invalido: {strategy_id!r}")
+        from ..paperbot import view as pbv
+
+        out = await _paper_cached("paperbot:" + strategy_id, 10.0,
+                                  _paperbot_read(lambda p: pbv.strategy_detail(p, strategy_id)))
+        if out is None:
+            raise HTTPException(status_code=404, detail=f"el bot no tiene datos de {strategy_id}")
+        return {**out, "lab": pbv.lab_verdict(_lab_view(ctx), strategy_id, out.get("spec_hash"))}
 
     # ---------------------------------------------------------------- mercado (ventana en memoria)
 
@@ -1533,6 +1636,70 @@ def register_api(app: FastAPI, ctx: PanelContext, build_id: str) -> None:  # noq
 
     # ---------------------------------------------------------------- sistema
 
+    @app.get("/api/sessions")
+    async def sessions_day(day: str | None = Query(None, pattern=r"^\d{4}-\d{2}-\d{2}$", description="dia UTC")
+                           ) -> dict[str, Any]:
+        """Diario del dia: sesiones (horario local con DST, apertura UTC, disparo) + analisis por codigo y del LLM."""
+        from ..features.sessions import DAY_MS, HOUR_MS, next_trigger, opens_for_utc_day
+
+        loop = ctx.analysis
+        defs = list(getattr(loop, "sessions", None) or [])
+        if not defs:
+            raise HTTPException(status_code=503, detail="sesiones no configuradas (analisis apagado)")
+        now = now_ms()
+        if day is None:
+            day0 = now - now % DAY_MS
+        else:
+            try:
+                day0 = int(datetime.strptime(day, "%Y-%m-%d").replace(tzinfo=timezone.utc).timestamp() * 1000)
+            except ValueError:
+                raise HTTPException(status_code=400, detail=f"dia invalido: {day!r}") from None
+        dstr = datetime.fromtimestamp(day0 / 1000, tz=timezone.utc).date().isoformat()
+        journal = getattr(loop, "journal", None)
+        entries = journal.day(dstr, with_data=True) if journal is not None else []
+        by = {(e["session"], e["kind"]): e for e in entries}
+
+        def entry(e: dict[str, Any] | None) -> dict[str, Any] | None:
+            if e is None:
+                return None
+            return {**e, "created_at": iso(e["created_ms"])}
+
+        items = []
+        for d, o in opens_for_utc_day(defs, day0):
+            items.append({"name": d.name, "label": d.label, "tz": d.tz, "local_time": f"{d.hour:02d}:{d.minute:02d}",
+                          "role": d.role, "open_ms": o, "open_at": iso(o), "trigger_ms": o + HOUR_MS,
+                          "trigger_at": iso(o + HOUR_MS), "triggered": o + HOUR_MS <= now,
+                          "code": entry(by.get((d.name, "code"))), "llm": entry(by.get((d.name, "llm")))})
+        nd, no, nt = next_trigger(defs, now)
+        return {"day": dstr, "day_start_ms": day0, "mode": getattr(loop, "mode", None), "sessions": items,
+                "next": {"name": nd.name, "label": nd.label, "open_ms": no, "trigger_ms": nt, "trigger_at": iso(nt)},
+                "days": journal.days(30) if journal is not None else [],
+                "journal_available": journal is not None}
+
+    @app.get("/api/htf/{symbol}")
+    async def htf(symbol: str = PathParam(..., max_length=30),
+                  candles: int = Query(48, ge=0, le=48, description="velas de 1h a incluir")) -> dict[str, Any]:
+        """Velas de 1h cerradas + tendencia del dia UTC (history/hourly.py + features/htf.py)."""
+        loop = ctx.analysis
+        provider = getattr(loop, "htf", None)
+        if provider is None:
+            raise HTTPException(status_code=503, detail="contexto 1h apagado (HEATSIGNAL_HTF=0 o analisis apagado)")
+        sym = internal_symbol(symbol)
+        if sym not in _configured_symbols() and sym not in getattr(loop, "symbols", []):
+            raise HTTPException(status_code=404, detail=f"simbolo no configurado: {symbol!r}")
+        now = now_ms()
+        try:
+            h = await asyncio.wait_for(asyncio.to_thread(provider.context, sym, now), timeout=30.0)
+        except asyncio.TimeoutError:
+            raise HTTPException(status_code=503, detail="el contexto 1h tardo demasiado (base o REST lentos)") from None
+        out = h.model_dump(mode="json")
+        out["candles_1h"] = [{**c, "open_at": iso(c["open_ms"])} for c in out["candles_1h"][len(out["candles_1h"]) - candles:]] \
+            if candles else []
+        out["ts_at"] = iso(h.ts_ms)
+        out["last_closed_open_at"] = iso(h.last_closed_open_ms)
+        out["day_start_at"] = iso(h.day_start_ms)
+        return out
+
     @app.get("/api/system")
     async def system() -> dict[str, Any]:
         now = now_ms()
@@ -1612,3 +1779,15 @@ def _llm_cooldowns() -> dict:
     except Exception:  # noqa: BLE001 - sin dependencias del grafo: no hay modelos que mostrar
         return {}
     return llm_status()
+
+
+def _wallet_path(ctx: PanelContext) -> Path | None:
+    import os
+
+    env = os.environ.get("HEATSIGNAL_WALLET_FILE")
+    if env:
+        return Path(env)
+    base = next((Path(p).parent for p in ctx.db_paths.values()), None)
+    if base is None and ctx.history is not None:
+        base = Path(ctx.history.store.path).parent
+    return None if base is None else base / "wallet.json"
