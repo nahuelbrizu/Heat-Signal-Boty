@@ -85,3 +85,39 @@ def adx(bars: pd.DataFrame, n: int = 14) -> pd.Series:
     mdi = 100 * smooth(minus_dm) / atr_w.where(atr_w > 0)
     dx = 100 * (pdi - mdi).abs() / (pdi + mdi).where((pdi + mdi) > 0)
     return dx.ewm(alpha=1 / n, adjust=False, min_periods=n).mean()
+
+
+def dmi(bars: pd.DataFrame, n: int = 14) -> pd.DataFrame:
+    """+DI, -DI y ADX de Wilder (mismo calculo que `adx`; columnas pdi, mdi, adx). Trailing."""
+    high, low = bars["high"], bars["low"]
+    up = high.diff()
+    down = -low.diff()
+    plus_dm = up.where((up > down) & (up > 0), 0.0)
+    minus_dm = down.where((down > up) & (down > 0), 0.0)
+    prev = bars["close"].shift(1)
+    tr = pd.concat([high - low, (high - prev).abs(), (low - prev).abs()], axis=1).max(axis=1)
+
+    def smooth(x: pd.Series) -> pd.Series:
+        return x.ewm(alpha=1 / n, adjust=False, min_periods=n).mean()
+
+    atr_w = smooth(tr)
+    pdi = 100 * smooth(plus_dm) / atr_w.where(atr_w > 0)
+    mdi = 100 * smooth(minus_dm) / atr_w.where(atr_w > 0)
+    dx = 100 * (pdi - mdi).abs() / (pdi + mdi).where((pdi + mdi) > 0)
+    return pd.DataFrame({"pdi": pdi, "mdi": mdi, "adx": dx.ewm(alpha=1 / n, adjust=False, min_periods=n).mean()})
+
+
+def rsi(close: pd.Series, n: int = 14) -> pd.Series:
+    """RSI de Wilder (medias exponenciales alpha = 1/n). Sin perdidas -> 100; sin ganancias -> 0. Trailing."""
+    d = close.diff()
+    gain = d.clip(lower=0).ewm(alpha=1 / n, adjust=False, min_periods=n).mean()
+    loss = (-d.clip(upper=0)).ewm(alpha=1 / n, adjust=False, min_periods=n).mean()
+    out = 100 - 100 / (1 + gain / loss.where(loss > 0))
+    return out.where(loss > 0, 100.0).where(gain.notna())
+
+
+def bb_width(close: pd.Series, n: int = 20, k: float = 2.0) -> pd.Series:
+    """Ancho relativo de Bollinger: (banda superior - inferior) / media = 2k * sd / SMA(n). Trailing."""
+    mid = close.rolling(n, min_periods=n).mean()
+    sd = close.rolling(n, min_periods=n).std()
+    return 2 * k * sd / mid

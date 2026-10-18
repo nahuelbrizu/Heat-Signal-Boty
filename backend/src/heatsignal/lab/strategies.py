@@ -960,3 +960,91 @@ CATALOG.update({
                "liquidacion del funding; riesgo ALTO, especulativa); sin paper academico"), funding_prepago),
 })
 LOTE3 = tuple(k for k in CATALOG if k not in LOTE1 and k not in LOTE2)
+
+
+# =====================================================================================================
+# Lote 4 (propuesta del usuario 2026-10-18): cruce de EMAs 9/21 con filtro EMA200 + volumen, stop/objetivo
+# por ATR y tamano por riesgo; y la misma con filtros antirruido (ADX/DMI, RSI, ancho de Bollinger).
+# =====================================================================================================
+
+
+def _risk_weight(close: pd.Series, stop_dist: pd.Series, risk: float, cap: float) -> pd.Series:
+    """Fraccion del capital del simbolo tal que tocar el stop cueste `risk` de ese capital:
+    Q = capital*risk/|entrada - stop| -> w = Q*precio/capital = risk*precio/|entrada - stop|. Tope `cap` (1 = sin
+    apalancamiento). El precio de entrada para el calculo es el close de la vela de la senal."""
+    return (risk * close / stop_dist.where(stop_dist > 0)).clip(upper=cap)
+
+
+def ema_cruce(data: dict[str, MarketData], p: dict[str, Any]) -> Signals:
+    """Velas `timeframe`, los `symbols`. Entrada al CIERRE de la vela en que EMA(fast) cruza a EMA(slow)
+    (cruce en esa vela: antes <=, ahora >), con close del lado de la EMA(macro) y volumen > SMA(vol_n) del
+    volumen. Con `filters`: ademas ADX(adx_n) >= adx_min y DI a favor (+DI > -DI long; -DI > +DI short), RSI(rsi_n)
+    en (50, rsi_hi) long / (rsi_lo, 50) short, y ancho de Bollinger(bb_n, 2) > su SMA(bb_n).
+    Stop a sl_atr*ATR(atr_n) del close de entrada, objetivo a rr*sl_atr*ATR. Sin otra salida que stop/objetivo
+    salvo el tope de seguridad `max_hold_hours`. Una posicion por simbolo a la vez (las senales con posicion
+    abierta se ignoran). Tamano por riesgo: `risk` del capital del simbolo hasta el stop, tope `max_weight`.
+    TP/SL evaluados en velas 1m (`exits_with_levels`: empate -> stop)."""
+    out: Signals = {}
+    tf = p["timeframe"]
+    for sym, md in data.items():
+        bars = resample_bars(md.klines, tf) if sym in p["symbols"] else pd.DataFrame()
+        if bars.empty:
+            out[sym] = _changes({})
+            continue
+        close, vol = bars["close"], bars["volume"]
+        ema = {k: close.ewm(span=p[k], adjust=False, min_periods=p[k]).mean() for k in ("ema_fast", "ema_slow", "ema_macro")}
+        diff = ema["ema_fast"] - ema["ema_slow"]
+        up = (diff > 0) & (diff.shift(1) <= 0)
+        dn = (diff < 0) & (diff.shift(1) >= 0)
+        vol_ok = vol > vol.rolling(p["vol_n"], min_periods=p["vol_n"]).mean()
+        long_ok = up & (close > ema["ema_macro"]) & vol_ok
+        short_ok = dn & (close < ema["ema_macro"]) & vol_ok
+        if p["filters"]:
+            d = F.dmi(bars, p["adx_n"])
+            r = F.rsi(close, p["rsi_n"])
+            w = F.bb_width(close, p["bb_n"])
+            strong = (d["adx"] >= p["adx_min"]) & (w > w.rolling(p["bb_n"], min_periods=p["bb_n"]).mean())
+            long_ok &= strong & (d["pdi"] > d["mdi"]) & (r > 50) & (r < p["rsi_hi"])
+            short_ok &= strong & (d["mdi"] > d["pdi"]) & (r < 50) & (r > p["rsi_lo"])
+        atr = F.atr(bars, p["atr_n"])
+        entries = pd.Series(0.0, index=bars.index)
+        entries[long_ok.fillna(False)] = 1.0
+        entries[short_ok.fillna(False)] = -1.0
+        entries[atr.isna()] = 0.0
+        dist = p["sl_atr"] * atr
+        sl = close - entries * dist
+        tp = close + entries * p["rr"] * dist
+        ev = exits_with_levels(entries, md.klines, pd.Timedelta(hours=p["max_hold_hours"]), tp=tp, sl=sl)
+        size = _risk_weight(close, dist, p["risk"], p["max_weight"])
+        out[sym] = ev * size.reindex(ev.index).fillna(1.0).where(ev != 0, 1.0)
+    return out
+
+
+_EMA_BASE = {"symbols": list(SEVEN), "timeframe": "1h", "ema_fast": 9, "ema_slow": 21, "ema_macro": 200,
+             "vol_n": 20, "atr_n": 14, "sl_atr": 1.5, "rr": 2.0, "risk": 0.01, "max_weight": 1.0,
+             "max_hold_hours": 720}
+CATALOG.update({
+    "ema-cruce-v1": (Spec(
+        "ema-cruce-v1", "continuacion",
+        "Velas 1h o 4h (grilla), los 7. Long cuando EMA9 cruza arriba a EMA21 en la vela, con close > EMA200 y "
+        "volumen > media de 20; short al reves. Stop a 1,5 ATR(14) del close de entrada, objetivo a 3 ATR "
+        "(R:R 1:2), sin otra salida (tope de seguridad 30 dias). Tamano: 1% del capital del simbolo en riesgo "
+        "hasta el stop, sin apalancamiento.",
+        "1h|4h", "both", "hasta stop/objetivo",
+        {**_EMA_BASE, "filters": False},
+        grid={"timeframe": ["1h", "4h"]},
+        source="propuesta del usuario (lote 4, 2026-10-18): cruce EMA 9/21 + EMA200 + volumen, SL/TP por ATR, "
+               "tamano por riesgo; seguimiento de tendencia clasico, sin paper academico"), ema_cruce),
+    "ema-cruce-filtrado-v1": (Spec(
+        "ema-cruce-filtrado-v1", "continuacion",
+        "Igual que ema-cruce-v1 y ademas, en la vela del cruce: ADX(14) >= 25 con +DI > -DI (long) o -DI > +DI "
+        "(short), RSI(14) entre 50 y 70 (long) o entre 30 y 50 (short), y ancho de Bollinger(20, 2) mayor que "
+        "su media de 20 velas.",
+        "1h|4h", "both", "hasta stop/objetivo",
+        {**_EMA_BASE, "filters": True, "adx_n": 14, "adx_min": 25.0, "rsi_n": 14, "rsi_lo": 30.0, "rsi_hi": 70.0,
+         "bb_n": 20},
+        grid={"timeframe": ["1h", "4h"]},
+        source="propuesta del usuario (lote 4, 2026-10-18): filtros antirruido sobre ema-cruce-v1 (Wilder 1978 "
+               "ADX/DMI y RSI; Bollinger); sin paper academico"), ema_cruce),
+})
+LOTE4 = tuple(k for k in CATALOG if k not in LOTE1 and k not in LOTE2 and k not in LOTE3)
