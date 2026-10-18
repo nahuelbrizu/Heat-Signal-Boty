@@ -303,6 +303,13 @@
   holdout. Primera corrida: `tsmom-diario-v1` meseta 100 %, Sharpe del desarrollo 0,98 → 0,60 con costos ×3.
   (El refactor de `lab/run.py` que usan los diagnósticos quedó dentro del commit 3aabefc.)
 
+- **Diagnósticos de las 21 estrategias (2026-10-19).** Robustez (Sharpe del desarrollo, ×3 costos, meseta):
+  `donchian-ensemble-v1` 1,40 → 1,21, meseta 100 % (también con ×3), caída máx. 8 %, PBO 0,15: **la más robusta**.
+  `tsmom-diario-v1` 0,98 → 0,60, meseta 100 % (95 % con ×3), PBO 0,19. `ema-cruce-v1` 0,99 → 0,26, meseta 95 %
+  (74 % con ×3), caída máx. 65 %, PBO 0,00: sensible a costos. `ema-cruce-filtrado-v1` 0,51 → 0,32, PBO 0,10.
+  `lunes-asia-v1` 0,40 → −0,14, meseta 50 %: frágil. `reversion-flujo-extremo-15m-v1` PBO 0,56: sobreajuste. El
+  resto tiene Sharpe ≤ 0 (meseta n/a). Diagnóstico, no selección: no cambia parámetros ni K.
+
 ## Abiertas
 - ~~Plan de CoinGlass a contratar.~~ **Ya no aplica al core** — la fuente primaria pasó a WS nativos.
   Solo se retomaría si se implementa la fuente BYOK opcional (y ahí el plan lo elige el usuario).
