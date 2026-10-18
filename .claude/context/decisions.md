@@ -314,6 +314,17 @@
   `estrategias-lote5.md`: `cartera-tendencia-v1` 3d7b32a429f494fc; `max-ruptura-10d-v1` 39cb9dee6d3e469a;
   `vwap-reversion-v1` 724e2b1e207828df. K del programa = 51.
 
+- **Resultados del lote 5 (2026-10-19): dos pasan los criterios propios del lab.** OOS 2021-03-13 → 2026-07-15:
+  | estrategia | Sharpe (IC 95%) | retorno | DD | trades | DSR propio | break-even | p azar | veredicto lab |
+  |---|---|---|---|---|---|---|---|---|
+  | cartera-tendencia-v1 | 0,81 (−0,16 a 1,81) | +26,8% | 7% | 3.908 | 0,97 | 14,3 bps | 0,01 | **pasa** |
+  | max-ruptura-10d-v1 | 0,97 (−0,03 a 1,84) | +113,9% | 21% | 1.209 | 0,99 | 39,8 bps | 0,01 | **pasa** |
+  | vwap-reversion-v1 | −6,26 | −1189% (suma) | — | 53.271 | 0,00 | <0 | 0,01 | no pasa: costos |
+  Canasta 0,63. Ambas le ganan a canasta, B&H medio y azar. **Pero contra el listón del programa (K = 51) el DSR
+  sigue ≈ 0** y los IC del Sharpe tocan 0: pasan a paper / holdout, no a plata real. La cartera combina 3 reglas
+  ya evaluadas (comparte muestra con ellas). max-ruptura es solo long: en un período alcista parte del resultado es
+  beta; le gana al B&H medio igual. vwap confirma que alta rotación en 15m muere por costos.
+
 ## Abiertas
 - ~~Plan de CoinGlass a contratar.~~ **Ya no aplica al core** — la fuente primaria pasó a WS nativos.
   Solo se retomaría si se implementa la fuente BYOK opcional (y ahí el plan lo elige el usuario).
