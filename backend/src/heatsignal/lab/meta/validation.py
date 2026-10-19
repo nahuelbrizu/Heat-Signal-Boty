@@ -52,6 +52,13 @@ k-fold interno (3 bloques, mismo embargo) sobre el train del fold: el test del f
 - DSR con el K del meta-modelo (``stats.dsr_from_returns`` con los Sharpe filtrados de todas las configuraciones
   registradas) y PBO por CSCV (``diagnostics.pbo_cscv``) sobre la matriz dias x configuraciones de retornos
   filtrados (conjunto), alineada por fecha con 0 donde falta.
+
+5. Evaluacion 3c (decisions.md, "Meta-modelo 3c pre-registrada")
+-----------------------------------------------------------------
+- ``oos_predictions`` agrega ``b_fold`` = tasa base PONDERADA de la etiqueta en el train purgado de cada fold
+  (``fold_base_rates``). ``economic_metrics(..., base_col="b_fold")``: filtrada = p > b, tamano =
+  clip((p - b) / b, 0, 1). La columna de PnL es elegible (``pnl_col="pnl_regla"`` con ``exit_col="t_salida_regla"``:
+  salida real de la regla; por defecto ``pnl_neto``/``t_salida``, la de barreras). Lo de la 3b no cambia.
 """
 from __future__ import annotations
 
@@ -176,9 +183,12 @@ def oos_predictions(events: pd.DataFrame, features: Sequence[str], make_model: C
     w = (ev[weight].to_numpy(dtype=float) if weight and weight in ev
          else uniqueness_weights(ev["t_decision"], ev["t_salida"]))
     p = np.full(len(ev), np.nan)
+    b = np.full(len(ev), np.nan)
     fold_id = np.full(len(ev), -1)
     method = np.empty(len(ev), dtype=object)
-    for i, f in enumerate(purged_kfold(ev["t_decision"], ev["t_salida"], k, embargo)):
+    folds = purged_kfold(ev["t_decision"], ev["t_salida"], k, embargo)
+    for i, (f, bf) in enumerate(zip(folds, fold_base_rates(y, w, folds))):
+        b[f.test] = bf
         m = FoldCalibrated(make_model(), embargo=embargo)
         tr = f.train
         m.fit(X[tr], y[tr], sample_weight=w[tr], t0=ev["t_decision"].iloc[tr], t1=ev["t_salida"].iloc[tr])
@@ -186,8 +196,14 @@ def oos_predictions(events: pd.DataFrame, features: Sequence[str], make_model: C
         fold_id[f.test] = i
         method[f.test] = m.method_
     out = ev.copy()
-    out["p"], out["fold"], out["calibracion"], out["w"] = p, fold_id, method, w
+    out["p"], out["fold"], out["calibracion"], out["w"], out["b_fold"] = p, fold_id, method, w, b
     return out
+
+
+def fold_base_rates(y: Any, w: Any, folds: Sequence[Fold]) -> list[float]:
+    """3c: tasa base ponderada de la etiqueta en el TRAIN (purgado) de cada fold = umbral de ese fold."""
+    y, w = np.asarray(y, float), np.asarray(w, float)
+    return [float(np.average(y[f.train], weights=w[f.train])) for f in folds]
 
 
 # ---- 3. metricas ---------------------------------------------------------------------------------------
@@ -227,25 +243,37 @@ def size_by_probability(p: Any) -> np.ndarray:
     return np.clip(2.0 * (np.asarray(p, float) - 0.5), 0.0, 1.0)
 
 
+def size_filtered_base(p: Any, b: Any) -> np.ndarray:
+    """3c: tomar si p > b (b = tasa base del train del fold)."""
+    return (np.asarray(p, float) > np.asarray(b, float)).astype(float)
+
+
+def size_by_edge(p: Any, b: Any) -> np.ndarray:
+    """3c: tamano = clip((p - b) / b, 0, 1)."""
+    p, b = np.asarray(p, float), np.asarray(b, float)
+    return np.clip((p - b) / b, 0.0, 1.0)
+
+
 def _escala(ev: pd.DataFrame) -> np.ndarray:
     tam = ev["tamaño"].abs().fillna(1.0).to_numpy(float) if "tamaño" in ev else np.ones(len(ev))
     n_sym = ev.groupby("primaria")["symbol"].transform("nunique").to_numpy(float) if "symbol" in ev else 1.0
     return tam / n_sym
 
 
-def daily_returns(ev: pd.DataFrame, s: Any, calendar: pd.DatetimeIndex | None = None) -> pd.Series:
-    """Retorno diario (dia UTC de t_salida) de un conjunto de eventos de UNA primaria con tamanos s en [0, 1]."""
-    contrib = ev["pnl_neto"].to_numpy(float) * _escala(ev) * np.asarray(s, float)
-    day = pd.to_datetime(ev["t_salida"], utc=True).dt.floor("D")
+def daily_returns(ev: pd.DataFrame, s: Any, calendar: pd.DatetimeIndex | None = None, pnl_col: str = "pnl_neto",
+                  exit_col: str = "t_salida") -> pd.Series:
+    """Retorno diario (dia UTC de ``exit_col``) de un conjunto de eventos de UNA primaria con tamanos s en [0, 1]."""
+    contrib = ev[pnl_col].to_numpy(float) * _escala(ev) * np.asarray(s, float)
+    day = pd.to_datetime(ev[exit_col], utc=True).dt.floor("D")
     r = pd.Series(contrib, index=day.to_numpy()).groupby(level=0).sum()
     if calendar is None:
-        calendar = _calendar(ev)
+        calendar = _calendar(ev, exit_col)
     return r.reindex(calendar, fill_value=0.0)
 
 
-def _calendar(ev: pd.DataFrame) -> pd.DatetimeIndex:
+def _calendar(ev: pd.DataFrame, exit_col: str = "t_salida") -> pd.DatetimeIndex:
     lo = pd.to_datetime(ev["t_decision"], utc=True).min().floor("D")
-    hi = pd.to_datetime(ev["t_salida"], utc=True).max().floor("D")
+    hi = pd.to_datetime(ev[exit_col], utc=True).max().floor("D")
     return pd.date_range(lo, hi, freq="1D")
 
 
@@ -268,16 +296,26 @@ def sharpe_improvement_pvalue(r_new: pd.Series, r_base: pd.Series, n_boot: int =
 
 
 def economic_metrics(oos: pd.DataFrame, p_col: str = "p", threshold: float = THRESHOLD,
-                     n_boot: int = 2000) -> dict[str, Any]:
-    """Sin filtrar / filtrada (p >= 0,5) / tamano por probabilidad, por primaria y en conjunto."""
+                     n_boot: int = 2000, base_col: str | None = None, pnl_col: str = "pnl_neto",
+                     exit_col: str = "t_salida") -> dict[str, Any]:
+    """Sin filtrar / filtrada / tamano por probabilidad, por primaria y en conjunto.
+
+    3b (por defecto): filtrada = p >= ``threshold`` (0,5) y tamano = clip(2 (p - 0,5), 0, 1), con ``pnl_neto``.
+    3c (``base_col`` = columna con la tasa base del train del fold, p.ej. ``b_fold``): filtrada = p > b y tamano =
+    clip((p - b) / b, 0, 1); el PnL sale de ``pnl_col`` imputado al dia de ``exit_col``.
+    """
     out: dict[str, Any] = {}
     daily: dict[str, dict[str, pd.Series]] = {}
     for prim, ev in oos.groupby("primaria", sort=True):
-        cal = _calendar(ev)
+        cal = _calendar(ev, exit_col)
         p = ev[p_col].to_numpy(float)
-        sizes = {"sin_filtrar": np.ones(len(ev)), "filtrada": size_filtered(p, threshold),
-                 "tamano_prob": size_by_probability(p)}
-        rs = {k: daily_returns(ev, s, cal) for k, s in sizes.items()}
+        if base_col is None:
+            filt, tam = size_filtered(p, threshold), size_by_probability(p)
+        else:
+            b = ev[base_col].to_numpy(float)
+            filt, tam = size_filtered_base(p, b), size_by_edge(p, b)
+        sizes = {"sin_filtrar": np.ones(len(ev)), "filtrada": filt, "tamano_prob": tam}
+        rs = {k: daily_returns(ev, s, cal, pnl_col, exit_col) for k, s in sizes.items()}
         daily[str(prim)] = rs
         res = {k: _summary(rs[k], sizes[k]) for k in sizes}
         res["p_mejora_filtrada"] = sharpe_improvement_pvalue(rs["filtrada"], rs["sin_filtrar"], n_boot)

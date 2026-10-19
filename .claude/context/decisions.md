@@ -545,6 +545,17 @@
   L1–L4 no se re-corren. Criterio para seguir a la etapa 4: alguna configuración con AUC OOS > 0,55, Brier mejor que la
   base y filtrada > sin filtrar con p ≤ 0,05 (bootstrap pareado) en el conjunto, y PBO < 0,5 sobre las 8.
 
+- **Meta-modelo 3c (LightGBM) — resultado (2026-10-19): no cumple el criterio pre-registrado. Conclusión: con los
+  datos y features actuales NO hay señal filtrable.** G1–G4 corridas una vez (`lgbm_20261019T142825Z.json`; 8 de 24
+  configuraciones usadas). AUC 0,524–0,530 (criterio > 0,55: falla). Brier apenas mejor que la base (0,2405–0,2409 vs
+  0,2414). Conjunto con PnL real de la regla, Sharpe sin filtrar 1,44 → filtrada G1 0,93 (p 0,93), G2 1,47 (p 0,40),
+  G3 1,27 (p 0,73), G4 1,46 (p 0,49): ninguna mejora significativa (criterio p ≤ 0,05: falla). PBO 0,40 (solo G1–G4:
+  las predicciones OOS de L1–L4 no se guardaron; no se re-entrenaron). DSR con K = 8 mezcla evaluaciones (L1–L4 con la
+  vieja). `pnl_regla` congela el nocional de apertura (no incluye rebalanceos de tsmom ni re-ajustes por vol target de
+  Donchian; documentado). **Decisión:** el meta-modelo NO pasa a la etapa 4. No se gastan las 16 configuraciones
+  restantes "para probar". Se reintenta solo con datos nuevos (≥ 3 meses hacia adelante) o features nuevas
+  pre-registradas con una hipótesis concreta. Las estrategias primarias siguen en paper.
+
 ## Abiertas
 - ~~Plan de CoinGlass a contratar.~~ **Ya no aplica al core** — la fuente primaria pasó a WS nativos.
   Solo se retomaría si se implementa la fuente BYOK opcional (y ahí el plan lo elige el usuario).

@@ -171,3 +171,59 @@ def test_openings_match_rule_signal_changes(synth, primaria) -> None:
         assert ((df["t_limite"] - df["t_decision"]) <= pd.Timedelta(days=30)).all()
     assert df["precio_entrada"].tolist() == [data[s].klines["open"][data[s].klines.index >= t].iloc[0]
                                             for s, t in zip(df["symbol"], df["t_decision"])]
+
+
+def test_rule_exit_pnl_hand_signal_matches_simulator_total() -> None:
+    """Senal a mano (apertura, giro, cierre, re-apertura y cierre): la suma de pnl_regla * |tamano| = PnL total
+    de simulate() (capital 1, un simbolo), con costos de 7 bps por lado y funding."""
+    md = _md(6, 7)
+    h = lambda x: T0 + pd.Timedelta(hours=x, minutes=7)  # noqa: E731
+    s = pd.Series([0.6, -0.4, 0.0, 1.0, 0.0], index=pd.DatetimeIndex([h(3), h(30), h(50), h(70), h(120)]))
+    evs = D.signal_events(s)
+    a = D._Arrays(md)
+    tot = sum(abs(e["tamaño"]) * D.rule_exit_pnl(a, e["t_decision"], e["lado"], e["t_fin_regla"])["pnl_regla"]
+              for e in evs)
+    res = simulate({"X": md.klines}, {"X": s}, {"X": md.funding})
+    assert res.breakdown["funding"] != 0
+    assert tot == pytest.approx(res.total_pnl, rel=1e-9, abs=1e-12)
+
+
+def test_rule_exit_pnl_incomplete_uses_last_close() -> None:
+    k = _flat(600)
+    r = D.rule_exit_pnl(_arrays(k), T0 + pd.Timedelta(minutes=5), 1, pd.NaT)
+    assert not r["ventana_completa_regla"] and r["pnl_regla"] == pytest.approx(-2 * D.COST_PER_SIDE)
+    r = D.rule_exit_pnl(_arrays(k), T0 + pd.Timedelta(minutes=5), 1, T0 + pd.Timedelta(minutes=30))
+    assert r["ventana_completa_regla"] and r["t_salida_regla"] == T0 + pd.Timedelta(minutes=30)
+
+
+def _frozen(s: pd.Series) -> pd.Series:
+    """Misma senal con el tamano de la apertura fijo durante todo el tramo (sin re-ajustes del mismo signo)."""
+    s = s.sort_index().fillna(0.0)
+    s = s[~s.index.duplicated(keep="last")]
+    prev = s.shift(1, fill_value=0.0)
+    opening = (s != 0) & ((prev == 0) | (np.sign(s) != np.sign(prev)))
+    return s.where(opening | (s == 0)).ffill().fillna(0.0)
+
+
+@pytest.mark.parametrize("primaria", ["donchian-ensemble-v1", "max-ruptura-10d-v1", "ema-cruce-v1"])
+def test_pnl_regla_matches_simulator_trades(synth, primaria) -> None:
+    """Regla real sobre datos sinteticos: para los eventos cerrados por la regla, sum(pnl_regla * |tamano|) = suma
+    de ret_net de los trades de simulate() con la misma entrada. pnl_regla mantiene el nocional de la apertura;
+    donchian-ensemble re-ajusta el tamano dentro del tramo (vol target) y simulate() opera esos re-ajustes, asi que
+    se compara contra la senal con el tamano de apertura congelado (la diferencia es solo el re-ajuste: exposicion
+    y costos sobre el delta). tsmom queda afuera: sus rebalanceos son eventos propios (ver dataset.py)."""
+    data, hs = synth
+    spec, rule = CATALOG[primaria]
+    dev = D.development(data, hs[primaria])
+    sig = {sym: _frozen(x) for sym, x in rule(dev, dict(spec.params)).items()}
+    df = D.build_primaria(primaria, data, hs[primaria], 2.0, dev_start=T0)
+    done = df[df["ventana_completa_regla"]]
+    assert len(done)
+    for sym in dev:
+        res = simulate({sym: dev[sym].klines}, {sym: sig[sym]}, {sym: dev[sym].funding})
+        tr = res.trades.set_index("entry_time")
+        ev = done[done["symbol"] == sym]
+        assert set(ev["t_entrada"]) <= set(tr.index)
+        assert (ev["t_salida_regla"].to_numpy() == tr.loc[ev["t_entrada"], "exit_time"].to_numpy()).all()
+        got = float((ev["pnl_regla"] * ev["tamaño"].abs()).sum())
+        assert got == pytest.approx(float(tr.loc[ev["t_entrada"], "ret_net"].sum()), rel=1e-9, abs=1e-12)

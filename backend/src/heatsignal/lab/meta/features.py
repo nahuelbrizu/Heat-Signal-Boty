@@ -140,7 +140,8 @@ EVENTS_FILE = f"{D.VERSION}.parquet"
 # columnas del evento que son RESULTADO (etiqueta o posteriores a la decision): nunca features
 OUTCOME_COLS = frozenset({"t_entrada", "precio_entrada", "t_fin_regla", "nivel_sl", "nivel_tp", "t_limite", "barrera",
                           "t_decision_salida", "t_salida", "precio_salida", "pnl_bruto", "costos", "funding", "pnl_neto",
-                          "etiqueta", "mae", "mfe", "ventana_completa", "peso_unicidad"})
+                          "etiqueta", "mae", "mfe", "ventana_completa", "peso_unicidad",
+                          "pnl_regla", "t_salida_regla", "ventana_completa_regla"})
 
 H1 = pd.Timedelta(hours=1)
 D1 = pd.Timedelta(days=1)

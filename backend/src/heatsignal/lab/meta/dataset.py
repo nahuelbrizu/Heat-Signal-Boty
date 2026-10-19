@@ -34,6 +34,15 @@ aca y queda documentado:
    `lab/sim.py` (liquidaciones en (entrada, salida], posicion vigente justo antes, precio = close de la ultima
    vela con apertura < liquidacion). `etiqueta` = 1 si `pnl_neto` > 0. MAE/MFE como en `sim._build_trades`.
    `ventana_completa` = False si el desarrollo termina antes de la salida (se valua al ultimo close).
+   `pnl_regla` (3c): el mismo PnL neto (mismo codigo, `_net_pnl`) con la salida REAL de la regla: decidida en
+   `t_fin_regla` y ejecutada al open de la vela 1m siguiente (`t_salida_regla`); si la regla no cerro dentro del
+   desarrollo, ultimo close (`ventana_completa_regla` = False), el mismo criterio que la ventana incompleta.
+   Es por unidad de nocional del evento, con el nocional de la apertura fijo hasta la salida. Diferencias con
+   `simulate()`: en tsmom cada rebalanceo es su propio evento hasta `t_fin_regla` (la suma de eventos no es el PnL
+   del simulador, que re-ajusta un unico tramo y paga costos sobre el delta); donchian-ensemble tambien re-ajusta
+   el tamano dentro del tramo (vol target) y esos re-ajustes no estan en `pnl_regla`. Con el tamano de apertura
+   congelado (y en ema-cruce / max-ruptura, que no re-ajustan) sum(pnl_regla * |tamano|) = PnL de los trades
+   cerrados de `simulate()` por unidad de capital asignado (tests).
 5. **Pesos por unicidad** (Lopez de Prado, AFML cap. 4): vida del evento = [t_decision, t_salida]; concurrencia
    = eventos vivos de la misma primaria (todas las monedas) en cada instante; peso = promedio temporal de
    1/concurrencia sobre la vida del evento (equivale a la media por vela 1m).
@@ -82,7 +91,8 @@ COST_PER_SIDE = (_COSTS.fee_bps + _COSTS.default_slippage_bps) / 1e4  # 7 bps
 COLUMNS = ["primaria", "symbol", "tipo", "t_decision", "lado", "tamaño", "tamaño_previo", "t_entrada",
            "precio_entrada", "t_fin_regla", "sigma_diaria", "nivel_sl", "nivel_tp", "t_limite", "barrera",
            "t_decision_salida", "t_salida", "precio_salida", "pnl_bruto", "costos", "funding", "pnl_neto",
-           "etiqueta", "mae", "mfe", "ventana_completa", "peso_unicidad"]
+           "etiqueta", "mae", "mfe", "ventana_completa", "peso_unicidad", "pnl_regla", "t_salida_regla",
+           "ventana_completa_regla"]
 
 
 def load_prereg(path: Path = PREREG_PATH) -> tuple[dict[str, Any], str]:
@@ -157,6 +167,47 @@ def _ns(t: pd.Timestamp) -> int:
     return int(pd.Timestamp(t).as_unit("ns").value)
 
 
+def _exit_at(a: _Arrays, t_exit_dec: int) -> tuple[float, int, bool]:
+    """Salida decidida en `t_exit_dec` (ns): open de la primera vela con apertura >= ese instante. Si el desarrollo
+    termina antes, se valua al ultimo close (ventana incompleta). Devuelve (precio, t_salida ns, completa)."""
+    ix = int(np.searchsorted(a.t, t_exit_dec, side="left"))
+    if ix < len(a.t):
+        return float(a.o[ix]), int(a.t[ix]), True
+    return float(a.c[-1]), int(a.t[-1]) + MIN.value, False
+
+
+def _net_pnl(a: _Arrays, i0: int, lado: int, exit_px: float, t_exit: int,
+             cost: float = COST_PER_SIDE) -> tuple[float, float, float, float]:
+    """(bruto, costos, funding, neto) por unidad de nocional de entrada (entrada = open de la vela `i0`)."""
+    entry = a.o[i0]
+    gross = lado * (exit_px / entry - 1.0)
+    costs = cost * (1.0 + exit_px / entry)
+    f0 = int(np.searchsorted(a.ft, int(a.t[i0]), side="right"))
+    f1 = int(np.searchsorted(a.ft, t_exit, side="right"))
+    funding = 0.0
+    if f1 > f0:
+        k = np.searchsorted(a.t, a.ft[f0:f1], side="left") - 1
+        funding = float(-lado * np.sum(a.fr[f0:f1] * a.c[np.clip(k, 0, None)]) / entry)
+    return float(gross), float(costs), funding, float(gross - costs + funding)
+
+
+def rule_exit_pnl(a: _Arrays, t_decision: pd.Timestamp, lado: int, t_fin_regla: pd.Timestamp,
+                  cost: float = COST_PER_SIDE) -> dict[str, Any] | None:
+    """PnL neto con la salida REAL de la regla: decidida en `t_fin_regla`, ejecutada al open de la primera vela 1m
+    con apertura >= ese instante. Mismo calculo que la etiqueta (`_net_pnl`); solo cambia el instante de salida.
+    `t_fin_regla` NaT (la regla no cerro dentro del desarrollo) o sin vela posterior -> ultimo close (como la
+    ventana incompleta de `triple_barrier`)."""
+    i0 = int(np.searchsorted(a.t, _ns(t_decision), side="left"))
+    if i0 >= len(a.t):
+        return None
+    if pd.isna(t_fin_regla):
+        exit_px, t_exit, complete = float(a.c[-1]), int(a.t[-1]) + MIN.value, False
+    else:
+        exit_px, t_exit, complete = _exit_at(a, _ns(t_fin_regla))
+    pnl = _net_pnl(a, i0, lado, exit_px, t_exit, cost)[3]
+    return {"pnl_regla": pnl, "t_salida_regla": pd.Timestamp(t_exit, tz="UTC"), "ventana_completa_regla": complete}
+
+
 def triple_barrier(a: _Arrays, t_decision: pd.Timestamp, lado: int, sl: float | None, tp: float | None,
                    t_limite: pd.Timestamp, cost: float = COST_PER_SIDE) -> dict[str, Any] | None:
     """Etiqueta de un evento. Barreras desde la vela que abre en (o despues de) `t_decision`; empate -> stop;
@@ -188,12 +239,8 @@ def triple_barrier(a: _Arrays, t_decision: pd.Timestamp, lado: int, sl: float | 
     else:
         t_exit_dec = _ns(t_limite)
         last = iend - 1
-    ix = int(np.searchsorted(a.t, t_exit_dec, side="left"))
-    complete = ix < n
-    if complete:
-        exit_px, t_exit = a.o[ix], int(a.t[ix])
-    else:
-        exit_px, t_exit = a.c[-1], int(a.t[-1]) + MIN.value
+    exit_px, t_exit, complete = _exit_at(a, t_exit_dec)
+    if not complete:
         last = n - 1 if j is None else last
     if last >= i0:
         mx, mn = a.h[i0:last + 1].max(), a.l[i0:last + 1].min()
@@ -201,15 +248,7 @@ def triple_barrier(a: _Arrays, t_decision: pd.Timestamp, lado: int, sl: float | 
         mx = mn = entry
     mfe = mx / entry - 1.0 if lado > 0 else 1.0 - mn / entry
     mae = mn / entry - 1.0 if lado > 0 else 1.0 - mx / entry
-    gross = lado * (exit_px / entry - 1.0)
-    costs = cost * (1.0 + exit_px / entry)
-    f0 = int(np.searchsorted(a.ft, int(a.t[i0]), side="right"))
-    f1 = int(np.searchsorted(a.ft, t_exit, side="right"))
-    funding = 0.0
-    if f1 > f0:
-        k = np.searchsorted(a.t, a.ft[f0:f1], side="left") - 1
-        funding = float(-lado * np.sum(a.fr[f0:f1] * a.c[np.clip(k, 0, None)]) / entry)
-    pnl = gross - costs + funding
+    gross, costs, funding, pnl = _net_pnl(a, i0, lado, exit_px, t_exit, cost)
     return {"t_entrada": pd.Timestamp(int(a.t[i0]), tz="UTC"), "precio_entrada": float(entry), "barrera": barrera,
             "t_decision_salida": pd.Timestamp(t_exit_dec, tz="UTC"), "t_salida": pd.Timestamp(t_exit, tz="UTC"),
             "precio_salida": float(exit_px), "pnl_bruto": float(gross), "costos": float(costs),
@@ -308,7 +347,8 @@ def build_primaria(primaria: str, data: dict[str, MarketData], holdout_start: pd
                 continue
             rows.append({"primaria": primaria, "symbol": sym, **e, "sigma_diaria": float(sd),
                          "nivel_sl": np.nan if sl is None else float(sl),
-                         "nivel_tp": np.nan if tp is None else float(tp), "t_limite": t_lim, **lab})
+                         "nivel_tp": np.nan if tp is None else float(tp), "t_limite": t_lim, **lab,
+                         **rule_exit_pnl(arr, t, e["lado"], e["t_fin_regla"])})
     df = pd.DataFrame(rows)
     if df.empty:
         return pd.DataFrame(columns=COLUMNS)
@@ -328,6 +368,8 @@ def summarize(df: pd.DataFrame, prereg_hash: str, extra: dict[str, Any] | None =
             "ventana_incompleta": int((~g["ventana_completa"]).sum()),
             "t_decision_min": str(g["t_decision"].min()), "t_decision_max": str(g["t_decision"].max()),
             "pnl_neto_medio": round(float(g["pnl_neto"].mean()), 6),
+            "pnl_regla_medio": round(float(g["pnl_regla"].mean()), 6),
+            "regla_ventana_incompleta": int((~g["ventana_completa_regla"]).sum()),
             "peso_unicidad_medio": round(float(g["peso_unicidad"].mean()), 4),
             "holdout_start": str(HOLDOUT_START.get(p)),
         }

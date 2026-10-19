@@ -177,6 +177,50 @@ def test_daily_returns_booked_on_exit_day() -> None:
     assert v.size_filtered([0.49, 0.5]).tolist() == [0.0, 1.0]
 
 
+# ---- evaluacion 3c ---------------------------------------------------------------------------------------
+
+
+def test_fold_base_rate_hand_case() -> None:
+    y = np.array([1, 0, 1, 1, 0, 0])
+    w = np.array([1.0, 3.0, 2.0, 0.5, 0.5, 1.0])
+    ts = pd.Timestamp("2024-01-01", tz="UTC")
+    folds = [v.Fold(np.array([0, 1, 2]), np.array([3, 4, 5]), ts, ts),
+             v.Fold(np.array([2, 3, 4, 5]), np.array([0, 1]), ts, ts)]
+    # fold 0: (1*1 + 0*3 + 1*2) / 6 = 0.5 ; fold 1: (1*2 + 1*0.5) / 4 = 0.625
+    assert v.fold_base_rates(y, w, folds) == pytest.approx([0.5, 0.625])
+
+
+def test_oos_b_fold_is_weighted_train_rate() -> None:
+    ev = synth(300, signal=0.5, seed=3)
+    oos = v.oos_predictions(ev, ["x"], logit)
+    folds = v.purged_kfold(ev["t_decision"], ev["t_salida"])
+    y, w = ev["etiqueta"].to_numpy(float), ev["peso_unicidad"].to_numpy(float)
+    for i, f in enumerate(folds):
+        exp = np.average(y[f.train], weights=w[f.train])
+        assert oos.loc[oos["fold"] == i, "b_fold"].to_numpy() == pytest.approx(exp)
+
+
+def test_size_by_edge_zero_when_p_equals_base() -> None:
+    b = np.array([0.3, 0.45, 0.6])
+    assert v.size_by_edge(b, b).tolist() == [0.0, 0.0, 0.0]
+    assert v.size_filtered_base(b, b).tolist() == [0.0, 0.0, 0.0]  # tomar solo si p > b
+    assert v.size_by_edge([0.45, 0.6, 0.2], [0.3, 0.3, 0.3]).tolist() == pytest.approx([0.5, 1.0, 0.0])
+    ev = synth(200, seed=4)
+    ev["p"] = ev["b_fold"] = 0.4
+    ec = v.economic_metrics(ev, n_boot=20, base_col="b_fold")
+    assert ec["_conjunto"]["filtrada"]["n_operaciones"] == 0 and ec["_conjunto"]["tamano_prob"]["retorno"] == 0
+
+
+def test_economic_metrics_pnl_column_is_selectable() -> None:
+    ev = synth(200, seed=6)
+    ev["pnl_regla"], ev["t_salida_regla"] = 2 * ev["pnl_neto"], ev["t_salida"]
+    ev["p"], ev["b_fold"] = 0.9, 0.4
+    a = v.economic_metrics(ev, n_boot=20, base_col="b_fold")
+    r = v.economic_metrics(ev, n_boot=20, base_col="b_fold", pnl_col="pnl_regla", exit_col="t_salida_regla")
+    assert r["_conjunto"]["sin_filtrar"]["retorno"] == pytest.approx(2 * a["_conjunto"]["sin_filtrar"]["retorno"])
+    assert r["_conjunto"]["filtrada"]["retorno"] == pytest.approx(r["_conjunto"]["sin_filtrar"]["retorno"])
+
+
 # ---- registro y presupuesto -----------------------------------------------------------------------------
 
 

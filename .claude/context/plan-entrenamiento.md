@@ -1,5 +1,9 @@
 # Plan: entrenar a los bots (meta-labeling)
 
+> **Resultado 2026-10-19:** etapas 0–3 hechas. Logística (L1–L4) y LightGBM (G1–G4) sin señal filtrable (AUC ≤ 0,53,
+> sin mejora significativa). No pasa a la etapa 4. Ver `decisions.md`. Reintentar con datos nuevos o features nuevas
+> pre-registradas; quedan 16 de 24 configuraciones.
+
 > Estado: **PROPUESTA (2026-10-19)**, para aprobar por etapas. Base: `research/base-conocimiento-ta.md`
 > (López de Prado, *Advances in Financial ML*, caps. 3, 5, 7 y 12) y los resultados del laboratorio.
 
