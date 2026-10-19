@@ -93,6 +93,7 @@ from fastapi.responses import FileResponse, HTMLResponse
 from ..evaluation.pending_store import PendingHypothesisStore
 from ..evaluation.price_source import HttpGet, to_binance_symbol
 from ..evaluation.strategy_registry import StrategyRegistry
+from ..features.gaps import gap_classes
 from ..ingestion.health import HealthRegistry
 from ..pipeline.analysis import AnalysisLoop
 from ..storage.memory import MemoryWindowSink
@@ -426,7 +427,8 @@ def create_panel_app(ctx: PanelContext) -> FastAPI:
             raise HTTPException(status_code=503, detail="ciclo de analisis apagado: no hay features en vivo")
         now_ms = int(time.time() * 1000)
         fs = await ctx.analysis.build_features(now_ms)
-        return {"ts_ms": now_ms, "features": {s: f.model_dump(mode="json") for s, f in fs.items()}}
+        return {"ts_ms": now_ms, "features": {
+            s: {**f.model_dump(mode="json"), "data_gap_classes": gap_classes(f.data_gaps)} for s, f in fs.items()}}
 
     @app.get("/static/lightweight-charts.js")
     async def charts_js() -> FileResponse:

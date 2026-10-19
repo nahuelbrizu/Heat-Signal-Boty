@@ -97,7 +97,11 @@ export function htfPanel(ctx, symbol, { title = "Velas de 1h cerradas y tendenci
         stat("Setups (código)", setupsText(h.setups), int(h.day_hours_closed) + " velas cerradas hoy · última " + when(h.last_closed_open_ms))),
       levelsStats(h),
       el("p", { class: "small muted", style: { marginTop: "6px" } }, "Regla fija: alcista si el cambio desde la apertura ≥ +1,5 ATR(1h), el cierre está sobre la EMA10 diaria y la EMA20 de 1h sube; bajista al revés; si no, lateral. Fuentes de las 48 velas: " + src + ". Calculado " + ago(h.ts_ms) + "."));
-    clear(gapsBox, (h.data_gaps || []).length ? el("div", { class: "note warn" }, el("b", {}, "Huecos declarados: "), h.data_gaps.join("; ")) : null);
+    const gc = h.data_gap_classes || (h.data_gaps || []).map((g) => ({ text: g, cls: "real" }));
+    const real = gc.filter((g) => g.cls === "real").map((g) => g.text), notes = gc.filter((g) => g.cls !== "real");
+    clear(gapsBox, real.length ? el("div", { class: "note warn" }, el("b", {}, "Huecos reales: "), real.join("; ")) : null,
+      notes.length ? el("div", { class: "note small" }, el("b", {}, "Notas de cobertura (no son fallas): "),
+        ...notes.map((g) => el("span", {}, el("span", { class: "chip " + (g.cls === "respaldo" ? "info" : "") }, g.cls === "respaldo" ? "respaldo REST" : "estructural"), " ", g.text, " "))) : null);
   }
 
   async function reload(fit) {

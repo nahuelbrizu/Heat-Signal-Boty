@@ -34,7 +34,7 @@ _SYSTEM_PROMPT = (
     "observaron los analistas, que discutio el debate y que hipotesis pendientes se registraron "
     "(o por que no se registro ninguna, incluidos los rechazos). Las hipotesis son PENDIENTES de "
     "resolucion: no las presentes como senales confirmadas ni des win-rates. Menciona todos los "
-    "huecos de datos declarados. PROHIBIDO lenguaje predictivo o de certeza ('va a subir', "
+    "huecos de datos declarados; las notas de cobertura son conocidas: no las llames severas ni huecos. PROHIBIDO lenguaje predictivo o de certeza ('va a subir', "
     "'subira', 'garantiza', 'seguro que', 'will rise'). "
     "Si la corrida es de una sesion de mercado (Asia, Europa, EE.UU. o cierre del dia UTC) y hay diario del dia, el "
     "resumen es el analisis de ESA sesion: sumalo a lo que ya dijeron las sesiones previas de hoy (que se confirmo, "

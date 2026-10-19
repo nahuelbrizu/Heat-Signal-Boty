@@ -45,6 +45,7 @@ from typing import Any, Literal
 
 from ..evaluation.strategy_registry import StrategyHypothesis, StrategyStatus
 from ..features.builder import build_feature_set
+from ..features.gaps import classify_gap
 from ..features.sessions import (
     HOUR_MS,
     SessionDef,
@@ -219,6 +220,7 @@ class AnalysisLoop:
         session_source: Any = None,  # history.session_source.SessionDataSource
         journal: Any = None,  # pipeline.session_journal.SessionJournal
         macro: Any = None,  # macro.context.MacroContextProvider: bloque "Macro y eventos" (None = apagado)
+        oi_poller: Any = None,  # ingestion.binance_oi_poller.BinanceOiPoller: sus fallos van a data_gaps
     ) -> None:
         if mode not in ("interval", "sessions"):
             raise ValueError(f"mode debe ser 'interval' o 'sessions', no {mode!r}")
@@ -235,6 +237,7 @@ class AnalysisLoop:
         self._skip_during_warmup = skip_during_warmup
         self._clock_ms = clock_ms
         self._news = news
+        self.oi_poller = oi_poller
         self.htf = htf
         self.mode: AnalysisMode = mode
         self.sessions: list[SessionDef] = list(sessions or [])
@@ -286,6 +289,8 @@ class AnalysisLoop:
                 build_feature_set, sym, liqs, trades, tickers, now_ms, self._window_s
             )
             update: dict = {"data_gaps": [*fs.data_gaps, *self._memory.data_gaps(sym, self._window_s)]}
+            if self.oi_poller is not None:
+                update["data_gaps"] += self.oi_poller.data_gaps(sym, now_ms)
             if fs.quality is not None:
                 update["quality"] = fs.quality.model_copy(update={"warmup_have_s": self._memory.accumulated_s()})
             if self.htf is not None:
@@ -364,7 +369,7 @@ class AnalysisLoop:
         for fs in features.values():
             log.info("%s %s", run_id, _feature_summary(fs))
             for gap in fs.data_gaps:
-                log.info("%s %s gap: %s", run_id, fs.symbol, gap)
+                log.info("%s %s gap[%s]: %s", run_id, fs.symbol, classify_gap(gap)[0], gap)
 
         warming = [s for s, fs in features.items() if any("calentamiento" in g for g in fs.data_gaps)]
         if warming and self._skip_during_warmup:

@@ -89,6 +89,7 @@ async def test_htf_endpoint(tmp_path) -> None:
         assert len(d["candles_1h"]) == 48 and d["candles_1h"][-1]["source"] == "rest"
         assert d["daily_trend"] in ("alcista", "bajista", "lateral", "sin_datos")
         assert any("REST de Binance" in g for g in d["data_gaps"]) and d["htf_model_id"] == "htf-trend-v1"
+        assert any(c["cls"] == "respaldo" and "vinieron del REST" in c["text"] for c in d["data_gap_classes"])
         assert (await c.get("/api/htf/DOGEUSDT")).status_code == 404
 
 

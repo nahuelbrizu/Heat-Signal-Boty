@@ -18,7 +18,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 
 from ..schema.features import FeatureSet
-from ._common import HISTORICAL_LANGUAGE_RULE, format_data_gaps, htf_digest_line
+from ._common import HISTORICAL_LANGUAGE_RULE, format_data_gaps, htf_digest_line, new_real_gaps
 
 if TYPE_CHECKING:
     from .state import GraphState
@@ -85,7 +85,7 @@ def render_analyst_digest(state: "GraphState") -> str:
                 f"- Liquidaciones (conf {a.confidence:.2f}): {a.cluster_summary} "
                 f"[notional ${a.notional_usd_total:,.0f}, n={a.n_liquidations}, "
                 f"cluster mas cercano {a.nearest_cluster_distance_atr} ATR, "
-                f"huecos: {'; '.join(a.data_gaps) or 'ninguno'}]"
+                f"huecos: {new_real_gaps(a.data_gaps, fs)}]"
             )
         else:
             lines.append("- Liquidaciones: SIN SALIDA del analista")
@@ -93,14 +93,14 @@ def render_analyst_digest(state: "GraphState") -> str:
             lines.append(
                 f"- Order flow (conf {b.confidence:.2f}): {b.flow_summary} "
                 f"[agresor {b.dominant_aggressor}, imbalance {b.imbalance:+.3f}, CVD ${b.cvd_usd:+,.0f}, "
-                f"huecos: {'; '.join(b.data_gaps) or 'ninguno'}]"
+                f"huecos: {new_real_gaps(b.data_gaps, fs)}]"
             )
         else:
             lines.append("- Order flow: SIN SALIDA del analista")
         if (c := ctx.get(symbol)) is not None:
             lines.append(
                 f"- Contexto (conf {c.confidence:.2f}, regimen {c.regime}): {c.context_summary} "
-                f"| {c.regime_commentary} [huecos: {'; '.join(c.data_gaps) or 'ninguno'}]"
+                f"| {c.regime_commentary} [huecos: {new_real_gaps(c.data_gaps, fs)}]"
             )
         else:
             lines.append("- Contexto: SIN SALIDA del analista")
@@ -109,7 +109,7 @@ def render_analyst_digest(state: "GraphState") -> str:
                 f"- Noticias (conf {d.confidence:.2f}, tono {d.tone}, {d.n_items} items, {d.n_primary} de fuente "
                 f"primaria, negativa material primaria: {'SI' if d.material_primary_negative else 'no'}): "
                 f"{d.news_summary} [ids relevantes: {', '.join(d.relevant_item_ids) or 'ninguno'}; "
-                f"huecos: {'; '.join(d.data_gaps) or 'ninguno'}]"
+                f"huecos: {new_real_gaps(d.data_gaps, fs)}]"
             )
         else:
             lines.append("- Noticias: SIN SALIDA del analista")

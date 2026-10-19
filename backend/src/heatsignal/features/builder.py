@@ -52,6 +52,7 @@ from .volatility import (
 
 DEFAULT_BAR_S = 60
 DEFAULT_STALE_TICKER_S = 120
+DEFAULT_STALE_OI_REST_S = 900  # 3 polls de 5 min de Binance /fapi/v1/openInterest
 
 
 def _primary(counts: Counter[Exchange]) -> Exchange | None:
@@ -119,6 +120,7 @@ def build_feature_set(
     bar_s: int = DEFAULT_BAR_S,
     atr_period: int = DEFAULT_ATR_PERIOD,
     stale_ticker_s: int = DEFAULT_STALE_TICKER_S,
+    stale_oi_rest_s: int = DEFAULT_STALE_OI_REST_S,
     bin_atr_mult: float = DEFAULT_BIN_ATR_MULT,
     fallback_bin_pct: float = DEFAULT_FALLBACK_BIN_PCT,
     max_radius_bins: int = DEFAULT_MAX_RADIUS_BINS,
@@ -150,22 +152,35 @@ def build_feature_set(
     # Order flow
     of = build_order_flow(symbol, trades_all, now_ms, window_s)
 
+    # Trades y tickers primero: "conectado y sano" decide si 0 liquidaciones es normal o un hueco.
+    tr_sources = {t.source for t in select(trades_all, symbol, now_ms, window_s)}
+    last_ticker: dict[Exchange, int] = {}
+    for t in tickers_all:
+        if t.coverage != "rest_poll":  # el OI por REST no prueba que el WS del exchange este vivo
+            last_ticker[t.source] = t.ts_event_ms
+
+    def healthy(ex: Exchange) -> bool:
+        return ex in tr_sources and ex in last_ticker and now_ms - last_ticker[ex] <= stale_ticker_s * 1000
+
     # 3. data_gaps — liquidaciones
     liqs_win = select(liqs_all, symbol, now_ms, window_s)
     liq_sources = {e.source for e in liqs_win}
     if not liqs_win:
-        gaps.append("liquidaciones: 0 eventos en la ventana (sin datos o sin liquidaciones: no distinguible)")
+        if all(healthy(ex) for ex in expected_exchanges):
+            gaps.append("liquidaciones: 0 eventos en la ventana (exchanges conectados y sanos)")
+        else:
+            gaps.append("liquidaciones: 0 eventos en la ventana (sin datos o sin liquidaciones: no distinguible)")
     else:
         for ex in expected_exchanges:
             if ex not in liq_sources and ex not in NO_PUBLIC_LIQUIDATIONS:
-                gaps.append(f"liquidaciones: sin eventos de {ex.value} en la ventana")
+                gaps.append(f"liquidaciones: sin eventos de {ex.value} en la ventana"
+                            + (" (conectado y sano)" if healthy(ex) else ""))
     partial = [ex.value for ex in EXCHANGE_ORDER if ex in {e.source for e in liqs_win if e.coverage == Coverage.PARTIAL}]
     if partial:
         gaps.append(f"liquidaciones {'/'.join(partial)} PARTIAL (<=1/seg/simbolo): subrepresentan el notional real")
     gaps.extend(hm.data_gaps)
 
     # Trades
-    tr_sources = {t.source for t in select(trades_all, symbol, now_ms, window_s)}
     if of.n_trades == 0:
         gaps.append("order_flow: ventana sin trades (no-block); imbalance=0 no implica equilibrio")
     for ex in expected_exchanges:
@@ -173,9 +188,6 @@ def build_feature_set(
             gaps.append(f"trades: sin datos de {ex.value} en la ventana")
 
     # Tickers
-    last_ticker: dict[Exchange, int] = {}
-    for t in tickers_all:
-        last_ticker[t.source] = t.ts_event_ms
     for ex in expected_exchanges:
         if ex not in last_ticker:
             gaps.append(f"ticker: sin datos de {ex.value}")
@@ -187,14 +199,21 @@ def build_feature_set(
     for ex in expected_exchanges:
         if ex in last_ticker and ex not in context.funding_rate_by_exchange:
             gaps.append(f"funding: sin dato de {ex.value}")
-    oi_sources = {t.source for t in tickers_all if t.open_interest_usd is not None
-                  or (t.open_interest is not None and (t.mark_price is not None or t.last_price is not None))}
+    oi_last: dict[Exchange, TickerEvent] = {}
+    for t in tickers_all:
+        if t.open_interest_usd is not None or (
+                t.open_interest is not None and (t.mark_price is not None or t.last_price is not None)):
+            oi_last[t.source] = t
+    oi_sources = set(oi_last)
     if context.open_interest_usd is None:
         gaps.append("open_interest: ningun exchange lo informa")
     else:
         for ex in expected_exchanges:
             if ex in last_ticker and ex not in oi_sources:
                 gaps.append(f"open_interest: sin dato de {ex.value} (la suma es parcial)")
+    for ex, t in oi_last.items():
+        if t.coverage == "rest_poll" and now_ms - t.ts_event_ms > stale_oi_rest_s * 1000:
+            gaps.append(f"open_interest: REST de {ex.value} sin actualizar hace {(now_ms - t.ts_event_ms) // 60000} min")
     if context.oi_change_pct is None:
         gaps.append("oi_change_pct: no disponible (< 2 observaciones de OI en la ventana)")
     if context.regime == "unknown":
@@ -215,11 +234,13 @@ def build_feature_set(
                 ("partial" if ex.value in partial_set else "ok") if ex in liq_sources else "missing"),
             "ticker": ticker_state,
             "funding": "ok" if ex in context.funding_rate_by_exchange else "missing",
-            "open_interest": "ok" if ex in oi_sources else "missing",
+            "open_interest": ("rest" if oi_last[ex].coverage == "rest_poll" else "ok") if ex in oi_sources
+            else "missing",
         }
     quality = DataQuality(
         bars_closed=len(bars), bar_s=bar_s, atr_bars_needed=atr_period + 1,
         regime_bars_needed=regime_lookback_bars + 1, window_s=window_s, coverage=coverage,
+        oi_ts_ms={ex.value: t.ts_event_ms for ex, t in oi_last.items()},
     )
 
     return FeatureSet(

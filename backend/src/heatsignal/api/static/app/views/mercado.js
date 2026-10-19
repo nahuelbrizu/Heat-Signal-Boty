@@ -58,7 +58,7 @@ export async function mount(root, ctx) {
     clear(statsBox,
       stat("Mark medio", price(m.mark_mean), exs.length + " exchanges"),
       stat("Funding medio (tasa 8 h)", funding(m.funding_8h_mean), "media entre exchanges que lo informan"),
-      stat("Open interest", usd(m.oi_usd_total), m.oi_exchanges + " exchange" + (m.oi_exchanges === 1 ? "" : "s") + " · Binance no lo trae por WS"),
+      stat("Open interest", usd(m.oi_usd_total), m.oi_exchanges + " exchange" + (m.oi_exchanges === 1 ? "" : "s") + " · Binance: REST cada 5 min"),
       stat("Delta taker 5 min", el("span", { class: flowTot >= 0 ? "pos" : "neg" }, usd(flowTot)), "compra − venta"),
       stat("Liquidaciones 1 h", usd((l1.long_usd || 0) + (l1.short_usd || 0)), `longs ${usd(l1.long_usd)} · shorts ${usd(l1.short_usd)} · n=${int(l1.n)}`),
       stat("Liquidaciones 24 h", usd((l24.long_usd || 0) + (l24.short_usd || 0)), `longs ${usd(l24.long_usd)} · shorts ${usd(l24.short_usd)} · n=${int(l24.n)}`),
@@ -69,10 +69,13 @@ export async function mount(root, ctx) {
       { label: "OI", cls: "n" }, { label: "Antigüedad", cls: "n" }],
       exs.map(([ex, e]) => [el("b", {}, ex), price(e.mark), ...(hasLast ? [price(e.last)] : []),
         el("span", { title: "funding de hace " + dur(e.funding_age_s) }, funding(e.funding_8h), e.funding_age_s > 600 ? el("span", { class: "warn-t small" }, " (" + dur(e.funding_age_s) + ")") : null),
-        isNum(e.oi_usd) ? usd(e.oi_usd) : el("span", { class: "muted", title: "no publicado por WS" }, "n/d"),
+        isNum(e.oi_usd) ? el("span", { title: "OI de hace " + dur(e.oi_age_s) }, usd(e.oi_usd),
+          e.oi_source === "rest_poll" ? el("span", { class: "chip info small", title: "OI de hace " + dur(e.oi_age_s) }, "REST cada 5 min") : null,
+          e.oi_age_s > 900 ? el("span", { class: "bad-t small" }, " (" + dur(e.oi_age_s) + ")") : null)
+          : el("span", { class: "muted", title: ex === "binance" ? "falló el REST de OI" : "no publicado" }, "n/d"),
         el("span", { class: e.age_s > 30 ? "bad-t" : "" }, dur(e.age_s))]),
       { empty: "Sin tickers en la ventana.", label: "Mark, funding y OI por exchange" }),
-      el("p", { class: "small muted", style: { marginTop: "6px" } }, "Funding: tasa del período de 8 h (0,0100 % = 1 bp). OI de Binance: no viene por WebSocket."));
+      el("p", { class: "small muted", style: { marginTop: "6px" } }, "Funding: tasa del período de 8 h (0,0100 % = 1 bp). OI de Binance: REST cada 5 min (no viene por WebSocket)."));
 
     clear(flowBox, table([{ label: "Exchange" }, { label: "Compra", cls: "n" }, { label: "Venta", cls: "n" }, { label: "Delta", cls: "n" }, { label: "Trades", cls: "n" }],
       Object.entries(m.flow_5m || {}).map(([ex, f]) => [el("b", {}, ex), usd(f.buy_usd), usd(f.sell_usd),
@@ -140,7 +143,8 @@ export async function mount(root, ctx) {
 
 const COV_COLS = [["trades", "Trades"], ["liquidations", "Liqs"], ["ticker", "Ticker"], ["funding", "Funding"], ["open_interest", "OI"]];
 const COV = { ok: ["✓", "ok", "con datos"], partial: ["parcial", "warn", "llega muestreado: subestima el total"],
-  stale: ["viejo", "warn", "el último dato es viejo"], missing: ["—", "bad", "sin datos"], na: ["n/a", "", "el exchange no lo publica"] };
+  stale: ["viejo", "warn", "el último dato es viejo"], missing: ["—", "bad", "sin datos"], na: ["n/a", "", "el exchange no lo publica"],
+  rest: ["REST 5 min", "info", "REST cada 5 min (no viene por WebSocket)"] };
 
 function progress(label, have, need, unit, doneText) {
   const ratio = need > 0 ? Math.min(1, (have || 0) / need) : 0, done = (have || 0) >= need;
@@ -148,6 +152,21 @@ function progress(label, have, need, unit, doneText) {
     el("div", { class: "bar", role: "progressbar", "aria-label": label, "aria-valuemin": "0", "aria-valuemax": String(need), "aria-valuenow": String(Math.round(have || 0)) },
       el("span", { style: { left: 0, width: (ratio * 100).toFixed(1) + "%", background: done ? "var(--ok)" : "var(--warn)" } })),
     el("span", { class: "v " + (done ? "ok-t" : "muted") }, done ? doneText : int(have) + " / " + int(need) + " " + unit));
+}
+
+// Clase de cada aviso (features/gaps.py): solo "hueco real" es una falla; el LLM recibe lo demas como nota corta.
+const GAP_CLS = { real: ["hueco real", "bad", "falta un dato: exchange caído, velas sin respaldo o sin_datos"],
+  respaldo: ["respaldo REST", "info", "faltaba en la fuente propia y se reconstruyó completo por REST"],
+  estructural: ["estructural", "", "limitación conocida y permanente de la fuente, no es una falla"] };
+
+export function gapList(items) {
+  const nReal = items.filter((g) => g.cls === "real").length;
+  return el("details", { class: "box", style: { marginTop: "12px" }, open: nReal > 0 ? "" : null },
+    el("summary", {}, "Huecos y notas de cobertura (" + nReal + " real" + (nReal === 1 ? "" : "es") + " de " + items.length + ")"),
+    el("ul", { style: { margin: 0, paddingLeft: "18px" } }, items.map((g) => {
+      const [t, cls, tip] = GAP_CLS[g.cls] || GAP_CLS.real;
+      return el("li", { class: g.cls === "real" ? "warn-t" : "muted" }, el("span", { class: "chip " + cls, title: tip }, t), " ", g.text);
+    })));
 }
 
 function featureView(fs, ts) {
@@ -184,10 +203,8 @@ function featureView(fs, ts) {
         Object.entries(q.coverage || {}).map(([ex, cv]) => [el("b", {}, ex), ...COV_COLS.map(([k]) => {
           const [t, cls, tip] = COV[cv[k]] || ["?", "", ""];
           return el("span", { class: "chip " + cls, title: tip }, t);
-        })]), { label: "Cobertura por exchange", caption: "✓ con datos · parcial = muestreado (subestima) · viejo = último dato atrasado · n/a = el exchange no lo publica" }))) : null,
-    fs.data_gaps && fs.data_gaps.length ? el("details", { class: "box", style: { marginTop: "12px" } },
-      el("summary", {}, "Huecos y sesgos declarados (" + fs.data_gaps.length + ")"),
-      el("ul", { class: "warn-t", style: { margin: 0, paddingLeft: "18px" } }, fs.data_gaps.map((g) => el("li", {}, g)))) : null,
+        })]), { label: "Cobertura por exchange", caption: "✓ con datos · parcial = muestreado (subestima) · viejo = último dato atrasado · n/a = el exchange no lo publica · REST 5 min = consultado por REST cada 5 min" }))) : null,
+    fs.data_gaps && fs.data_gaps.length ? gapList(fs.data_gap_classes || fs.data_gaps.map((g) => ({ text: g, cls: "real" }))) : null,
     fs.news_model_id ? el("div", {},
       el("h3", { style: { margin: "16px 0 6px" } }, "Noticias que ve el grafo ", el("span", { class: "muted small" }, (fs.news || []).length + " · " + fs.news_model_id)),
       (fs.news || []).length ? el("ul", { style: { margin: 0, paddingLeft: "18px" } }, fs.news.map((it) => el("li", {},

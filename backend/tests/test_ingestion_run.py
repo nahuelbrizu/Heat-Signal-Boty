@@ -203,3 +203,26 @@ def test_reconnect_handler_counts_connect_attempts() -> None:
     finally:
         logger.removeHandler(handler)
     assert reg.workers["bybit"].reconnects == 2
+
+
+async def test_binance_oi_poller_wiring_and_mark_lookup() -> None:
+    import time as _time
+
+    from heatsignal.storage.memory import MemoryWindowSink
+
+    cfg = RunConfig.from_env({})
+    assert cfg.binance_oi_interval_s == 300.0
+    stop = asyncio.Event()
+    assert run_mod.start_binance_oi(cfg, ["bybit"], BufferedSink(), [], stop) == (None, None)
+    off = RunConfig.from_env({"HEATSIGNAL_BINANCE_OI_INTERVAL_S": "0"})
+    assert run_mod.start_binance_oi(off, ["binance"], BufferedSink(), [], stop) == (None, None)
+
+    mem = MemoryWindowSink()
+    now = int(_time.time() * 1000)
+    await mem.write(TickerEvent(source=Exchange.BINANCE, symbol="BTC-USDT", mark_price=100.0, ts_event_ms=now,
+                                ts_ingest_ms=now))
+    await mem.write(TickerEvent(source=Exchange.BYBIT, symbol="BTC-USDT", mark_price=999.0, ts_event_ms=now,
+                                ts_ingest_ms=now))
+    lookup = run_mod._binance_mark_lookup(mem)
+    assert lookup("BTC-USDT") == 100.0 and lookup("ETH-USDT") is None
+    assert run_mod._binance_mark_lookup(None) is None

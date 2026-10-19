@@ -71,6 +71,9 @@ async def test_live_features(tmp_path) -> None:
     assert fs["context"]["mark_price"] is not None
     assert fs["order_flow"]["n_trades"] == 1
     assert any("calentamiento" in g for g in fs["data_gaps"])
+    assert [c["text"] for c in fs["data_gap_classes"]] == fs["data_gaps"]  # todo, clasificado
+    assert {c["cls"] for c in fs["data_gap_classes"]} <= {"estructural", "respaldo", "real"}
+    assert next(c for c in fs["data_gap_classes"] if "calentamiento" in c["text"])["cls"] == "real"
 
 
 async def test_without_analysis_features_are_503_and_eval_unavailable(tmp_path) -> None:

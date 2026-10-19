@@ -57,7 +57,9 @@ class ThrottledSink:
 
     async def write(self, event: IngestEvent) -> None:
         interval = self._intervals.get(event.kind)
-        if not interval or interval <= 0:
+        # Snapshots por REST (OI de Binance cada 5 min) pasan directo: si se coalescieran con el mark del WS
+        # (misma clave), el OI se perderia.
+        if not interval or interval <= 0 or getattr(event, "coverage", None) == "rest_poll":
             await self._emit(event)
             return
         key = self._key(event)

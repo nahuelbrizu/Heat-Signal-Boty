@@ -489,3 +489,37 @@ async def test_wallet_reports_holding_vs_live_mark_and_is_optional(tmp_path, mon
     assert body["configured"] and x["price_usd"] == pytest.approx(150.15)  # mark medio binance/okx
     assert x["pnl_pct"] == pytest.approx(150.15 / 200 - 1) and x["pnl_usd"] == pytest.approx(-498.5)
     assert y["price_usd"] is None and y["pnl_pct"] is None and y["value_usd"] is None
+
+
+async def test_market_binance_oi_from_rest_is_marked_and_does_not_refresh_ws_age(tmp_path) -> None:
+    from heatsignal.schema.events import TickerEvent
+
+    ctx, _ = await _full_ctx(tmp_path)
+    now = int(time.time() * 1000)
+    await ctx.memory.write(TickerEvent(source=Exchange.BINANCE, symbol=SYM, open_interest=1000.0,
+                                       open_interest_usd=150_100.0, ts_event_ms=now - 1_000, ts_ingest_ms=now - 1_000,
+                                       coverage="rest_poll"))
+    body = (await _client(ctx).get("/api/market/SOLUSDT")).json()
+    b = body["exchanges"]["binance"]
+    assert b["oi_usd"] == pytest.approx(150_100.0) and b["oi_source"] == "rest_poll" and b["oi_age_s"] < 60
+    assert b["age_s"] >= 3.5  # la antiguedad del WS sigue siendo la del ultimo markPrice, no la del REST
+    assert body["exchanges"]["okx"]["oi_source"] == "stream" and body["oi_exchanges"] == 2
+
+
+@pytest.mark.skipif(__import__("shutil").which("node") is None, reason="sin node")
+def test_gap_list_render_shows_class_chip_for_every_gap() -> None:
+    import subprocess
+    from pathlib import Path
+
+    harness = Path(__file__).parent / "js" / "gap_list.mjs"
+    view = Path(panel.__file__).parent / "static" / "app" / "views" / "mercado.js"
+    items = [{"text": "trades: sin datos de okx en la ventana", "cls": "real"},
+             {"text": "liquidaciones binance PARTIAL (<=1/seg/simbolo): x", "cls": "estructural"},
+             {"text": "htf: 2 de las ultimas 48 velas de 1h vinieron del REST", "cls": "respaldo"}]
+    out = subprocess.run(["node", str(harness), str(view), json.dumps(items)], capture_output=True, text=True, timeout=60)
+    assert out.returncode == 0, out.stderr
+    d = json.loads(out.stdout)
+    assert d["open"] and d["summary"] == "Huecos y notas de cobertura (1 real de 3)"
+    assert [(i["chip"], i["chipCls"]) for i in d["items"]] == [
+        ("hueco real", "chip bad"), ("estructural", "chip "), ("respaldo REST", "chip info")]
+    assert all(it["text"] in i["text"] for it, i in zip(items, d["items"]))  # no se pierde ningun aviso

@@ -31,6 +31,7 @@ from typing import Literal
 from zoneinfo import ZoneInfo
 
 from ..schema.features import HtfContext
+from .gaps import real_gaps
 from ..schema.sessions import (
     DayOwnData,
     OpeningCandle,
@@ -254,8 +255,8 @@ def summarize(a: SessionSymbolAnalysis, label: str) -> str:
     flags = [k for k, v in a.flags.model_dump().items() if v]
     if flags:
         parts.append("Banderas: " + ", ".join(flags) + ".")
-    if a.data_gaps:
-        parts.append(f"Huecos: {len(a.data_gaps)}.")
+    if n_real := len(real_gaps(a.data_gaps)):  # lo estructural/respaldo no es un hueco (features/gaps.py)
+        parts.append(f"Huecos: {n_real}.")
     return " ".join(parts)
 
 

@@ -17,6 +17,7 @@ import math
 from datetime import datetime, timezone
 from typing import Callable, Iterable, Protocol, Sequence, TypeVar
 
+from ..features.gaps import real_gaps, render_gaps
 from ..schema.features import FeatureSet
 
 logger = logging.getLogger(__name__)
@@ -26,15 +27,19 @@ HISTORICAL_LANGUAGE_RULE = (
     "reacciono en X% de los casos', 'el desequilibrio observado fue...'), NUNCA predictivo "
     "('va a subir', 'subira', 'seguro que'). No inventes simbolos que no esten en el input "
     "y no omitas ninguno de los que si estan. Si un simbolo declara huecos de datos, "
-    "mencionalos explicitamente en `data_gaps` y baja la confianza en consecuencia: "
-    "no los ignores."
+    "baja la confianza en consecuencia: no los ignores (ya se copian solos a `data_gaps`). "
+    "Las notas de cobertura son limitaciones conocidas, no fallas."
 )
 
 
 def format_data_gaps(fs: FeatureSet) -> str:
-    if not fs.data_gaps:
-        return "huecos de datos: ninguno declarado"
-    return "huecos de datos DECLARADOS: " + "; ".join(fs.data_gaps)
+    """Huecos reales completos + una linea corta de notas de cobertura (features/gaps.py)."""
+    return render_gaps(fs.data_gaps)
+
+
+def new_real_gaps(reported: Iterable[str], fs: FeatureSet) -> str:
+    """Huecos de un analista para el digest: solo los reales que no estan ya en la linea del simbolo."""
+    return "; ".join(g for g in real_gaps(reported) if g not in fs.data_gaps) or "ninguno"
 
 
 def _fmt(value: float | None, fmt: str = "{:,.2f}") -> str:

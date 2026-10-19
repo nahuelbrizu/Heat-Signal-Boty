@@ -74,6 +74,9 @@ class TickerEvent(BaseModel):
     open_interest_usd: float | None = None
     ts_event_ms: int
     ts_ingest_ms: int
+    # stream: WS del exchange. rest_poll: snapshot de OI por REST (Binance /fapi/v1/openInterest cada 5 min);
+    # no cuenta como ticker vivo (no trae mark ni funding) ni pasa por el throttle.
+    coverage: Literal["stream", "rest_poll"] = "stream"
 
 
 # Union discriminada por `kind` para que el sink sepa a que tabla/stream va cada evento.

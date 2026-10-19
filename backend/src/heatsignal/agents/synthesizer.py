@@ -62,7 +62,7 @@ _SYSTEM_PROMPT = (
     "'no_hypothesis' explicando el motivo. NUNCA inventes una estrategia ni una variante: si "
     "ninguna estrategia listada encaja, la respuesta correcta es 'no_hypothesis'. No elijas el "
     "precio de entrada: lo fija el sistema. Los huecos de datos declarados deben bajar la "
-    "confianza o justificar 'no_hypothesis'. "
+    "confianza o justificar 'no_hypothesis'; las notas de cobertura no son huecos ni fallas severas. "
     "Estrategias de temporalidad 1h (salida con timeframe='1h'): formula la hipotesis sobre velas de 1h CERRADAS y "
     "en relacion con la tendencia del dia UTC calculada por codigo (daily_trend), p.ej. 'a favor de la tendencia "
     "diaria tras retroceso a la EMA de 1h' o 'contra la tendencia en el extremo del rango diario'. Solo propone una "

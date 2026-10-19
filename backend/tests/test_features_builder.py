@@ -78,7 +78,7 @@ def test_full_composition_mixed_exchanges() -> None:
 
     gaps = fs.data_gaps
     assert "liquidaciones binance/okx PARTIAL (<=1/seg/simbolo): subrepresentan el notional real" in gaps
-    assert "liquidaciones: sin eventos de bybit en la ventana" in gaps
+    assert "liquidaciones: sin eventos de bybit en la ventana (conectado y sano)" in gaps  # estructural
     assert "trades: sin datos de okx en la ventana" in gaps
     assert "ticker okx: stale, ultimo hace 200s (> 120s)" in gaps
     assert "open_interest: sin dato de okx (la suma es parcial)" in gaps

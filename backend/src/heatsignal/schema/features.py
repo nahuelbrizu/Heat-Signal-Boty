@@ -84,7 +84,9 @@ class MarketContext(BaseModel):
     regime: Regime
 
 
-CoverageState = Literal["ok", "partial", "stale", "missing", "na"]  # na: el exchange no lo publica
+CoverageState = Literal["ok", "partial", "stale", "missing", "na", "rest"]  # na: no lo publica; rest: poll REST
+# Clase de un aviso de `data_gaps` (features/gaps.py): limitacion conocida, dato reconstruido por REST, o hueco.
+GapClass = Literal["estructural", "respaldo", "real"]
 
 
 class DataQuality(BaseModel):
@@ -99,6 +101,7 @@ class DataQuality(BaseModel):
     coverage: dict[str, dict[str, CoverageState]] = Field(
         default_factory=dict, description="exchange -> {trades, liquidations, ticker, funding, open_interest}"
     )
+    oi_ts_ms: dict[str, int] = Field(default_factory=dict, description="exchange -> hora del ultimo OI usado")
 
 
 HTF_MODEL_ID = "htf-trend-v1"

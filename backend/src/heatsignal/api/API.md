@@ -184,7 +184,8 @@ dato) y cada hipótesis trae `timeframe`, `horizon_bars`, `daily_trend`, `trend_
 Contexto multi-temporalidad de una moneda (`HtfContext`, `schema/features.py`): últimas ≤ 48 velas de 1h CERRADAS
 (`candles_1h`: `open_ms`, `open_at`, OHLC, `source` = `klines` | `bars_1m` | `rest`, `minutes`), día UTC
 (`day_open`, `day_high`, `day_low`, `change_from_open_pct`/`_atr`, `pos_in_day_range`), EMA20/SMA50 de 1h y su
-pendiente, EMA10/SMA20 diarias, ATR14 de 1h, `daily_trend` + `trend_reason`, `setups` y `data_gaps`. 503 si el
+pendiente, EMA10/SMA20 diarias, ATR14 de 1h, `daily_trend` + `trend_reason`, `setups`, `data_gaps` y `data_gap_classes` (`[{text, cls}]`, `cls` =
+`estructural` | `respaldo` | `real`, ver `features/gaps.py`; `/api/features` trae lo mismo por símbolo). 503 si el
 contexto está apagado (`HEATSIGNAL_HTF=0`), 404 si el símbolo no está configurado.
 
 ## `GET /api/sessions?day=YYYY-MM-DD`
@@ -439,8 +440,8 @@ Tope: **5000 barras** por exchange (`400` si el rango pide más: acortar o subir
 - Sin `exchange` y sin `combine`: una fila por (exchange, barra), ordenadas por `t_ms` y exchange.
 - `combine=true`: `exchange: "all"`; volúmenes, liquidaciones y conteos sumados; OHLC y `mark` del
   `ref_exchange` (prioridad binance > bybit > okx > hyperliquid, no se promedian velas de mercados
-  distintos); `funding_8h` = media; `oi_usd` = suma de los `oi_exchanges` que lo informan (Binance no trae
-  OI por WS).
+  distintos); `funding_8h` = media; `oi_usd` = suma de los `oi_exchanges` que lo informan (Binance: OI por
+  REST cada 5 min desde 2026-10-19; antes no había).
 - `open`/`close`/`mark`/`funding_8h`/`oi_usd` = primer/último minuto con dato dentro de la barra; pueden
   ser `null` (minuto sin trades o sin ticker). `minutes` = minutos con fila (huecos si < tf).
 - Liquidaciones: `liq_long_usd` = longs liquidados (orden SELL), `liq_short_usd` = shorts.
@@ -887,7 +888,7 @@ Snapshot de mercado desde la ventana en memoria (solo símbolos configurados; 40
 
 - Por exchange se toma el último valor **no nulo** de cada campo del ticker (los exchanges mandan mark,
   funding y OI en mensajes distintos); `funding_age_s` dice qué tan viejo es el funding.
-- `oi_usd`: el que da el exchange o `open_interest × mark`. Binance no trae OI por WS.
+- `oi_usd`: el que da el exchange o `open_interest × mark`. Binance no trae OI por WS: se consulta por REST (`GET /fapi/v1/openInterest`) cada 5 min (`oi_source: "rest_poll"`, `oi_age_s` = antigüedad del OI). `age_s`/`ts_ms` son del último ticker del WS (el OI por REST no los refresca).
 - `flow_5m`: volumen taker de los últimos 5 min. `liquidations_window`: 1 h y 24 h (retención de la
   ventana de liquidaciones = 24 h). Ojo: la ventana se vacía en cada reinicio (ver `summary.memory`).
 - `last_trades` en orden de llegada (más nuevo primero); `last_liquidations` por hora del evento.

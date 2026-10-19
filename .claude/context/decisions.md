@@ -463,6 +463,14 @@
   funding (idéntico a `simulate()`); barreras evaluadas desde la vela siguiente, empate = stop; pesos por unicidad.
   11 tests sin look-ahead (datos envenenados después del corte → resultado idéntico).
 
+- **Avisos de datos clasificados + OI de Binance por REST (2026-10-19).** `features/gaps.py`: estructural (Binance
+  forceOrder ≤ 1/s, 0 liquidaciones de un exchange conectado y sano, emisor sin RSS), respaldo (reconstruido por REST,
+  completo) y real (todo lo demás, por defecto). Al LLM: los reales como "huecos" y el resto en una línea de "notas de
+  cobertura (conocidas, no son fallas)"; sintetizador y redactor no las llaman severas. Panel y logs muestran todo con
+  su clase. Contexto del grafo: ~15,4k → ~8k tokens por ciclo (se repetían avisos en cada analista). OI de Binance:
+  `GET /fapi/v1/openInterest` (peso 1, doc oficial) cada 5 min en la ingesta, `TickerEvent coverage=rest_poll`, USD con
+  el mark del WS; entra en `context.oi_*` y en la base histórica; si falla o tiene > 15 min, hueco real.
+
 ## Abiertas
 - ~~Plan de CoinGlass a contratar.~~ **Ya no aplica al core** — la fuente primaria pasó a WS nativos.
   Solo se retomaría si se implementa la fuente BYOK opcional (y ahí el plan lo elige el usuario).

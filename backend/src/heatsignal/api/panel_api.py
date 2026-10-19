@@ -42,6 +42,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from ..features.gaps import gap_classes
 from ..schema.hypotheses import HypothesisStatus
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -1661,12 +1662,17 @@ def register_api(app: FastAPI, ctx: PanelContext, build_id: str) -> None:  # noq
         fields = ("mark_price", "last_price", "funding_rate", "open_interest", "open_interest_usd")
         per_ex: dict[str, dict[str, Any]] = {}
         for ev in ctx.memory.tail("ticker", sym, 30_000):
-            row = per_ex.setdefault(ev.source.value, {"ts_ms": ev.ts_ingest_ms})
+            row = per_ex.setdefault(ev.source.value, {})
+            rest = getattr(ev, "coverage", "stream") == "rest_poll"  # OI por REST: no prueba que el WS este vivo
+            if not rest and "ts_ms" not in row:
+                row["ts_ms"] = ev.ts_ingest_ms
             for f in fields:
                 v = getattr(ev, f)
                 if v is not None and f not in row:
                     row[f] = v
                     row[f + "_ts_ms"] = ev.ts_ingest_ms
+                    if f.startswith("open_interest") and "oi_source" not in row:
+                        row["oi_source"] = "rest_poll" if rest else "stream"
         exchanges = {}
         for ex, row in sorted(per_ex.items()):
             oi_usd = row.get("open_interest_usd")
@@ -1676,7 +1682,11 @@ def register_api(app: FastAPI, ctx: PanelContext, build_id: str) -> None:  # noq
             exchanges[ex] = {
                 "mark": row.get("mark_price"), "last": row.get("last_price"), "funding_8h": row.get("funding_rate"),
                 "open_interest": row.get("open_interest"), "oi_usd": oi_usd,
-                "ts_ms": row["ts_ms"], "ts_at": iso(row["ts_ms"]), "age_s": round((now - row["ts_ms"]) / 1000, 1),
+                "oi_source": row.get("oi_source"),
+                "oi_age_s": None if not (t := row.get("open_interest_usd_ts_ms") or row.get("open_interest_ts_ms"))
+                else round((now - t) / 1000, 1),
+                "ts_ms": row.get("ts_ms"), "ts_at": iso(row["ts_ms"]) if row.get("ts_ms") else None,
+                "age_s": round((now - row["ts_ms"]) / 1000, 1) if row.get("ts_ms") else None,
                 "funding_age_s": None if "funding_rate_ts_ms" not in row else round((now - row["funding_rate_ts_ms"]) / 1000, 1),
             }
         marks = [e["mark"] for e in exchanges.values() if e["mark"] is not None]
@@ -1802,6 +1812,7 @@ def register_api(app: FastAPI, ctx: PanelContext, build_id: str) -> None:  # noq
         except asyncio.TimeoutError:
             raise HTTPException(status_code=503, detail="el contexto 1h tardo demasiado (base o REST lentos)") from None
         out = h.model_dump(mode="json")
+        out["data_gap_classes"] = gap_classes(h.data_gaps)
         out["candles_1h"] = [{**c, "open_at": iso(c["open_ms"])} for c in out["candles_1h"][len(out["candles_1h"]) - candles:]] \
             if candles else []
         out["ts_at"] = iso(h.ts_ms)

@@ -25,6 +25,7 @@ Configuracion por variables de entorno (ver `.env.example` en la raiz del repo):
                                          sesiones (zona IANA, hora local, DST por zoneinfo); "cierre" = ultima vela del dia UTC
   HEATSIGNAL_HTF                1      contexto 1h + tendencia del dia (history/hourly.py) en cada ciclo (0 lo apaga)
   HEATSIGNAL_HTF_REST           1      completar velas de 1h faltantes con REST de Binance (0 = solo la base)
+  HEATSIGNAL_BINANCE_OI_INTERVAL_S 300 OI de Binance por REST /fapi/v1/openInterest (ingestion/binance_oi_poller.py; 0 lo apaga)
   HEATSIGNAL_NEWS_INTERVAL_S    300    poll de noticias RSS (news/feeds.py), ventana en memoria de 48 h (0 lo apaga)
   HEATSIGNAL_RECORD             1      guardar agregados por minuto + liquidaciones + noticias (history/), 0 lo apaga
   HEATSIGNAL_HISTORY_DB         data/heatsignal_history.sqlite   base historica privada (respaldo diario a Drive)
@@ -57,11 +58,13 @@ import contextlib
 import logging
 import os
 import signal
+import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from ..schema.events import Exchange
 from ..schema.sink import ConsoleSink, EventSink, RedisStreamSink
 from ..storage.fanout import FanoutSink
 from ..storage.memory import MemoryWindowSink
@@ -111,6 +114,7 @@ class RunConfig:
     analysis_interval_s: float = 900.0
     analysis_window_s: int = 1800
     news_interval_s: float = 300.0
+    binance_oi_interval_s: float = 300.0
     graph_rotation: int = 2
     record: bool = True
     history_db: str = "data/heatsignal_history.sqlite"
@@ -200,6 +204,7 @@ class RunConfig:
             analysis_interval_s=_float("HEATSIGNAL_ANALYSIS_INTERVAL_S", 900.0),
             analysis_window_s=int(_float("HEATSIGNAL_ANALYSIS_WINDOW_S", 1800)),
             news_interval_s=_float("HEATSIGNAL_NEWS_INTERVAL_S", 300.0),
+            binance_oi_interval_s=_float("HEATSIGNAL_BINANCE_OI_INTERVAL_S", 300.0),
             graph_rotation=int(_float("HEATSIGNAL_GRAPH_ROTATION", 2)),
             record=(_opt("HEATSIGNAL_RECORD") or "1").strip().lower() not in ("0", "false", "no"),
             history_db=_opt("HEATSIGNAL_HISTORY_DB") or "data/heatsignal_history.sqlite",
@@ -338,7 +343,8 @@ def _recorder(sinks: list[EventSink]) -> Any:
 
 
 async def start_analysis(
-    cfg: RunConfig, sinks: list[EventSink], stop: asyncio.Event, stack: contextlib.AsyncExitStack
+    cfg: RunConfig, sinks: list[EventSink], stop: asyncio.Event, stack: contextlib.AsyncExitStack,
+    oi_poller: Any = None,
 ) -> AnalysisHandles | None:
     """Arranca el ciclo de analisis si corresponde. Todo lo que abre queda en `stack`."""
     if cfg.analysis_interval_s <= 0:
@@ -399,12 +405,38 @@ async def start_analysis(
     loop = AnalysisLoop(
         memory, symbols, registry, graph_runner=runner,
         interval_s=cfg.analysis_interval_s, window_s=cfg.analysis_window_s, news=news, cycle_log=cycle_log,
-        rotation_per_cycle=cfg.graph_rotation, macro=_macro_provider(cfg), **_session_setup(cfg, stack),
+        rotation_per_cycle=cfg.graph_rotation, macro=_macro_provider(cfg), oi_poller=oi_poller,
+        **_session_setup(cfg, stack),
     )
     loop.llm_providers = list(llms.providers) if runner is not None else []
     task = asyncio.create_task(loop.run_forever(stop), name="analysis")
     return AnalysisHandles(task=task, loop=loop, registry=registry, store=store, news=news, news_task=news_task,
                            cycle_log=cycle_log)
+
+
+def _binance_mark_lookup(memory: MemoryWindowSink | None, max_age_ms: int = 120_000):
+    """Ultimo mark de Binance (WS markPrice) en memoria, si no es mas viejo que `max_age_ms`."""
+    if memory is None:
+        return None
+
+    def lookup(symbol: str) -> float | None:
+        for ev in memory.tail("ticker", symbol, 500):
+            if ev.source == Exchange.BINANCE and ev.mark_price is not None:
+                return ev.mark_price if ev.ts_ingest_ms >= int(time.time() * 1000) - max_age_ms else None
+        return None
+    return lookup
+
+
+def start_binance_oi(cfg: RunConfig, names: list[str], sink: EventSink, sinks: list[EventSink],
+                     stop: asyncio.Event) -> tuple[Any, asyncio.Task | None]:
+    """OI de Binance por REST (el WS no lo trae). Escribe al mismo sink que los workers (el throttle lo deja pasar)."""
+    if "binance" not in names or cfg.binance_oi_interval_s <= 0:
+        return None, None
+    from .binance_oi_poller import BinanceOiPoller
+
+    poller = BinanceOiPoller([_norm_symbol(s) for s in cfg.symbols], sink, interval_s=cfg.binance_oi_interval_s,
+                             mark_lookup=_binance_mark_lookup(_memory_sink(sinks)))
+    return poller, asyncio.create_task(poller.run_forever(stop), name="binance-oi")
 
 
 def _htf_provider(cfg: RunConfig) -> Any:
@@ -598,13 +630,14 @@ async def run(cfg: RunConfig, *, stop_event: asyncio.Event | None = None) -> Non
     sampler = asyncio.create_task(
         health.run_sampler(sample_s=min(5.0, cfg.health_log_s), log_every_s=cfg.health_log_s)
     )
+    oi_poller, oi_task = start_binance_oi(cfg, names, throttled, sinks, stop)
     analysis_stack = contextlib.AsyncExitStack()
     analysis: AnalysisHandles | None = None
     panel: tuple[Any, asyncio.Task] | None = None
 
     try:
         try:
-            analysis = await start_analysis(cfg, sinks, stop, analysis_stack)
+            analysis = await start_analysis(cfg, sinks, stop, analysis_stack, oi_poller=oi_poller)
         except Exception:  # noqa: BLE001 - la ingesta sigue aunque el analisis no arranque
             log.exception("no se pudo arrancar el ciclo de analisis - la ingesta sigue sin el")
         try:
@@ -638,6 +671,9 @@ async def run(cfg: RunConfig, *, stop_event: asyncio.Event | None = None) -> Non
         await asyncio.gather(*tasks.values(), return_exceptions=True)
         sampler.cancel()
         await asyncio.gather(sampler, return_exceptions=True)
+        if oi_task is not None:
+            oi_task.cancel()  # puede estar en medio de un GET: no se espera
+            await asyncio.gather(oi_task, return_exceptions=True)
         if panel is not None:
             server, panel_task = panel
             server.should_exit = True
