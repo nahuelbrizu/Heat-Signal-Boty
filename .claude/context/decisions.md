@@ -504,6 +504,8 @@
   (calendario histórico corregido: `dias_hasta_*` 0 % NaN; Polymarket fuera). Etapa 3 en subtareas: 3a marco de
   validación (purged k-fold k = 5, embargo 5 días, registro de configuraciones contra el presupuesto de 24, métricas),
   sin entrenar con datos reales; 3b regresión logística (línea base); 3c LightGBM chico. Parámetros del pre-registro.
+  **Etapa 3 aprobada por el usuario (2026-10-19)** antes de entrenar: 3b (logística) y 3c (LightGBM) se corren con los
+  parámetros del pre-registro una vez validado el marco (3a), dentro del presupuesto de 24 configuraciones.
 
 ## Abiertas
 - ~~Plan de CoinGlass a contratar.~~ **Ya no aplica al core** — la fuente primaria pasó a WS nativos.
