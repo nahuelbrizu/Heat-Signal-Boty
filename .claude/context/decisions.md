@@ -531,6 +531,20 @@
   Cualquier cambio (umbral relativo a la tasa base, PnL real de la regla) es una configuración nueva pre-registrada
   que consume presupuesto; no se re-corren L1–L4.
 
+- **Meta-modelo 3c pre-registrada (2026-10-19, aprobada por el usuario, ANTES de correr).** Misma etiqueta (triple
+  barrier, pre-registro), mismo preproceso y mismo marco (purged k-fold k = 5, embargo 5 d, calibración, pesos de
+  unicidad, primaria como categórica, `pm_*` fuera). Cambios de evaluación, fijos desde ahora:
+  (1) **umbral = tasa base ponderada de la etiqueta en el train de cada fold** (tomar si p > b); tamaño por probabilidad
+  = clip((p − b) / b, 0, 1). (2) **Evaluación económica con el PnL REAL de cada operación** (salida de la regla en
+  `t_fin_regla`, 7 bps por lado + funding, misma convención que `simulate()`), columna nueva `pnl_regla` en el dataset;
+  el PnL de barreras se informa al lado para comparar. Configuraciones (4 de 24, total 8):
+  G1 = LightGBM núcleo, max_depth 3, num_leaves 7, n_estimators 200, learning_rate 0,03, min_child_samples 100,
+  reg_lambda 5, subsample 0,8 (bagging_freq 1), colsample_bytree 0,8, semilla 20261019;
+  G2 = núcleo, max_depth 2, num_leaves 3, n_estimators 300, learning_rate 0,03, min_child_samples 200, reg_lambda 10,
+  subsample 0,8, colsample_bytree 0,8; G3 = las 78 con los hiperparámetros de G1; G4 = las 78 con los de G2.
+  L1–L4 no se re-corren. Criterio para seguir a la etapa 4: alguna configuración con AUC OOS > 0,55, Brier mejor que la
+  base y filtrada > sin filtrar con p ≤ 0,05 (bootstrap pareado) en el conjunto, y PBO < 0,5 sobre las 8.
+
 ## Abiertas
 - ~~Plan de CoinGlass a contratar.~~ **Ya no aplica al core** — la fuente primaria pasó a WS nativos.
   Solo se retomaría si se implementa la fuente BYOK opcional (y ahí el plan lo elige el usuario).
