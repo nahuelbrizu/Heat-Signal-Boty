@@ -492,7 +492,12 @@
   `load_all()`: 80 columnas de features, 8.751 eventos. **Corrección antes de entrenar:** el calendario versionado solo
   cubría 2026 (días hasta CPI/NFP 100 % NaN, FOMC 92 %) → fechas históricas de CPI y NFP desde los vintages de FRED
   (`realtime_start` de CPIAUCSL y PAYEMS = día de publicación) y FOMC 2021–2025 desde el calendario oficial de la Fed,
-  versionadas. **Polymarket fuera del entrenamiento** (historia desde 2026-07-20: 0 % de cobertura); sigue en vivo como
+  versionadas. *Hecho (2026-10-19):* `macro/config/calendar_historico.json` aparte (inmutable, solo laboratorio; el
+  vigente queda chico y el vivo no cambia): 40 reuniones programadas 2021–2025 + 1 no programada (2025-08-22, notation
+  vote, excluida de "próximo comunicado"), verificadas contra fomccalendars.htm. CPI/NFP: fecha = día en que FRED trae
+  por primera vez una observación más nueva (08:30 ET), solo antes del primer evento del calendario BLS. PAYEMS sumada
+  a `macro/fred.py` (vivo: bloque `macro-context-v2`). `dias_hasta_*`: 0 % NaN en 8.751 eventos.
+  **Polymarket fuera del entrenamiento** (historia desde 2026-07-20: 0 % de cobertura); sigue en vivo como
   contexto; evaluarlo en una v2 cuando acumule meses.
 
 ## Abiertas

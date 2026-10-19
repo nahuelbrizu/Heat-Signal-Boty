@@ -939,7 +939,7 @@ Snapshot de mercado desde la ventana en memoria (solo símbolos configurados; 40
 Point-in-time a ahora. Lee `data/heatsignal_macro.sqlite` (lo escribe `heatsignal-macro.timer`) en solo lectura.
 
 ```json
-{"now_ms": 1792400000000, "context_id": "macro-context-v1", "db_note": null,
+{"now_ms": 1792400000000, "context_id": "macro-context-v2", "db_note": null,
  "sources": {"fred": {"state": "ok|apagado|sin_datos|atrasado|error", "key_loaded": true, "last_ok": {...},
                       "last_error": null, "detail": null},
              "polymarket": {"state": "ok", "last_ok": {...}, "last_error": null},

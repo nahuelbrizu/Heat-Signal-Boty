@@ -67,6 +67,9 @@ SERIES: tuple[FredSeries, ...] = (
     FredSeries("DTWEXBGS", "dólar amplio", "Indice dolar amplio nominal (Fed, base ene-2006=100)", "indice", "diaria",
                "Lo publica la Fed con rezago semanal (H.10)."),
     FredSeries("VIXCLS", "VIX", "VIX de CBOE (cierre)", "puntos", "diaria"),
+    FredSeries("PAYEMS", "empleo NFP", "Empleo no agricola total (nominas, miles, desestacionalizado)", "miles",
+               "mensual", "Lo publica el BLS el 1er viernes del mes siguiente (Employment Situation); revisa los dos "
+               "meses previos. Sus vintages dan las fechas historicas de publicacion del NFP (laboratorio)."),
 )
 SERIES_BY_ID = {s.series_id: s for s in SERIES}
 

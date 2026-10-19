@@ -200,13 +200,16 @@ def test_calendar_counts_days_without_looking_at_outcomes(tmp_path, fred) -> Non
     assert MF.calendar_features(CAL, pd.DatetimeIndex([t]))["dias_hasta_cpi"].iloc[0] == pytest.approx(
         (pd.Timestamp("2024-03-12 12:30", tz="UTC") - t) / pd.Timedelta(days=1))  # 08:30 EDT
     assert np.isnan(f.iloc[3]).all()  # despues del ultimo: sin proximo
-    # solo fechas: sin datos FRED/Polymarket da lo mismo
+    # solo fechas: sin vintages de FRED da lo mismo que el calendario solo; con vintages de CPI, las fechas de
+    # publicacion de FRED (anteriores al primer CPI del calendario) cubren el hueco, sin tocar FOMC/NFP
     empty = fred.iloc[:0]
     a = MF.build_macro(_events(times), None, _write_src(tmp_path / "e", empty, None), CAL)
     b = MF.build_macro(_events(times), None, _write_src(tmp_path / "f", fred, None), CAL)
     cols = list(MF.CAL_KINDS.values())
-    pd.testing.assert_frame_equal(a[cols], b[cols])
     pd.testing.assert_frame_equal(a[cols].set_axis(f.index), f[cols])
+    pd.testing.assert_frame_equal(a[["dias_hasta_fomc", "dias_hasta_nfp"]], b[["dias_hasta_fomc", "dias_hasta_nfp"]])
+    assert b["dias_hasta_cpi"].iloc[2] == pytest.approx((pd.Timestamp("2024-02-13 13:30", tz="UTC") - times[2])
+                                                        / pd.Timedelta(days=1))
 
 
 def test_polymarket_coverage_and_staleness(tmp_path, fred) -> None:

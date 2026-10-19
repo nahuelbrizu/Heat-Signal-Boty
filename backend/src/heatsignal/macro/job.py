@@ -4,7 +4,7 @@ Job macro: `python -m heatsignal.macro <comando>` (corre en la VM, sin pandas).
     run                    cada hora (heatsignal-macro.timer): Polymarket siempre; FRED si la ultima corrida OK
                            tiene >= 20 h (o con --force-fred); despues exporta los dias UTC cerrados que falten a
                            data/export/macro/YYYY/MM/DD/*.csv.gz (el timer de historia los sube a Drive con rclone).
-    backfill-fred          vintages historicos de FRED desde --since (para el laboratorio). Necesita FRED_API_KEY.
+    backfill-fred          vintages historicos de FRED desde --since (opcional --series PAYEMS,...; para el laboratorio). Necesita FRED_API_KEY.
     backfill-polymarket    serie de precios del CLOB de los mercados ya conocidos, --days hacia atras (source
                            'clob-history', fechada en el instante del precio; sin volumen ni liquidez).
     status                 estado de cada fuente en JSON.
@@ -44,7 +44,9 @@ def _now_ms() -> int:
 
 
 def run_fred(store: MacroStore, client: FredClient, *, now: datetime | None = None,
-             lookback_days: int = FRED_LOOKBACK_DAYS, since: str | None = None) -> dict[str, Any]:
+             lookback_days: int = FRED_LOOKBACK_DAYS, since: str | None = None,
+             series: list[str] | None = None) -> dict[str, Any]:
+    """`series`: solo esas (backfill de una serie nueva sin volver a bajar las demas); None = todas."""
     started = _now_ms()
     if not client.configured:
         detail = "apagado: falta FRED_API_KEY en .env (key gratuita en https://fred.stlouisfed.org/docs/api/api_key.html)"
@@ -57,15 +59,18 @@ def run_fred(store: MacroStore, client: FredClient, *, now: datetime | None = No
         obs_start = (date.fromisoformat(since) - timedelta(days=FRED_LOOKBACK_DAYS)).isoformat()
     else:
         rt_start, obs_start = window_for(today, lookback_days)
+    todo = [s for s in SERIES if series is None or s.series_id in series]
+    if series is not None and len(todo) != len(set(series)):
+        raise ValueError(f"series desconocidas: {sorted(set(series) - {s.series_id for s in SERIES})}")
     n, errors = 0, []
-    for s in SERIES:
+    for s in todo:
         try:
             rows = client.vintages(s.series_id, rt_start, obs_start)
             n += store.add_fred(rows, _now_ms())
         except FredError as exc:
             errors.append(f"{s.series_id}: {exc}")
             log.error("FRED %s: %s", s.series_id, exc)
-    status = "ok" if not errors else ("partial" if len(errors) < len(SERIES) else "error")
+    status = "ok" if not errors else ("partial" if len(errors) < len(todo) else "error")
     store.add_run("fred", started, _now_ms(), status, n, {"errors": errors, "realtime_start": rt_start} if errors else
                   {"realtime_start": rt_start, "observation_start": obs_start})
     return {"status": status, "rows": n, "errors": errors}
@@ -143,6 +148,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--force-fred", action="store_true")
     p.add_argument("--no-export", action="store_true")
     p.add_argument("--since", default="2021-01-01", help="backfill-fred: primer dia del vintage (YYYY-MM-DD)")
+    p.add_argument("--series", default=None, help="backfill-fred: ids separados por coma (default: todas)")
     p.add_argument("--days", type=int, default=90, help="backfill-polymarket: dias hacia atras")
     a = p.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -153,7 +159,8 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps(status_json(store, now), indent=2, ensure_ascii=False, default=str))
             return 0
         if a.command == "backfill-fred":
-            res = run_fred(store, FredClient(api_key_from_env()), since=a.since)
+            res = run_fred(store, FredClient(api_key_from_env()), since=a.since,
+                           series=a.series.split(",") if a.series else None)
             print(json.dumps(res, ensure_ascii=False))
             return 0 if res["status"] in ("ok", "partial") else 1
         if a.command == "backfill-polymarket":

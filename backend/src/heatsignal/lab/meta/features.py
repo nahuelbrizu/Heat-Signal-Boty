@@ -72,11 +72,20 @@ Decisiones del grupo `macro` (subtarea 2c, `features_macro_v1.parquet`):
     observaciones de los 365 dias previos (incluida la actual) que son <= la actual (minimo 180).
   - Antiguedad maxima de la observacion (si no, NaN, hueco declarado): diarias 10 dias, DTWEXBGS 14 (se publica
     semanal), CPI 120 (cubre la demora del cierre de gobierno de oct-nov 2025).
-  - Calendario (`macro/config/calendar.json`, versionado): `dias_hasta_<fomc|cpi|nfp>` = dias (fraccion) hasta el
-    proximo comunicado >= t. No mira resultados: solo fechas. Las fechas futuras se conocian de antemano (la Fed y el
-    BLS publican el calendario del anio con anticipacion), asi que usar un archivo verificado despues no es
-    look-ahead. Fuera de la cobertura del archivo (t anterior al primer evento listado de ese tipo, o sin proximo) ->
-    NaN: no se sabe cual era el proximo.
+  - Calendario: `dias_hasta_<fomc|cpi|nfp>` = dias (fraccion) hasta el proximo comunicado >= t. No mira resultados:
+    solo fechas. Las fechas futuras se conocian de antemano (la Fed y el BLS publican el calendario del anio con
+    anticipacion), asi que usar fechas verificadas despues no es look-ahead. Fuera de cobertura (t anterior a la
+    primera fecha conocida de ese tipo, o sin proxima) -> NaN: no se sabe cual era el proximo. Fuentes:
+      * FOMC: `macro/config/calendar_historico.json` (2021-2025, pagina oficial de la Fed) + `calendar.json` (vigente).
+        Solo reuniones PROGRAMADAS (`scheduled`): una accion no programada (2025-08-22, notation vote) no se conocia
+        de antemano y no cuenta como "proximo comunicado".
+      * CPI / NFP: el calendario BLS de `calendar.json` donde existe; antes de su primera fecha, las fechas reales de
+        publicacion sacadas de los vintages de FRED (CPIAUCSL, PAYEMS): dia (`realtime_start`) en que aparece por
+        primera vez una observacion MAS NUEVA que todas las conocidas, a las 08:30 ET. Los vintages que solo revisan
+        meses viejos (p. ej. factores estacionales) no cuentan, ni los recortados al borde de la ventana. Como el
+        BLS publica su calendario anual por adelantado, la proxima publicacion real ya se conocia en t. Excepcion
+        declarada: si el BLS reprograma (cierre de gobierno de oct-nov 2025) la fecha real difiere de la anunciada
+        hasta ese momento; son unos dias en ~5 anios y se acepta.
   - Polymarket: `pm_fed_sin_cambio` (mercados "no change" del config_key `fed`) y `pm_recesion` (config_key
     `recesion`); ultima probabilidad leida <= t entre esos mercados, NaN si tiene mas de 3 h. El backfill trae ~90
     dias: si cubre < 5 % de los eventos se declara en el resumen (`polymarket`) y las columnas quedan (NaN).
@@ -547,6 +556,8 @@ VIX_PCTL_DAYS, VIX_PCTL_MIN = pd.Timedelta(days=365), 180
 POLY_MAX_AGE = pd.Timedelta(hours=3)
 POLY_MIN_COBERTURA = 0.05
 CAL_KINDS = {"FOMC": "dias_hasta_fomc", "CPI": "dias_hasta_cpi", "NFP": "dias_hasta_nfp"}
+FRED_RELEASE_SERIES = {"CPI": "CPIAUCSL", "NFP": "PAYEMS"}  # su realtime_start = dia de publicacion del BLS
+BLS_RELEASE_TIME = "08:30"  # hora de Nueva York de CPI y Employment Situation
 # columna -> (config_key de polymarket_markets.json, texto que tiene que tener la pregunta o None)
 PM_COLS = {"pm_fed_sin_cambio": ("fed", "no change"), "pm_recesion": ("recesion", None)}
 
@@ -613,13 +624,49 @@ def fred_macro_features(vintages: pd.DataFrame, times: pd.DatetimeIndex) -> pd.D
     return out
 
 
-def calendar_features(cal: Any, times: pd.DatetimeIndex) -> pd.DataFrame:
-    """Dias hasta el proximo comunicado de cada tipo (>= t), solo desde las fechas del calendario versionado.
-    NaN fuera de su cobertura (t antes del primer evento listado de ese tipo, o sin proximo)."""
+def fred_release_dates(vintages: pd.DataFrame, series_id: str) -> np.ndarray:
+    """Instantes (ms UTC, 08:30 ET) de publicacion de una serie mensual del BLS segun sus vintages de FRED: cada
+    `realtime_start` (no recortado) que trae una observacion mas nueva que todas las conocidas hasta ahi. Los
+    vintages recortados al inicio de la ventana solo siembran lo ya conocido; las revisiones no cuentan."""
+    from zoneinfo import ZoneInfo
+
+    rows = vintages[vintages["series_id"] == series_id]
+    if rows.empty:
+        return np.array([], dtype=np.int64)
+    clipped = rows["realtime_clipped"].astype(bool)
+    known = pd.to_datetime(rows.loc[clipped, "obs_date"]).max() if clipped.any() else pd.NaT
+    dates = []
+    for rs, grp in rows[~clipped].groupby("realtime_start", sort=True):
+        newest = pd.to_datetime(grp["obs_date"]).max()
+        if pd.isna(known) or newest > known:
+            dates.append(rs)
+            known = newest
+    tz = ZoneInfo("America/New_York")
+    return np.array(sorted(int(pd.Timestamp(f"{d} {BLS_RELEASE_TIME}").tz_localize(tz).value // 1_000_000)
+                           for d in dates), dtype=np.int64)
+
+
+def release_times(cal: Any, kind: str, historico: Any = None, vintages: pd.DataFrame | None = None) -> np.ndarray:
+    """Fechas conocidas de antemano de un tipo (ms UTC, ordenadas): calendario vigente + historico (solo
+    programadas) y, para CPI/NFP, las fechas de FRED anteriores a la primera del calendario BLS."""
+    evs = [e for c in (historico, cal) if c is not None for e in c.events
+           if e.kind == kind and getattr(e, "scheduled", True)]
+    ts = sorted({e.ts_ms for e in evs})
+    sid = FRED_RELEASE_SERIES.get(kind)
+    if sid is not None and vintages is not None and len(vintages):
+        first = ts[0] if ts else None
+        ts = sorted({*ts, *(int(x) for x in fred_release_dates(vintages, sid) if first is None or x < first)})
+    return np.array(ts, dtype=np.int64)
+
+
+def calendar_features(cal: Any, times: pd.DatetimeIndex, historico: Any = None,
+                      vintages: pd.DataFrame | None = None) -> pd.DataFrame:
+    """Dias hasta el proximo comunicado de cada tipo (>= t), desde `release_times` (solo fechas).
+    NaN fuera de su cobertura (t antes de la primera fecha conocida de ese tipo, o sin proxima)."""
     t_ms = (pd.DatetimeIndex(times).as_unit("ms").asi8).astype(np.int64)
     out = pd.DataFrame(index=times)
     for kind, col in CAL_KINDS.items():
-        ts = np.array(sorted(e.ts_ms for e in cal.events if e.kind == kind), dtype=np.int64)
+        ts = release_times(cal, kind, historico, vintages)
         if ts.size == 0:
             out[col] = np.nan
             continue
@@ -644,29 +691,35 @@ def polymarket_macro_features(snaps: pd.DataFrame, times: pd.DatetimeIndex) -> p
 
 
 def build_macro(events: pd.DataFrame, loader: Loader | None = None, fuente: str | Path | None = None,
-                calendar: Any = None) -> pd.DataFrame:
-    """Grupo macro. `loader` no se usa (firma comun de `GRUPOS`)."""
-    from ...macro.calendar import load_calendar
+                calendar: Any = None, historico: Any = None) -> pd.DataFrame:
+    """Grupo macro. `loader` no se usa (firma comun de `GRUPOS`). Sin `calendar` se usan los dos versionados
+    (vigente + historico); con `calendar` inyectado, el historico solo si se pasa `historico`."""
+    from ...macro.calendar import load_calendar, load_historical
     from ..macro_features import load_fred_vintages, load_polymarket
 
     src = Path(fuente) if fuente is not None else MACRO_DB
-    cal = calendar if calendar is not None else load_calendar()
+    if calendar is None:
+        calendar, historico = load_calendar(), (historico if historico is not None else load_historical())
+    cal = calendar
+    vint = load_fred_vintages(src)
     ev = events.reset_index(drop=True)
     t_dec = pd.to_datetime(ev["t_decision"], utc=True)
     _check_holdout(ev, t_dec)
     out = pd.DataFrame({KEY: event_ids(ev), "primaria": ev["primaria"], "symbol": ev["symbol"], "t_decision": t_dec})
     times = pd.DatetimeIndex(sorted(set(t_dec))).as_unit("ns")
-    f = pd.concat([fred_macro_features(load_fred_vintages(src), times), calendar_features(cal, times),
+    f = pd.concat([fred_macro_features(vint, times), calendar_features(cal, times, historico, vint),
                    polymarket_macro_features(load_polymarket(src), times)], axis=1)
     f = f.reindex(pd.DatetimeIndex(t_dec).as_unit("ns")).set_axis(ev.index)
     out = pd.concat([out, f[FEATURES_MACRO].astype(float)], axis=1)
     cob = float(out[list(PM_COLS)].notna().any(axis=1).mean()) if len(out) else 0.0
     out.attrs["resumen"] = {
         "calendario": {"calendar_id": cal.calendar_id, "verified_at": cal.verified_at,
-                       "cobertura_desde": {k: str(pd.Timestamp(min((e.ts_ms for e in cal.events if e.kind == k),
-                                                                     default=0), unit="ms", tz="UTC"))
-                                           for k in CAL_KINDS},
-                       "nota": "fechas conocidas de antemano; NaN antes del primer evento listado de cada tipo"},
+                       "historico_id": getattr(historico, "calendar_id", None),
+                       "fechas": {k: (lambda a: {"n": int(a.size),
+                                                 "desde": str(pd.Timestamp(int(a[0]), unit="ms", tz="UTC")) if a.size else None})
+                                  (release_times(cal, k, historico, vint)) for k in CAL_KINDS},
+                       "nota": ("fechas conocidas de antemano: FOMC programadas (historico + vigente); CPI/NFP del "
+                                "calendario BLS y, antes, de los vintages de FRED (CPIAUCSL/PAYEMS)")},
         "polymarket": {"cobertura_pct": round(cob * 100, 2),
                        "usable": cob >= POLY_MIN_COBERTURA,
                        "nota": ("la historia de Polymarket cubre < 5 % de los eventos: columnas NaN, no usar"

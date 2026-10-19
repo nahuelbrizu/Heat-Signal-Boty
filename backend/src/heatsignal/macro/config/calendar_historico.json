@@ -1,0 +1,339 @@
+{
+ "calendar_id": "macro-calendar-historico-2026-10-19",
+ "timezone": "America/New_York",
+ "verified_at": "2026-10-19",
+ "note": "Archivo historico, inmutable (solo laboratorio): FOMC 2021-2025, dia del comunicado, verificado contra la pagina oficial de la Fed (la fila de cada reunion y el link de su comunicado monetaryYYYYMMDDa.htm, cuya fecha es la del comunicado). Comunicados de reuniones programadas: 14:00 ET (\"For release at 2:00 p.m.\"). scheduled=false = accion no programada (no se conocia de antemano: el laboratorio NO la usa como 'proximo evento'). El calendario vigente (calendar.json) sigue desde 2026. CPI y NFP historicos no estan aca: salen de los vintages de FRED (CPIAUCSL, PAYEMS).",
+ "sources": {
+  "FOMC": "https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm"
+ },
+ "events": [
+  {
+   "kind": "FOMC",
+   "date": "2021-01-27",
+   "time": "14:00",
+   "label": "Decisión FOMC (reunión 26-27, comunicado 01-27)",
+   "scheduled": true,
+   "tentative": false
+  },
+  {
+   "kind": "FOMC",
+   "date": "2021-03-17",
+   "time": "14:00",
+   "label": "Decisión FOMC (reunión 16-17, comunicado 03-17) + proyecciones (SEP)",
+   "scheduled": true,
+   "tentative": false
+  },
+  {
+   "kind": "FOMC",
+   "date": "2021-04-28",
+   "time": "14:00",
+   "label": "Decisión FOMC (reunión 27-28, comunicado 04-28)",
+   "scheduled": true,
+   "tentative": false
+  },
+  {
+   "kind": "FOMC",
+   "date": "2021-06-16",
+   "time": "14:00",
+   "label": "Decisión FOMC (reunión 15-16, comunicado 06-16) + proyecciones (SEP)",
+   "scheduled": true,
+   "tentative": false
+  },
+  {
+   "kind": "FOMC",
+   "date": "2021-07-28",
+   "time": "14:00",
+   "label": "Decisión FOMC (reunión 27-28, comunicado 07-28)",
+   "scheduled": true,
+   "tentative": false
+  },
+  {
+   "kind": "FOMC",
+   "date": "2021-09-22",
+   "time": "14:00",
+   "label": "Decisión FOMC (reunión 21-22, comunicado 09-22) + proyecciones (SEP)",
+   "scheduled": true,
+   "tentative": false
+  },
+  {
+   "kind": "FOMC",
+   "date": "2021-11-03",
+   "time": "14:00",
+   "label": "Decisión FOMC (reunión 2-3, comunicado 11-03)",
+   "scheduled": true,
+   "tentative": false
+  },
+  {
+   "kind": "FOMC",
+   "date": "2021-12-15",
+   "time": "14:00",
+   "label": "Decisión FOMC (reunión 14-15, comunicado 12-15) + proyecciones (SEP)",
+   "scheduled": true,
+   "tentative": false
+  },
+  {
+   "kind": "FOMC",
+   "date": "2022-01-26",
+   "time": "14:00",
+   "label": "Decisión FOMC (reunión 25-26, comunicado 01-26)",
+   "scheduled": true,
+   "tentative": false
+  },
+  {
+   "kind": "FOMC",
+   "date": "2022-03-16",
+   "time": "14:00",
+   "label": "Decisión FOMC (reunión 15-16, comunicado 03-16) + proyecciones (SEP)",
+   "scheduled": true,
+   "tentative": false
+  },
+  {
+   "kind": "FOMC",
+   "date": "2022-05-04",
+   "time": "14:00",
+   "label": "Decisión FOMC (reunión 3-4, comunicado 05-04)",
+   "scheduled": true,
+   "tentative": false
+  },
+  {
+   "kind": "FOMC",
+   "date": "2022-06-15",
+   "time": "14:00",
+   "label": "Decisión FOMC (reunión 14-15, comunicado 06-15) + proyecciones (SEP)",
+   "scheduled": true,
+   "tentative": false
+  },
+  {
+   "kind": "FOMC",
+   "date": "2022-07-27",
+   "time": "14:00",
+   "label": "Decisión FOMC (reunión 26-27, comunicado 07-27)",
+   "scheduled": true,
+   "tentative": false
+  },
+  {
+   "kind": "FOMC",
+   "date": "2022-09-21",
+   "time": "14:00",
+   "label": "Decisión FOMC (reunión 20-21, comunicado 09-21) + proyecciones (SEP)",
+   "scheduled": true,
+   "tentative": false
+  },
+  {
+   "kind": "FOMC",
+   "date": "2022-11-02",
+   "time": "14:00",
+   "label": "Decisión FOMC (reunión 1-2, comunicado 11-02)",
+   "scheduled": true,
+   "tentative": false
+  },
+  {
+   "kind": "FOMC",
+   "date": "2022-12-14",
+   "time": "14:00",
+   "label": "Decisión FOMC (reunión 13-14, comunicado 12-14) + proyecciones (SEP)",
+   "scheduled": true,
+   "tentative": false
+  },
+  {
+   "kind": "FOMC",
+   "date": "2023-02-01",
+   "time": "14:00",
+   "label": "Decisión FOMC (reunión 31-1, comunicado 02-01)",
+   "scheduled": true,
+   "tentative": false
+  },
+  {
+   "kind": "FOMC",
+   "date": "2023-03-22",
+   "time": "14:00",
+   "label": "Decisión FOMC (reunión 21-22, comunicado 03-22) + proyecciones (SEP)",
+   "scheduled": true,
+   "tentative": false
+  },
+  {
+   "kind": "FOMC",
+   "date": "2023-05-03",
+   "time": "14:00",
+   "label": "Decisión FOMC (reunión 2-3, comunicado 05-03)",
+   "scheduled": true,
+   "tentative": false
+  },
+  {
+   "kind": "FOMC",
+   "date": "2023-06-14",
+   "time": "14:00",
+   "label": "Decisión FOMC (reunión 13-14, comunicado 06-14) + proyecciones (SEP)",
+   "scheduled": true,
+   "tentative": false
+  },
+  {
+   "kind": "FOMC",
+   "date": "2023-07-26",
+   "time": "14:00",
+   "label": "Decisión FOMC (reunión 25-26, comunicado 07-26)",
+   "scheduled": true,
+   "tentative": false
+  },
+  {
+   "kind": "FOMC",
+   "date": "2023-09-20",
+   "time": "14:00",
+   "label": "Decisión FOMC (reunión 19-20, comunicado 09-20) + proyecciones (SEP)",
+   "scheduled": true,
+   "tentative": false
+  },
+  {
+   "kind": "FOMC",
+   "date": "2023-11-01",
+   "time": "14:00",
+   "label": "Decisión FOMC (reunión 31-1, comunicado 11-01)",
+   "scheduled": true,
+   "tentative": false
+  },
+  {
+   "kind": "FOMC",
+   "date": "2023-12-13",
+   "time": "14:00",
+   "label": "Decisión FOMC (reunión 12-13, comunicado 12-13) + proyecciones (SEP)",
+   "scheduled": true,
+   "tentative": false
+  },
+  {
+   "kind": "FOMC",
+   "date": "2024-01-31",
+   "time": "14:00",
+   "label": "Decisión FOMC (reunión 30-31, comunicado 01-31)",
+   "scheduled": true,
+   "tentative": false
+  },
+  {
+   "kind": "FOMC",
+   "date": "2024-03-20",
+   "time": "14:00",
+   "label": "Decisión FOMC (reunión 19-20, comunicado 03-20) + proyecciones (SEP)",
+   "scheduled": true,
+   "tentative": false
+  },
+  {
+   "kind": "FOMC",
+   "date": "2024-05-01",
+   "time": "14:00",
+   "label": "Decisión FOMC (reunión 30-1, comunicado 05-01)",
+   "scheduled": true,
+   "tentative": false
+  },
+  {
+   "kind": "FOMC",
+   "date": "2024-06-12",
+   "time": "14:00",
+   "label": "Decisión FOMC (reunión 11-12, comunicado 06-12) + proyecciones (SEP)",
+   "scheduled": true,
+   "tentative": false
+  },
+  {
+   "kind": "FOMC",
+   "date": "2024-07-31",
+   "time": "14:00",
+   "label": "Decisión FOMC (reunión 30-31, comunicado 07-31)",
+   "scheduled": true,
+   "tentative": false
+  },
+  {
+   "kind": "FOMC",
+   "date": "2024-09-18",
+   "time": "14:00",
+   "label": "Decisión FOMC (reunión 17-18, comunicado 09-18) + proyecciones (SEP)",
+   "scheduled": true,
+   "tentative": false
+  },
+  {
+   "kind": "FOMC",
+   "date": "2024-11-07",
+   "time": "14:00",
+   "label": "Decisión FOMC (reunión 6-7, comunicado 11-07)",
+   "scheduled": true,
+   "tentative": false
+  },
+  {
+   "kind": "FOMC",
+   "date": "2024-12-18",
+   "time": "14:00",
+   "label": "Decisión FOMC (reunión 17-18, comunicado 12-18) + proyecciones (SEP)",
+   "scheduled": true,
+   "tentative": false
+  },
+  {
+   "kind": "FOMC",
+   "date": "2025-01-29",
+   "time": "14:00",
+   "label": "Decisión FOMC (reunión 28-29, comunicado 01-29)",
+   "scheduled": true,
+   "tentative": false
+  },
+  {
+   "kind": "FOMC",
+   "date": "2025-03-19",
+   "time": "14:00",
+   "label": "Decisión FOMC (reunión 18-19, comunicado 03-19) + proyecciones (SEP)",
+   "scheduled": true,
+   "tentative": false
+  },
+  {
+   "kind": "FOMC",
+   "date": "2025-05-07",
+   "time": "14:00",
+   "label": "Decisión FOMC (reunión 6-7, comunicado 05-07)",
+   "scheduled": true,
+   "tentative": false
+  },
+  {
+   "kind": "FOMC",
+   "date": "2025-06-18",
+   "time": "14:00",
+   "label": "Decisión FOMC (reunión 17-18, comunicado 06-18) + proyecciones (SEP)",
+   "scheduled": true,
+   "tentative": false
+  },
+  {
+   "kind": "FOMC",
+   "date": "2025-07-30",
+   "time": "14:00",
+   "label": "Decisión FOMC (reunión 29-30, comunicado 07-30)",
+   "scheduled": true,
+   "tentative": false
+  },
+  {
+   "kind": "FOMC",
+   "date": "2025-08-22",
+   "time": "10:00",
+   "label": "FOMC no programada (notation vote): actualiza el Statement on Longer-Run Goals and Monetary Policy Strategy; sin decision de tasa",
+   "scheduled": false,
+   "tentative": false
+  },
+  {
+   "kind": "FOMC",
+   "date": "2025-09-17",
+   "time": "14:00",
+   "label": "Decisión FOMC (reunión 16-17, comunicado 09-17) + proyecciones (SEP)",
+   "scheduled": true,
+   "tentative": false
+  },
+  {
+   "kind": "FOMC",
+   "date": "2025-10-29",
+   "time": "14:00",
+   "label": "Decisión FOMC (reunión 28-29, comunicado 10-29)",
+   "scheduled": true,
+   "tentative": false
+  },
+  {
+   "kind": "FOMC",
+   "date": "2025-12-10",
+   "time": "14:00",
+   "label": "Decisión FOMC (reunión 9-10, comunicado 12-10) + proyecciones (SEP)",
+   "scheduled": true,
+   "tentative": false
+  }
+ ]
+}

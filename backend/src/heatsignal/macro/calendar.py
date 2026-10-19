@@ -9,6 +9,11 @@ fuentes oficiales (verificadas el 2026-10-19) y quedan en el repo:
   - Empleo: https://www.bls.gov/schedule/news_release/empsit.htm (08:30 ET).
 Las horas se guardan en hora de Nueva York y se pasan a UTC con DST (zoneinfo). Si el archivo se queda sin fechas
 futuras, `coverage_warning` lo dice (sin fallos silenciosos): hay que actualizarlo con el calendario nuevo.
+
+`config/calendar_historico.json` (aparte, inmutable, solo lo usa el laboratorio): FOMC 2021-2025 verificado contra
+la misma pagina de la Fed, con `scheduled` (false = accion no programada, que no se conocia de antemano). Va en un
+archivo separado para que el vigente siga chico y con su propio `verified_at`/aviso de cobertura, y para que el vivo
+no cambie de comportamiento. CPI/NFP historicos no se copian a mano: salen de los vintages de FRED (lab/meta).
 """
 
 from __future__ import annotations
@@ -22,6 +27,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 CALENDAR_PATH = Path(__file__).with_name("config") / "calendar.json"
+HISTORICAL_PATH = Path(__file__).with_name("config") / "calendar_historico.json"
 KINDS = ("FOMC", "CPI", "NFP")
 WARN_IF_COVERAGE_BELOW_DAYS = 45
 
@@ -33,6 +39,7 @@ class MacroEvent:
     ts_ms: int          # instante de la publicacion, UTC
     tentative: bool
     source: str
+    scheduled: bool = True  # False = no programada (no se conocia de antemano)
 
     def as_dict(self) -> dict[str, Any]:
         return {"kind": self.kind, "label": self.label, "ts_ms": self.ts_ms,
@@ -82,7 +89,8 @@ def parse_calendar(raw: dict[str, Any]) -> Calendar:
         except (KeyError, ValueError) as exc:
             raise ValueError(f"calendario: fecha ilegible en {e!r}") from exc
         events.append(MacroEvent(kind=kind, label=str(e.get("label") or kind), ts_ms=int(local.timestamp() * 1000),
-                                 tentative=bool(e.get("tentative")), source=sources[kind]))
+                                 tentative=bool(e.get("tentative")), source=sources[kind],
+                                 scheduled=bool(e.get("scheduled", True))))
     events.sort(key=lambda x: x.ts_ms)
     return Calendar(calendar_id=str(raw.get("calendar_id") or "sin-id"), verified_at=str(raw.get("verified_at") or ""),
                     events=tuple(events), sources=sources)
@@ -94,5 +102,11 @@ def _load_cached(path: str, mtime: float) -> Calendar:
 
 
 def load_calendar(path: Path | str = CALENDAR_PATH) -> Calendar:
+    p = Path(path)
+    return _load_cached(str(p), p.stat().st_mtime)
+
+
+def load_historical(path: Path | str = HISTORICAL_PATH) -> Calendar:
+    """Calendario historico (laboratorio). Mismo formato y validacion que `calendar.json`."""
     p = Path(path)
     return _load_cached(str(p), p.stat().st_mtime)

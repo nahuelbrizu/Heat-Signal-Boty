@@ -114,7 +114,7 @@ del diseño de arriba:
 
 ## Contexto macro y diario de lecciones (2026-10-19)
 
-- **Bloque "Macro y eventos"** (`macro/context.py`, `macro-context-v1`): el ciclo (`pipeline/analysis.py`, parámetro
+- **Bloque "Macro y eventos"** (`macro/context.py`, `macro-context-v2`, con PAYEMS): el ciclo (`pipeline/analysis.py`, parámetro
   `macro`) lo arma point-in-time y lo pone en `state["macro_context"]`; SOLO el Analista de Contexto de Mercado lo
   recibe, una vez, al final de su mensaje. **Mismas llamadas por ciclo** (test). Tope `MAX_BLOCK_CHARS` = 1150
   (~320 tokens medidos con datos reales; estimación conservadora 3,2 car./token). Contiene: FRED (DFF, CPIAUCSL,

@@ -29,7 +29,7 @@ from .store import FredObs, MacroStore, ms_to_iso
 
 log = logging.getLogger("heatsignal.macro.context")
 
-MACRO_CONTEXT_ID = "macro-context-v1"
+MACRO_CONTEXT_ID = "macro-context-v2"  # v2: + PAYEMS (empleo NFP)
 MAX_BLOCK_CHARS = 1150
 CHARS_PER_TOKEN = 3.2           # conservador para espanol con numeros (sobre-estima tokens)
 EVENT_WINDOW_H = 48.0
