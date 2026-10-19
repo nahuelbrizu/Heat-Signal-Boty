@@ -23,6 +23,8 @@ from uuid import UUID
 
 from fastapi import FastAPI, HTTPException, Query
 
+from ..ingestion.loop_monitor import run_heavy
+
 if TYPE_CHECKING:  # pragma: no cover
     from .panel import PanelContext
 
@@ -106,7 +108,7 @@ def register_macro_api(app: FastAPI, ctx: PanelContext) -> None:
         from .panel import json_safe
 
         try:
-            return json_safe(await asyncio.to_thread(macro_view, _db("macro"), int(time.time() * 1000)))
+            return json_safe(await run_heavy(macro_view, _db("macro"), int(time.time() * 1000)))
         except Exception as exc:  # noqa: BLE001 - error explicito, no silencio
             raise HTTPException(status_code=503, detail=f"no se pudo leer la base macro: {exc}") from None
 

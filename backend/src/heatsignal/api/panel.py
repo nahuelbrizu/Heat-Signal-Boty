@@ -369,6 +369,21 @@ def _hypotheses_view(ctx: PanelContext) -> dict[str, Any]:
 def create_panel_app(ctx: PanelContext) -> FastAPI:
     app = FastAPI(title="HeatSignal panel interno", docs_url=None, redoc_url=None, openapi_url=None)
 
+    @app.middleware("http")
+    async def _time_heavy_endpoints(request, call_next):  # noqa: ANN001, ANN202
+        """Duracion de /api/htf, /api/market, /api/sessions, /api/macro (ingestion/loop_monitor.py)."""
+        from ..ingestion import loop_monitor
+
+        mon = loop_monitor.current()
+        prefix = None if mon is None else mon.routes.match(request.url.path)
+        if prefix is None:
+            return await call_next(request)
+        t0 = time.perf_counter()
+        try:
+            return await call_next(request)
+        finally:
+            mon.routes.record(prefix, (time.perf_counter() - t0) * 1000)  # type: ignore[union-attr]
+
     # Cambia con cada reinicio del proceso (deploy) o cambio del HTML: la pagina abierta lo compara en cada
     # poll y se recarga sola, asi nunca queda mostrando una version vieja del panel.
     # Incluye los archivos de la SPA (static/app/): cambiar un .js tambien recarga las paginas abiertas.

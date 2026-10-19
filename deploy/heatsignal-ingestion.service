@@ -21,7 +21,8 @@ ExecStart=/home/nahue/heatsignal/backend/.venv/bin/python -m heatsignal.ingestio
 Restart=always
 RestartSec=5
 # Tope de RAM para no tumbar la VM de 2 GB (la ventana de trades de 30 min ronda 160-250 MB).
-MemoryMax=700M
+MemoryHigh=900M
+MemoryMax=1200M
 # Sin escritura a disco salvo el directorio del proyecto (base de hipotesis en data/).
 ProtectSystem=strict
 # rclone (lectura fria del panel: rangos archivados en Drive) renueva el token y lo reescribe en su config

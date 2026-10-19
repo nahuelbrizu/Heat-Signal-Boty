@@ -222,3 +222,25 @@ def test_db_reads_are_readonly(tmp_path) -> None:
     before = conn.execute("SELECT COUNT(*) FROM klines").fetchone()[0]
     HourlyCandleProvider(db, lookback_h=2, rest=False).candles(SYM, DAY0 + 2 * HOUR_MS + 120_000)
     assert conn.execute("SELECT COUNT(*) FROM klines").fetchone()[0] == before
+
+
+def test_provider_cost_does_not_grow_with_hour_of_day(tmp_path) -> None:
+    """El panel pide /api/htf cada 60 s todo el dia: el cache por hora cerrada evita releer las 1m del dia.
+
+    Una consulta a la base por hora nueva (no por pedido), y el resultado con cache es identico al de un
+    proveedor recien creado (mismo VWAP, niveles y tendencia)."""
+    hours = [DAY0 - 24 * HOUR_MS + i * HOUR_MS for i in range(48)]
+    db = _store_with(tmp_path, kline_hours=hours[:24], bar_hours=hours[24:])
+    p = HourlyCandleProvider(db, lookback_h=30, rest=False, db_grace_ms=0)
+    queries_at: dict[int, int] = {}
+    for minute in range(0, 23 * 60 + 59, 1):  # un pedido por minuto durante el dia UTC
+        now = DAY0 + minute * 60_000 + 30_000
+        p.context(SYM, now)
+        queries_at[minute // 60] = p.stats["db_queries"]
+    assert queries_at[23] <= 24 + 1  # una por hora cerrada (+ la carga inicial), no 1440
+    per_hour = [queries_at[h] - queries_at[h - 1] for h in range(1, 24)]
+    assert max(per_hour) <= 1
+    now = DAY0 + 23 * HOUR_MS + 30 * 60_000
+    cached = p.context(SYM, now).model_dump()
+    fresh = HourlyCandleProvider(db, lookback_h=30, rest=False, db_grace_ms=0).context(SYM, now).model_dump()
+    assert cached == fresh

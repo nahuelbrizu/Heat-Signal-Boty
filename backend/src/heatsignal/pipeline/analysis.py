@@ -45,6 +45,7 @@ from typing import Any, Literal
 
 from ..evaluation.strategy_registry import StrategyHypothesis, StrategyStatus
 from ..features.builder import build_feature_set
+from ..ingestion.loop_monitor import run_heavy
 from ..features.gaps import classify_gap
 from ..features.sessions import (
     HOUR_MS,
@@ -285,7 +286,7 @@ class AnalysisLoop:
             liqs = self._memory.liquidations(sym)
             trades = self._memory.trades(sym)
             tickers = self._memory.tickers(sym)
-            fs = await asyncio.to_thread(
+            fs = await run_heavy(
                 build_feature_set, sym, liqs, trades, tickers, now_ms, self._window_s
             )
             update: dict = {"data_gaps": [*fs.data_gaps, *self._memory.data_gaps(sym, self._window_s)]}
@@ -294,7 +295,7 @@ class AnalysisLoop:
             if fs.quality is not None:
                 update["quality"] = fs.quality.model_copy(update={"warmup_have_s": self._memory.accumulated_s()})
             if self.htf is not None:
-                htf_ctx = await asyncio.to_thread(self.htf.context, sym, now_ms)
+                htf_ctx = await run_heavy(self.htf.context, sym, now_ms)
                 update["htf"] = htf_ctx
                 update["data_gaps"] += [g for g in htf_ctx.data_gaps if g not in update["data_gaps"]]
             if self._news is not None:
@@ -416,7 +417,7 @@ class AnalysisLoop:
             state["day_journal"] = journal_text
         if self.macro is not None:
             try:
-                macro_text = await asyncio.to_thread(self.macro.context_block, now_ms)
+                macro_text = await run_heavy(self.macro.context_block, now_ms)
             except Exception:  # noqa: BLE001 - el contexto macro nunca frena el ciclo (queda en el log)
                 log.exception("%s: no se pudo armar el bloque macro", run_id)
                 macro_text = "Macro y eventos: no disponible en este ciclo (error al leer la base macro)."
@@ -476,8 +477,8 @@ class AnalysisLoop:
         if not have_code:
             try:
                 if self._session_source is not None:
-                    analysis = await asyncio.to_thread(self._session_source.analyze, self.sessions, d, open_ms,
-                                                       self._symbols, now_ms)
+                    analysis = await run_heavy(self._session_source.analyze, self.sessions, d, open_ms,
+                                                 self._symbols, now_ms)
                 else:
                     analysis = build_analysis(d, open_ms, {
                         s: analyze_symbol(d, s, open_ms, None, None, None, None,

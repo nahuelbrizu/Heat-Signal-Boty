@@ -556,6 +556,15 @@
   restantes "para probar". Se reintenta solo con datos nuevos (≥ 3 meses hacia adelante) o features nuevas
   pre-registradas con una hipótesis concreta. Las estrategias primarias siguen en paper.
 
+- **Ingesta trabándose por memoria: causa y arreglo (2026-10-19).** Síntoma: OKX/Hyperliquid con decenas de
+  reconexiones por hora ("socket zombie"), intervalo de health de 60 s → hasta 321 s, creciendo con las horas. Causa
+  medida: el proceso llegaba a `MemoryMax=700M` y paginaba contra swap (pico 628 MB de swap): la ventana en memoria
+  guardaba objetos pydantic de ~1,2–1,5 KB por evento (~640 MB en régimen). Arreglo: ventana compacta con `__slots__`
+  (232 B por trade, 320 B por ticker, ~130 MB en régimen), monitor del event loop (`ingestion/loop_monitor.py`: retraso
+  p50/p99/máx, RSS y swap cada minuto; tiempos de endpoints; en `/api/system` y en Sistema), executor propio de 2 hilos
+  para cálculos pesados (el DNS de las reconexiones no espera detrás). Servicio: `MemoryHigh=900M`, `MemoryMax=1200M`.
+  Descartado midiendo: executor saturado y costo de `/api/htf` (5 ms con cache incremental).
+
 ## Abiertas
 - ~~Plan de CoinGlass a contratar.~~ **Ya no aplica al core** — la fuente primaria pasó a WS nativos.
   Solo se retomaría si se implementa la fuente BYOK opcional (y ahí el plan lo elige el usuario).

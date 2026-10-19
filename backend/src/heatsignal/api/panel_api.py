@@ -42,6 +42,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from ..ingestion.loop_monitor import run_heavy
 from ..features.gaps import gap_classes
 from ..schema.hypotheses import HypothesisStatus
 
@@ -1808,7 +1809,7 @@ def register_api(app: FastAPI, ctx: PanelContext, build_id: str) -> None:  # noq
             raise HTTPException(status_code=404, detail=f"simbolo no configurado: {symbol!r}")
         now = now_ms()
         try:
-            h = await asyncio.wait_for(asyncio.to_thread(provider.context, sym, now), timeout=30.0)
+            h = await asyncio.wait_for(run_heavy(provider.context, sym, now), timeout=30.0)
         except asyncio.TimeoutError:
             raise HTTPException(status_code=503, detail="el contexto 1h tardo demasiado (base o REST lentos)") from None
         out = h.model_dump(mode="json")
@@ -1886,6 +1887,7 @@ def register_api(app: FastAPI, ctx: PanelContext, build_id: str) -> None:  # noq
             "started_ms": int(ctx.started_at * 1000), "started_at": iso(ctx.started_at * 1000),
             "uptime_s": round(time.time() - ctx.started_at, 1),
             "now_ms": now, "now_at": iso(now),
+            "runtime": _runtime(),
             "config": ctx.config,
             "settings": ctx.settings,
             "databases": dbs,
@@ -1893,6 +1895,14 @@ def register_api(app: FastAPI, ctx: PanelContext, build_id: str) -> None:  # noq
             "export": export,
             "errors": errors,
         }
+
+
+def _runtime() -> dict | None:
+    """Retraso del event loop, executors, endpoints pesados y RSS/swap (ingestion/loop_monitor.py)."""
+    from ..ingestion import loop_monitor
+
+    mon = loop_monitor.current()
+    return None if mon is None else mon.snapshot()
 
 
 def _llm_cooldowns() -> dict:

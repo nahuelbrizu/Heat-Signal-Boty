@@ -73,6 +73,7 @@ from ..storage.timescale import TimescaleSink, _redact
 from .binance_worker import BinanceWorker, _norm_symbol
 from .bybit_worker import BybitWorker
 from .hyperliquid_worker import HyperliquidWorker
+from . import loop_monitor
 from .health import CountingSink, HealthRegistry, ReconnectLogHandler
 
 log = logging.getLogger("heatsignal.ingestion.run")
@@ -630,6 +631,8 @@ async def run(cfg: RunConfig, *, stop_event: asyncio.Event | None = None) -> Non
     sampler = asyncio.create_task(
         health.run_sampler(sample_s=min(5.0, cfg.health_log_s), log_every_s=cfg.health_log_s)
     )
+    # retraso del loop + executors (default instrumentado y uno aparte para trabajo pesado) al log de health
+    _, monitor_task = loop_monitor.start(loop, log_every_s=cfg.health_log_s)
     oi_poller, oi_task = start_binance_oi(cfg, names, throttled, sinks, stop)
     analysis_stack = contextlib.AsyncExitStack()
     analysis: AnalysisHandles | None = None
@@ -670,7 +673,8 @@ async def run(cfg: RunConfig, *, stop_event: asyncio.Event | None = None) -> Non
             t.cancel()
         await asyncio.gather(*tasks.values(), return_exceptions=True)
         sampler.cancel()
-        await asyncio.gather(sampler, return_exceptions=True)
+        monitor_task.cancel()
+        await asyncio.gather(sampler, monitor_task, return_exceptions=True)
         if oi_task is not None:
             oi_task.cancel()  # puede estar en medio de un GET: no se espera
             await asyncio.gather(oi_task, return_exceptions=True)

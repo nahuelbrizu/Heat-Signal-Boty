@@ -109,3 +109,38 @@ async def test_close_discards_everything() -> None:
 def test_invalid_config_rejected() -> None:
     with pytest.raises(ValueError):
         MemoryWindowSink(retention_s={"trade": 0})
+
+
+async def test_window_keeps_compact_read_only_rows_with_same_fields() -> None:
+    """La ventana guarda filas compactas: mismos atributos y valores que el evento pydantic, solo lectura."""
+    clock = Clock()
+    sink = MemoryWindowSink(clock_ms=clock)
+    events = [_trade(clock.ms), _liq(clock.ms), _ticker(clock.ms)]
+    for ev in events:
+        await sink.write(ev)
+    rows = [sink.trades("BTC-USDT")[0], sink.liquidations("BTC-USDT")[0], sink.tickers("BTC-USDT")[0]]
+    for ev, row in zip(events, rows):
+        assert row.as_dict() == ev.model_dump()  # mismos campos, mismos valores (enums incluidos)
+        assert row.kind == ev.kind and row.source is ev.source
+        with pytest.raises(AttributeError):
+            row.price = 1.0  # type: ignore[misc]
+
+
+async def test_window_ram_per_event_is_bounded() -> None:
+    """Regresion del 19/10: ~1.2 KB por trade pydantic llevaba la ventana a >600 MB y el servicio a swap."""
+    import tracemalloc
+
+    clock = Clock()
+    sink = MemoryWindowSink(clock_ms=clock)
+    n = 20_000
+    tracemalloc.start()
+    try:
+        before = tracemalloc.get_traced_memory()[0]
+        for i in range(n):
+            await sink.write(TradeEvent(source=Exchange.BINANCE, symbol="BTC-" + "USDT", side=Side.BUY,
+                                        price=60_000.0 + i, qty=0.1 + i, ts_event_ms=clock.ms + i,
+                                        ts_ingest_ms=clock.ms))
+        per_event = (tracemalloc.get_traced_memory()[0] - before) / n
+    finally:
+        tracemalloc.stop()
+    assert per_event < 400, per_event

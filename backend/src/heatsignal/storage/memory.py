@@ -11,8 +11,12 @@ Diseno:
     que es monotono por llegada. `ts_event_ms` puede venir desordenado: OKX manda
     liquidaciones tarde.
   - Retencion por tipo (trades, tickers y liquidaciones tienen volumenes muy distintos)
-    y un tope duro de eventos por (tipo, simbolo) para acotar la RAM. Un TradeEvent ocupa
-    ~1.1 KB: 2 simbolos x 3 exchanges ~ 80 trades/s -> 30 min ~ 160 MB.
+    y un tope duro de eventos por (tipo, simbolo) para acotar la RAM.
+  - Los eventos se guardan como filas compactas (`__slots__`, mismos atributos que el modelo pydantic,
+    solo lectura). Un TradeEvent pydantic ocupa ~1.2 KB y un TickerEvent ~1.5 KB; la fila compacta ~0.25 KB.
+    Con 7 simbolos x 4 exchanges (~160 trades/s + ~28 tickers/s) la ventana pydantic pasaba los 600 MB,
+    chocaba con MemoryMax=700M del servicio y el kernel mandaba el proceso a swap: el event loop se
+    trababa (sockets "zombie", health cada 2-5 min) con la CPU baja. Ver `CompactEvent`.
   - Sin fallos silenciosos: si el tope expulsa eventos que todavia estaban dentro de la
     retencion, la ventana queda incompleta. Se cuenta, se loguea y `data_gaps()` lo declara.
   - Cada reinicio vacia la ventana (calentamiento). `data_gaps()` tambien lo declara
@@ -22,6 +26,7 @@ Diseno:
 from __future__ import annotations
 
 import logging
+import sys
 import time
 from collections import deque
 from itertools import islice
@@ -44,6 +49,50 @@ DEFAULT_MAX_EVENTS: dict[str, int] = {
     "trade": 300_000,
     "ticker": 50_000,
 }
+
+
+class CompactEvent:
+    """Fila de solo lectura con los mismos atributos que el evento pydantic de origen (sin validacion).
+
+    Los consumidores (features, panel, analisis) solo leen atributos; no se usa `model_dump` sobre la ventana.
+    Un objeto con slots en vez de 3 (instancia + __dict__ + fields_set): ~5x menos RAM y menos trabajo para el GC.
+    """
+
+    __slots__ = ()
+    _fields: tuple[str, ...] = ()
+
+    def __setattr__(self, name: str, value: object) -> None:
+        raise AttributeError(f"{type(self).__name__} es de solo lectura")
+
+    def __repr__(self) -> str:
+        return f"{type(self).__name__}({', '.join(f'{f}={getattr(self, f)!r}' for f in self._fields)})"
+
+    def as_dict(self) -> dict[str, object]:
+        return {f: getattr(self, f) for f in self._fields}
+
+
+def _compact_class(model: type) -> type[CompactEvent]:
+    fields = tuple(model.model_fields)  # type: ignore[attr-defined]
+    return type(f"Compact{model.__name__}", (CompactEvent,), {"__slots__": fields, "_fields": fields})
+
+
+_COMPACT: dict[str, type[CompactEvent]] = {
+    "liquidation": _compact_class(LiquidationEvent),
+    "trade": _compact_class(TradeEvent),
+    "ticker": _compact_class(TickerEvent),
+}
+_SETATTR = object.__setattr__
+
+
+def compact(event: IngestEvent) -> CompactEvent:
+    """Copia los campos del evento a su fila compacta (el simbolo se interna: un str por simbolo, no por evento)."""
+    cls = _COMPACT[event.kind]
+    row = object.__new__(cls)
+    d = event.__dict__
+    for f in cls._fields:
+        _SETATTR(row, f, d[f])
+    _SETATTR(row, "symbol", sys.intern(d["symbol"]))
+    return row
 
 
 def _now_ms() -> int:
@@ -99,7 +148,7 @@ class MemoryWindowSink:
             return
         key = (kind, event.symbol)
         buf = self._buf.setdefault(key, deque())
-        buf.append(event)
+        buf.append(compact(event))  # type: ignore[arg-type]
         self.stats.written += 1
         self.stats.by_kind[kind] += 1
         self._expire(key, buf, self._clock_ms())

@@ -137,3 +137,16 @@ async def test_views_are_served_and_escape_text(tmp_path) -> None:
     assert "/api/hypotheses/by-trend" in (APP / "views" / "hipotesis.js").read_text()
     moneda = (APP / "views" / "moneda.js").read_text()
     assert "htfPanel(ctx, symbol)" in moneda and "ctx.every(60000" in moneda
+
+
+async def test_heavy_endpoints_are_timed_and_runtime_is_in_system(tmp_path, monkeypatch) -> None:
+    """Con el monitor del loop activo, /api/htf queda cronometrado y /api/system expone `runtime`."""
+    from heatsignal.ingestion import loop_monitor
+
+    mon = loop_monitor.LoopMonitor()
+    monkeypatch.setattr(loop_monitor, "_current", mon)
+    async with _client(_ctx(tmp_path)) as c:
+        assert (await c.get("/api/htf/XRPUSDT")).status_code == 200
+        rt = (await c.get("/api/system")).json()["runtime"]
+    assert rt["endpoints"]["/api/htf"]["n"] == 1 and rt["endpoints"]["/api/market"]["n"] == 0
+    assert "loop_lag" in rt and "rss_bytes" in rt["memory"] and "heavy" in rt["executors"]

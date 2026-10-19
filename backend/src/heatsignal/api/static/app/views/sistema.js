@@ -5,6 +5,32 @@ import { storageCard } from "../storage-ui.js";
 
 const DB_LABEL = { eval: "Evaluación (estrategias, hipótesis, ciclos)", history: "Historia (barras, liquidaciones, noticias)", checkpoints: "Checkpoints del grafo", lab_summary: "Resumen del laboratorio", freqtrade: "Freqtrade dry-run (paper trading, solo lectura)", paper_summary: "Comparación paper vs backtest (publicada desde la PC)" };
 
+// Retraso del event loop (tarea que duerme 1 s y mide cuanto tardo), executors, endpoints pesados y RSS/swap.
+// Con swap > 0 o p99 > 500 ms la ingesta se atrasa: los WS de OKX/Hyperliquid se cortan por "socket zombie".
+function runtimeCard(rt) {
+  if (!rt) return null;
+  const lag = rt.loop_lag || {}, mem = rt.memory || {}, ex = rt.executors || {}, ep = rt.endpoints || {};
+  const ms = (x) => isNum(x) ? (x >= 1000 ? (x / 1000).toFixed(1) + " s" : Math.round(x) + " ms") : "—";
+  const lagCls = (x) => !isNum(x) ? "" : x >= 1000 ? "bad-t" : x >= 200 ? "warn-t" : "";
+  const exRow = (name, e) => e ? [name, int(e.active) + " / " + int(e.max_workers), int(e.queued), int(e.max_active), ms(e.queue_wait && e.queue_wait.p99_ms), ms(e.run && e.run.p99_ms)] : null;
+  const mins = (rt.loop_lag_by_minute || []).slice(-10).reverse();
+  return el("div", { class: "grid two" },
+    card("Event loop", "una tarea duerme 1 s y mide el atraso real; resumen por minuto en el log de health",
+      el("div", { class: "stats" },
+        stat("Atraso p50", el("span", { class: lagCls(lag.p50_ms) }, ms(lag.p50_ms)), "últimos " + int(lag.window_s) + " s"),
+        stat("Atraso p99", el("span", { class: lagCls(lag.p99_ms) }, ms(lag.p99_ms)), "máx " + ms(lag.max_ms)),
+        stat("Atraso máx desde el arranque", el("span", { class: lagCls(lag.max_since_start_ms) }, ms(lag.max_since_start_ms)), ""),
+        stat("Swap del proceso", el("span", { class: (mem.swap_bytes || 0) > 50 * 2 ** 20 ? "bad-t" : "" }, isNum(mem.swap_bytes) ? bytes(mem.swap_bytes) : "—"), "RSS " + (isNum(mem.rss_bytes) ? bytes(mem.rss_bytes) : "—") + " · tope del servicio 700 MB")),
+      mins.length ? table([{ label: "Minuto" }, { label: "p50", cls: "n" }, { label: "p99", cls: "n" }, { label: "Máx", cls: "n" }, { label: "RSS", cls: "n" }, { label: "Swap", cls: "n" }],
+        mins.map((m) => [when(m.ts_ms), ms(m.p50_ms), { v: ms(m.p99_ms), cls: "n " + lagCls(m.p99_ms) }, { v: ms(m.max_ms), cls: "n " + lagCls(m.max_ms) },
+          isNum(m.rss_mb) ? m.rss_mb + " MB" : "—", isNum(m.swap_mb) ? m.swap_mb + " MB" : "—"]), { label: "Atraso por minuto" }) : null),
+    card("Executors y endpoints pesados", "default = asyncio.to_thread y DNS; pesado = contexto 1h, features, sesiones, macro",
+      table([{ label: "Executor" }, { label: "Activos", cls: "n" }, { label: "En cola", cls: "n" }, { label: "Máx activos", cls: "n" }, { label: "Espera p99", cls: "n" }, { label: "Duración p99", cls: "n" }],
+        [exRow("default", ex.default), exRow("pesado", ex.heavy)].filter(Boolean), { label: "Executors" }),
+      table([{ label: "Endpoint" }, { label: "Pedidos", cls: "n" }, { label: "p50", cls: "n" }, { label: "p99", cls: "n" }, { label: "Máx", cls: "n" }],
+        Object.entries(ep).map(([k, x]) => [el("span", { class: "mono small" }, k), int(x.n), ms(x.p50_ms), ms(x.p99_ms), ms(x.max_ms)]), { label: "Endpoints" })));
+}
+
 export async function mount(root, ctx) {
   const body = el("div", {}, loading()), storeBox = el("div");
   clear(root, pageHead("Sistema", "Operación del proceso de ingesta en la VM (solo lectura)."), body, storeBox);
@@ -39,6 +65,7 @@ export async function mount(root, ctx) {
           (er.cycles || []).length ? el("div", {}, el("h3", { style: { marginBottom: "6px" } }, "Ciclos con error (últimos 10)"),
             table([{ label: "Hora" }, { label: "Ciclo" }, { label: "Detalle" }], er.cycles.map((c) => [when(c.ts_ms), el("a", { href: ctx.href("ciclos", [c.run_id]) }, c.run_id), { v: prose(c.detail || ""), cls: "wrap" }]), { label: "Ciclos con error" })) : null)
           : el("p", { class: "muted" }, "Ningún error registrado.")),
+      runtimeCard(s.runtime),
       el("div", { class: "grid two" },
         card("Bases de datos y archivos", "incluye -wal/-shm de SQLite",
           table([{ label: "Base" }, { label: "Ruta" }, { label: "Tamaño", cls: "n" }, { label: "Modificada" }],
