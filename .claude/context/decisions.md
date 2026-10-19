@@ -415,6 +415,20 @@
 - **Listón del programa implementado** (`lab/program.py`, estados por intento en `lab_trial_status`, tres métodos
   en el panel). Resultado arriba.
 
+- **3 estrategias del grafo para días laterales: aprobadas por el usuario (2026-10-19), ANTES de cualquier
+  resultado.** Solo se activan si `daily_trend` (htf-trend-v1) = `lateral`. Velas de 1h CERRADAS, entrada verificada
+  por código, el LLM solo explica. Como máximo UNA hipótesis por moneda y por sesión entre las tres. Costos del
+  resolver (10 bps ida y vuelta). Definiciones fijas (cambiarlas = -v2):
+  1. `1h-lateral-falsa-ruptura-asia-v1`: rango de Asia = máximo/mínimo de las velas 1h de 00:00–08:00 UTC del día. En
+     la sesión de Europa (Londres) o EE.UU. (Nueva York), la última vela 1h cerrada tiene high > máx_Asia + 0,5·ATR14(1h)
+     y close < máx_Asia → SHORT; o low < mín_Asia − 0,5·ATR y close > mín_Asia → LONG. Salida: cierre de la 3ª vela 1h.
+  2. `1h-lateral-rechazo-dia-anterior-v1`: la última vela 1h cerrada toca el máximo del día UTC anterior (high ≥
+     máx_ayer − 0,25·ATR) con mecha superior ≥ 50 % de su rango y close < máx_ayer → SHORT; simétrico en el mínimo de
+     ayer (mecha inferior ≥ 50 %, close > mín_ayer) → LONG. Salida: cierre de la 4ª vela 1h.
+  3. `1h-lateral-extremo-vwap-v1`: VWAP del día UTC (precio típico de velas 1m, anclado 00:00 UTC). Si |close_1h −
+     VWAP| ≥ 2·ATR14(1h) y ADX14(1h) < 20 → hacia el VWAP (close > VWAP → SHORT; < → LONG). Salida: cierre de la 4ª
+     vela 1h.
+
 ## Abiertas
 - ~~Plan de CoinGlass a contratar.~~ **Ya no aplica al core** — la fuente primaria pasó a WS nativos.
   Solo se retomaría si se implementa la fuente BYOK opcional (y ahí el plan lo elige el usuario).
