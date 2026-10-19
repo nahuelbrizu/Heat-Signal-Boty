@@ -454,6 +454,15 @@
   y LATERALIDAD (rango de Asia, extremos de ayer, distancia al VWAP en ATR, ADX 1h, mechas); pre-registro sha256
   `36feb567ccef3b41`. Pendiente: stop de catástrofe para plata real.
 
+- **Meta-modelo, etapa 1 (dataset de eventos y etiquetas) hecha (2026-10-19).** `lab/meta/dataset.py` →
+  `~/heatsignal-lab/meta/events_v1.parquet` (n = 8.751, 2021-03 → 2026-07-16, nada del período excluido; pre-registro
+  `36feb567ccef3b41`, mismo archivo que sha256 `267aebab…` contando el salto de línea final). Etiqueta 1 (PnL neto > 0):
+  Donchian 39,7 % (n 635), tsmom 43,7 % (2.745 = 2.440 aperturas + 305 rebalanceos), ema-cruce 36,9 % (4.151; con su
+  temporalidad por defecto 1h, por eso más eventos que el OOS del lab, que eligió 4h la mayoría de las ventanas),
+  max-ruptura 46,9 % (1.220; los días encadenados de la misma posición no son eventos nuevos). PnL con 7 bps por lado y
+  funding (idéntico a `simulate()`); barreras evaluadas desde la vela siguiente, empate = stop; pesos por unicidad.
+  11 tests sin look-ahead (datos envenenados después del corte → resultado idéntico).
+
 ## Abiertas
 - ~~Plan de CoinGlass a contratar.~~ **Ya no aplica al core** — la fuente primaria pasó a WS nativos.
   Solo se retomaría si se implementa la fuente BYOK opcional (y ahí el plan lo elige el usuario).
