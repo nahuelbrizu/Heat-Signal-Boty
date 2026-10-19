@@ -59,6 +59,7 @@ Ver `.claude/context/agents.md`.
 
 | Archivo | Cuándo cargarlo |
 |---|---|
+| `.claude/context/conexion.md` | Cómo entrar al panel, FreqUI y la VM (túnel permanente, alias, qué hacer si se corta) |
 | `.claude/context/estado.md` | **Primero**: estado actual por fase, qué corre en la VM y lista de pendientes |
 | `.claude/context/agents.md` | Trabajar sobre cualquier agente o el grafo LangGraph |
 | `.claude/context/phase-0-blockers.md` | Setup inicial y bloqueantes previos a codear |

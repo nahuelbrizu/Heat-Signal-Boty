@@ -1,0 +1,12 @@
+[Unit]
+Description=HeatSignal: tunel SSH permanente al panel (8000) y FreqUI (8081) en la VM
+After=network-online.target
+
+[Service]
+Environment=CLOUDSDK_CORE_DISABLE_PROMPTS=1
+ExecStart=/snap/bin/gcloud compute ssh --zone asia-northeast1-a instance-20261016-191100 --project vocal-operand-271906 -- -N -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -o ExitOnForwardFailure=yes -o BatchMode=yes -L 8000:localhost:8000 -L 8081:localhost:8081
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=default.target
