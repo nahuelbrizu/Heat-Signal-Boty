@@ -500,6 +500,11 @@
   **Polymarket fuera del entrenamiento** (historia desde 2026-07-20: 0 % de cobertura); sigue en vivo como
   contexto; evaluarlo en una v2 cuando acumule meses.
 
+- **Meta-modelo, etapa 2 completa y etapa 3 iniciada (2026-10-19).** Dataset final: 8.751 eventos × 80 features
+  (calendario histórico corregido: `dias_hasta_*` 0 % NaN; Polymarket fuera). Etapa 3 en subtareas: 3a marco de
+  validación (purged k-fold k = 5, embargo 5 días, registro de configuraciones contra el presupuesto de 24, métricas),
+  sin entrenar con datos reales; 3b regresión logística (línea base); 3c LightGBM chico. Parámetros del pre-registro.
+
 ## Abiertas
 - ~~Plan de CoinGlass a contratar.~~ **Ya no aplica al core** — la fuente primaria pasó a WS nativos.
   Solo se retomaría si se implementa la fuente BYOK opcional (y ahí el plan lo elige el usuario).
