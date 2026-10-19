@@ -471,6 +471,13 @@
   `GET /fapi/v1/openInterest` (peso 1, doc oficial) cada 5 min en la ingesta, `TickerEvent coverage=rest_poll`, USD con
   el mark del WS; entra en `context.oi_*` y en la base histórica; si falla o tiene > 15 min, hueco real.
 
+- **Meta-modelo, etapa 2a (features básicas) hecha (2026-10-19).** `lab/meta/features.py` (`GRUPOS`, `load_all()`,
+  clave `evento_id`) → `features_basicas_v1.parquet`: 39 columnas (tendencia, volatilidad, momentum, velas, contexto),
+  0 % de NaN salvo ≤ 0,21 % en 4 percentiles/EMA200 diaria; 15 tests sin look-ahead. `daily_trend` sale `sin_datos` en
+  el 48 % (las primarias diarias deciden a las 00:00 UTC, sin velas del día cerradas: regla aplicada al pie de la
+  letra). **Agregado antes de entrenar:** columna `daily_trend_dia_anterior` (htf-trend-v1 sobre el día UTC completo
+  anterior a la decisión) en el grupo tendencia; no cambia la regla del grafo.
+
 ## Abiertas
 - ~~Plan de CoinGlass a contratar.~~ **Ya no aplica al core** — la fuente primaria pasó a WS nativos.
   Solo se retomaría si se implementa la fuente BYOK opcional (y ahí el plan lo elige el usuario).
