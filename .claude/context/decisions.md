@@ -449,8 +449,10 @@
   final hacia adelante desde 2026-10-20**, mínimo 3 meses (datos nuevos + paper filtrada vs sin filtrar); presupuesto
   de 24 configuraciones contadas; logística primero y LightGBM chico (profundidad ≤ 4); purged k-fold k = 5 con
   embargo de 5 días; etiquetas triple barrier (ema-cruce con sus barreras; resto ±2 σ y tope = horizonte); calibración
-  isotónica con ≥ 1.000 eventos por fold, si no Platt; semilla 20261019. Pendiente de aprobación: sumar los grupos
-  macro y de lateralidad a `features-meta-v1`, y el stop de catástrofe para plata real.
+  isotónica con ≥ 1.000 eventos por fold, si no Platt; semilla 20261019. **Enmienda 1 (2026-10-19, aprobada antes de
+  construir el dataset):** `features-meta-v1` suma los grupos MACRO (FRED point-in-time, Polymarket, eventos próximos)
+  y LATERALIDAD (rango de Asia, extremos de ayer, distancia al VWAP en ATR, ADX 1h, mechas); pre-registro sha256
+  `36feb567ccef3b41`. Pendiente: stop de catástrofe para plata real.
 
 ## Abiertas
 - ~~Plan de CoinGlass a contratar.~~ **Ya no aplica al core** — la fuente primaria pasó a WS nativos.

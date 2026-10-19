@@ -1,12 +1,12 @@
 {
   "calibracion": "isotonica si el fold de entrenamiento tiene >= 1000 eventos; si no, Platt",
-  "estado": "etapa 0 aprobada por el usuario 2026-10-19; congelado antes de construir el dataset",
+  "estado": "etapa 0 cerrada 2026-10-19; enmienda 1 (grupos macro y lateralidad) antes de construir el dataset",
   "etiquetas": {
     "ema-cruce-v1": "sus barreras (stop 1,5 ATR, objetivo 3 ATR, tope 30 d), PnL neto > 0",
     "k_sigma": 2.0,
     "resto": "triple barrier +-2 sigma (vol diaria trailing) con tope de tiempo = horizonte de la regla; PnL neto > 0"
   },
-  "features_version": "features-meta-v1 (grupos del plan; macro y lateralidad PENDIENTES de aprobacion del usuario)",
+  "features_version": "features-meta-v1: tendencia, volatilidad, momentum, velas, derivados, mercado, contexto, MACRO (FRED point-in-time: DFF, CPIAUCSL, DGS10, DTWEXBGS, VIXCLS; Polymarket; eventos FOMC/CPI/NFP proximos) y LATERALIDAD (rango de Asia, extremos del dia anterior, distancia al VWAP del dia en ATR, ADX 1h, mechas); aprobado por el usuario 2026-10-19 antes de construir el dataset",
   "librerias": {
     "lightgbm": "4.7.0",
     "scikit-learn": "1.9.1"

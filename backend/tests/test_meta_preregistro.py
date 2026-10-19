@@ -10,7 +10,7 @@ from pathlib import Path
 from heatsignal.lab.strategies import CATALOG
 
 PRE = Path(__file__).resolve().parents[1] / "src/heatsignal/lab/meta/preregistro.json"
-PRE_HASH = "5b49c49ea27b22e1"
+PRE_HASH = "36feb567ccef3b41"
 
 
 def test_preregistro_frozen() -> None:
