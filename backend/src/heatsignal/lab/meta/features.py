@@ -5,8 +5,8 @@ Etapa 2 del meta-labeling (plan-entrenamiento.md): features de cada evento de `e
 
 Version `features-meta-v1`. Cada grupo escribe SU parquet (`features_<grupo>_v1.parquet`, clave `evento_id`) y su
 resumen JSON; `load_all()` une los eventos con todos los parquet de features que existan. La subtarea 2b agrego
-`derivados_mercado`; la 2c (macro/lateralidad) agrega su entrada a `GRUPOS` (archivo, lista de features y funcion
-`build(events, loader) -> DataFrame` indexado como `events`) sin tocar lo de este grupo.
+`derivados_mercado` y la 2c `macro` y `lateralidad`; cada grupo es una entrada de `GRUPOS` (archivo, lista de
+features y funcion `build(events, loader) -> DataFrame` indexado como `events`) sin tocar lo de los demas.
 
 Disponibilidad (`lab/clock.py`): toda feature usa SOLO datos conocidos en o antes de `t_decision`.
   - Velas 1h y 1D armadas desde 1m con `resample_bars` (fechadas al CIERRE, solo bloques completos). La vela que
@@ -56,8 +56,43 @@ Decisiones del grupo `derivados_mercado` (subtarea 2b, `features_derivados_v1.pa
     htf-trend-v1 de BTC en t (misma regla que `daily_trend`). `corr_btc_30d` = correlacion de 720 retornos log de
     1h sobre la grilla regular (minimo 90 % de pares); para BTC vale 1 (no NaN: NaN queda reservado a "falta dato").
     `n_sobre_ema200_1d` = monedas de `strategies.SEVEN` con el cierre diario > EMA200 diaria (velas diarias cerradas);
+    `btc_daily_trend_dia_anterior` (aprobada antes de entrenar, decisions.md) = `daily_trend_prev_day_at` de BTC (misma
+    regla que `daily_trend_dia_anterior`).
     `ret_7d_canasta` = media igual-ponderada de close(t)/close(t-168h) - 1 con velas de 1h. Si una de las 7 no tiene
     dato, las dos quedan NaN (no se cuenta sobre menos monedas).
+
+Decisiones del grupo `macro` (subtarea 2c, `features_macro_v1.parquet`):
+  - Fuente: `~/heatsignal-lab/macro/heatsignal_macro.sqlite` (copia de la VM) via `lab/macro_features.py`. FRED
+    point-in-time: cada vintage existe desde su `available_ms` (00:00 de Chicago del dia siguiente a `realtime_start`);
+    en t se usa, de cada observacion, el ultimo vintage disponible <= t. Una observacion vieja publicada (o revisada)
+    despues de t NO aparece en t. Las transformaciones se calculan con los valores conocidos en cada publicacion.
+  - `fred_dff`, `fred_dgs10`, `fred_vixcls` = nivel de la ultima observacion conocida. `fred_cpi_yoy` = CPIAUCSL(ultimo
+    mes) / CPIAUCSL(mismo mes del anio anterior) - 1. `fred_dtwexbgs_chg30d` = ultimo / el de la ultima observacion
+    <= fecha - 30 dias - 1 (esa observacion a <= 7 dias del objetivo). `fred_vixcls_pctl_1a` = fraccion de las
+    observaciones de los 365 dias previos (incluida la actual) que son <= la actual (minimo 180).
+  - Antiguedad maxima de la observacion (si no, NaN, hueco declarado): diarias 10 dias, DTWEXBGS 14 (se publica
+    semanal), CPI 120 (cubre la demora del cierre de gobierno de oct-nov 2025).
+  - Calendario (`macro/config/calendar.json`, versionado): `dias_hasta_<fomc|cpi|nfp>` = dias (fraccion) hasta el
+    proximo comunicado >= t. No mira resultados: solo fechas. Las fechas futuras se conocian de antemano (la Fed y el
+    BLS publican el calendario del anio con anticipacion), asi que usar un archivo verificado despues no es
+    look-ahead. Fuera de la cobertura del archivo (t anterior al primer evento listado de ese tipo, o sin proximo) ->
+    NaN: no se sabe cual era el proximo.
+  - Polymarket: `pm_fed_sin_cambio` (mercados "no change" del config_key `fed`) y `pm_recesion` (config_key
+    `recesion`); ultima probabilidad leida <= t entre esos mercados, NaN si tiene mas de 3 h. El backfill trae ~90
+    dias: si cubre < 5 % de los eventos se declara en el resumen (`polymarket`) y las columnas quedan (NaN).
+
+Decisiones del grupo `lateralidad` (subtarea 2c, `features_lateralidad_v1.parquet`):
+  - `htf-levels-v1` del vivo, sin reimplementar: `build_htf_context` (que llama a `build_levels`) con las velas de 1h
+    completas de la ventana del vivo (`htf_window`), con `vwap_pv`/`vwap_vol` armados de las 1m como
+    `history/hourly.aggregate_minutes` (precio tipico x volumen base). ATR = ATR14 1h de Wilder del contexto; precio
+    = ultimo cierre de 1h cerrada.
+  - Columnas: `asia_rango_atr`, `dist_asia_max_atr`, `dist_asia_min_atr` (cierre - nivel, en ATR), `dist_max_ayer_atr`,
+    `dist_min_ayer_atr`, `dist_vwap_atr`, `adx14_1h_htf`, `mecha_sup_frac_1h`, `mecha_inf_frac_1h`.
+  - Rango de Asia: existe recien con las 8 velas 00-08 UTC cerradas (t >= 08:00); antes NaN. VWAP del dia: necesita
+    >= 1 vela de 1h del dia cerrada; a las 00:00 UTC NaN (no existe, nunca se inventa).
+  - Mechas: las de `build_levels` (ultima vela 1h del dia). A las 00:00 UTC el vivo no tiene vela del dia; aca se
+    usa la ultima vela de 1h cerrada (23:00 de ayer, misma formula) para no perder la mitad de los eventos (los de
+    estrategias diarias deciden a las 00:00). Rango 0 -> NaN (como el vivo).
 NO es un intento: no escribe en `results/` ni en `trials.sqlite`, no entrena nada.
 """
 
@@ -338,10 +373,10 @@ EMA_REGIMEN = 200
 
 _DERIV = (["funding_actual", "funding_z_30d"] + [f"delta_oi_{k}" for k in OI_DELTAS]
           + ["oi_rel_media_30d", "cuadrante_oi_funding", "taker_buy_sell_1h", "ls_top_cuentas", "premium_1h"])
-_MERC = ["btc_dist_ema50_1h_atr", "btc_vol_real_7d", "btc_daily_trend", "corr_btc_30d", "n_sobre_ema200_1d",
-         "ret_7d_canasta"]
+_MERC = ["btc_dist_ema50_1h_atr", "btc_vol_real_7d", "btc_daily_trend", "btc_daily_trend_dia_anterior", "corr_btc_30d",
+         "n_sobre_ema200_1d", "ret_7d_canasta"]
 FEATURES_DERIVADOS: list[str] = _DERIV + _MERC
-CATEGORICAS_DERIVADOS = ["cuadrante_oi_funding", "btc_daily_trend"]
+CATEGORICAS_DERIVADOS = ["cuadrante_oi_funding", "btc_daily_trend", "btc_daily_trend_dia_anterior"]
 
 
 @dataclass(frozen=True)
@@ -445,6 +480,7 @@ def market_context(hours: dict[str, pd.DataFrame], days: dict[str, pd.DataFrame]
     out["btc_vol_real_7d"] = fb["vol_real_7d"]
     open_ms, cs = hourly_candles(hb)
     out["btc_daily_trend"] = daily_trend_at(BTC, open_ms, cs, times)
+    out["btc_daily_trend_dia_anterior"] = daily_trend_prev_day_at(BTC, open_ms, cs, times)
     above, rets = {}, {}
     for s in universo:
         c = days[s]["close"]
@@ -501,6 +537,227 @@ def build_derivados(events: pd.DataFrame, loader: Loader, fuentes: Fuentes | Non
     return out[[KEY, *ID_COLS, *FEATURES_DERIVADOS]]
 
 
+# ---- grupo macro (subtarea 2c) ------------------------------------------------------------------------------------
+
+MACRO_DB = Path.home() / "heatsignal-lab" / "macro" / "heatsignal_macro.sqlite"
+FRED_MAX_AGE = {"DFF": pd.Timedelta(days=10), "DGS10": pd.Timedelta(days=10), "VIXCLS": pd.Timedelta(days=10),
+                "DTWEXBGS": pd.Timedelta(days=14), "CPIAUCSL": pd.Timedelta(days=120)}
+CHG_DAYS, CHG_SLACK = pd.Timedelta(days=30), pd.Timedelta(days=7)
+VIX_PCTL_DAYS, VIX_PCTL_MIN = pd.Timedelta(days=365), 180
+POLY_MAX_AGE = pd.Timedelta(hours=3)
+POLY_MIN_COBERTURA = 0.05
+CAL_KINDS = {"FOMC": "dias_hasta_fomc", "CPI": "dias_hasta_cpi", "NFP": "dias_hasta_nfp"}
+# columna -> (config_key de polymarket_markets.json, texto que tiene que tener la pregunta o None)
+PM_COLS = {"pm_fed_sin_cambio": ("fed", "no change"), "pm_recesion": ("recesion", None)}
+
+_FRED_COLS = ["fred_dff", "fred_cpi_yoy", "fred_dgs10", "fred_dtwexbgs_chg30d", "fred_vixcls", "fred_vixcls_pctl_1a"]
+FEATURES_MACRO: list[str] = _FRED_COLS + list(CAL_KINDS.values()) + list(PM_COLS)
+
+
+def _f_level(s: pd.Series) -> float:
+    return float(s.iloc[-1])
+
+
+def _f_yoy(s: pd.Series) -> float:
+    prev = s.index[-1] - pd.DateOffset(years=1)
+    return float(s.iloc[-1] / s[prev] - 1) if prev in s.index else np.nan
+
+
+def _f_chg30(s: pd.Series) -> float:
+    target = s.index[-1] - CHG_DAYS
+    base = s[s.index <= target]
+    if base.empty or target - base.index[-1] > CHG_SLACK:
+        return np.nan
+    return float(s.iloc[-1] / base.iloc[-1] - 1)
+
+
+def _f_pctl_1a(s: pd.Series) -> float:
+    w = s[s.index > s.index[-1] - VIX_PCTL_DAYS]
+    return float((w <= w.iloc[-1]).mean()) if len(w) >= VIX_PCTL_MIN else np.nan
+
+
+def fred_pit_transform(vintages: pd.DataFrame, series_id: str, fn: Callable[[pd.Series], float]) -> pd.DataFrame:
+    """En cada instante de publicacion: `fn` sobre la serie CONOCIDA en ese instante (ultimo vintage disponible de
+    cada observacion) y la fecha de la ultima observacion. Indice = `available`."""
+    rows = vintages[vintages["series_id"] == series_id]
+    known: dict[pd.Timestamp, float] = {}
+    out_t, out_v, out_d = [], [], []
+    for t, grp in rows.groupby("available", sort=True):
+        for d, v in zip(grp["obs_date"], grp["value"]):
+            known[d] = v  # el vintage nuevo pisa al anterior DESDE t, nunca antes
+        s = pd.Series(known, dtype=float).dropna().sort_index()
+        if s.empty:
+            continue
+        out_t.append(t), out_v.append(fn(s)), out_d.append(s.index[-1])
+    return pd.DataFrame({"value": out_v, "obs_date": pd.DatetimeIndex(out_d)},
+                        index=pd.DatetimeIndex(out_t, name="available"))
+
+
+_FRED_SPECS = {"fred_dff": ("DFF", _f_level), "fred_cpi_yoy": ("CPIAUCSL", _f_yoy), "fred_dgs10": ("DGS10", _f_level),
+               "fred_dtwexbgs_chg30d": ("DTWEXBGS", _f_chg30), "fred_vixcls": ("VIXCLS", _f_level),
+               "fred_vixcls_pctl_1a": ("VIXCLS", _f_pctl_1a)}
+
+
+def fred_macro_features(vintages: pd.DataFrame, times: pd.DatetimeIndex) -> pd.DataFrame:
+    out = pd.DataFrame(index=times)
+    for col, (sid, fn) in _FRED_SPECS.items():
+        pit = fred_pit_transform(vintages, sid, fn)
+        if pit.empty:
+            out[col] = np.nan
+            continue
+        a = asof(times, pit)
+        obs = pd.to_datetime(a["obs_date"])
+        obs = obs.dt.tz_localize("UTC") if obs.dt.tz is None else obs
+        age = pd.Series(times, index=times) - obs
+        out[col] = a["value"].astype(float).where(age <= FRED_MAX_AGE[sid])
+    return out
+
+
+def calendar_features(cal: Any, times: pd.DatetimeIndex) -> pd.DataFrame:
+    """Dias hasta el proximo comunicado de cada tipo (>= t), solo desde las fechas del calendario versionado.
+    NaN fuera de su cobertura (t antes del primer evento listado de ese tipo, o sin proximo)."""
+    t_ms = (pd.DatetimeIndex(times).as_unit("ms").asi8).astype(np.int64)
+    out = pd.DataFrame(index=times)
+    for kind, col in CAL_KINDS.items():
+        ts = np.array(sorted(e.ts_ms for e in cal.events if e.kind == kind), dtype=np.int64)
+        if ts.size == 0:
+            out[col] = np.nan
+            continue
+        i = np.searchsorted(ts, t_ms, "left")
+        ok = (t_ms >= ts[0]) & (i < ts.size)
+        out[col] = np.where(ok, (ts[np.clip(i, 0, ts.size - 1)] - t_ms) / DAY_MS, np.nan)
+    return out
+
+
+def polymarket_macro_features(snaps: pd.DataFrame, times: pd.DatetimeIndex) -> pd.DataFrame:
+    from ..macro_features import _asof
+
+    out = pd.DataFrame(index=times)
+    for col, (key, text) in PM_COLS.items():
+        g = snaps[snaps["config_key"] == key] if len(snaps) else snaps
+        if text is not None and len(g):
+            g = g[g["question"].astype(str).str.lower().str.contains(text)]
+        s = (g.sort_values("t").drop_duplicates("t", keep="last").set_index("t")["prob"].astype(float)
+             if len(g) else pd.Series(dtype=float))
+        out[col] = _asof(s, pd.DatetimeIndex(times), POLY_MAX_AGE).to_numpy()
+    return out
+
+
+def build_macro(events: pd.DataFrame, loader: Loader | None = None, fuente: str | Path | None = None,
+                calendar: Any = None) -> pd.DataFrame:
+    """Grupo macro. `loader` no se usa (firma comun de `GRUPOS`)."""
+    from ...macro.calendar import load_calendar
+    from ..macro_features import load_fred_vintages, load_polymarket
+
+    src = Path(fuente) if fuente is not None else MACRO_DB
+    cal = calendar if calendar is not None else load_calendar()
+    ev = events.reset_index(drop=True)
+    t_dec = pd.to_datetime(ev["t_decision"], utc=True)
+    _check_holdout(ev, t_dec)
+    out = pd.DataFrame({KEY: event_ids(ev), "primaria": ev["primaria"], "symbol": ev["symbol"], "t_decision": t_dec})
+    times = pd.DatetimeIndex(sorted(set(t_dec))).as_unit("ns")
+    f = pd.concat([fred_macro_features(load_fred_vintages(src), times), calendar_features(cal, times),
+                   polymarket_macro_features(load_polymarket(src), times)], axis=1)
+    f = f.reindex(pd.DatetimeIndex(t_dec).as_unit("ns")).set_axis(ev.index)
+    out = pd.concat([out, f[FEATURES_MACRO].astype(float)], axis=1)
+    cob = float(out[list(PM_COLS)].notna().any(axis=1).mean()) if len(out) else 0.0
+    out.attrs["resumen"] = {
+        "calendario": {"calendar_id": cal.calendar_id, "verified_at": cal.verified_at,
+                       "cobertura_desde": {k: str(pd.Timestamp(min((e.ts_ms for e in cal.events if e.kind == k),
+                                                                     default=0), unit="ms", tz="UTC"))
+                                           for k in CAL_KINDS},
+                       "nota": "fechas conocidas de antemano; NaN antes del primer evento listado de cada tipo"},
+        "polymarket": {"cobertura_pct": round(cob * 100, 2),
+                       "usable": cob >= POLY_MIN_COBERTURA,
+                       "nota": ("la historia de Polymarket cubre < 5 % de los eventos: columnas NaN, no usar"
+                                if cob < POLY_MIN_COBERTURA else "cobertura suficiente")},
+    }
+    return out[[KEY, *ID_COLS, *FEATURES_MACRO]]
+
+
+# ---- grupo lateralidad (subtarea 2c, htf-levels-v1) ---------------------------------------------------------------
+
+FEATURES_LATERALIDAD: list[str] = ["asia_rango_atr", "dist_asia_max_atr", "dist_asia_min_atr", "dist_max_ayer_atr",
+                                   "dist_min_ayer_atr", "dist_vwap_atr", "adx14_1h_htf", "mecha_sup_frac_1h",
+                                   "mecha_inf_frac_1h"]
+
+
+def hourly_candles_vwap(k: pd.DataFrame) -> tuple[np.ndarray, list[Candle1h]]:
+    """Velas de 1h completas desde 1m con las sumas del VWAP del vivo (`aggregate_minutes`: precio tipico (H+L+C)/3 x
+    volumen base). Sin columna de volumen -> vwap None (el VWAP queda NaN)."""
+    k = k[[c for c in ("open", "high", "low", "close", "volume") if c in k.columns]]
+    h = resample_bars(k, "1h")
+    open_ms = ((h.index - H1).as_unit("ms").asi8).astype(np.int64)
+    if "volume" in k.columns:
+        pv = ((k["high"] + k["low"] + k["close"]) / 3 * k["volume"]).resample("1h", label="right", closed="left").sum()
+        pvs, vols = pv.reindex(h.index).to_numpy(), h["volume"].to_numpy()
+    else:
+        pvs = vols = [None] * len(h)
+    cs = [Candle1h.model_construct(open_ms=int(t), open=float(o), high=float(hi), low=float(lo), close=float(cl),
+                                   source="klines", minutes=60, vwap_pv=None if p is None else float(p),
+                                   vwap_vol=None if v is None else float(v))
+          for t, o, hi, lo, cl, p, v in zip(open_ms, h["open"].to_numpy(), h["high"].to_numpy(), h["low"].to_numpy(),
+                                            h["close"].to_numpy(), pvs, vols)]
+    return open_ms, cs
+
+
+def _num(x: float | None) -> float:
+    return np.nan if x is None else float(x)
+
+
+def levels_features(symbol: str, open_ms: np.ndarray, cs: list[Candle1h], t: pd.Timestamp) -> dict[str, float]:
+    now = int(pd.Timestamp(t).value // 1_000_000)
+    first, last = htf_window(now)
+    i0, i1 = np.searchsorted(open_ms, first, "left"), np.searchsorted(open_ms, last, "right")
+    ctx = build_htf_context(symbol, cs[i0:i1], now)
+    lv, atr = ctx.levels, ctx.atr14_1h
+    out = dict.fromkeys(FEATURES_LATERALIDAD, np.nan)
+    out["adx14_1h_htf"] = _num(lv.adx14_1h)
+    out["dist_vwap_atr"] = _num(lv.dist_vwap_atr)
+    if lv.upper_wick_frac is not None or lv.last_range is not None:  # hay vela del dia: la del vivo
+        out["mecha_sup_frac_1h"], out["mecha_inf_frac_1h"] = _num(lv.upper_wick_frac), _num(lv.lower_wick_frac)
+    elif ctx.candles_1h:  # 00:00 UTC: ultima vela 1h cerrada (de ayer), misma formula
+        c = ctx.candles_1h[-1]
+        rng = c.high - c.low
+        if rng > 0:
+            out["mecha_sup_frac_1h"] = (c.high - max(c.open, c.close)) / rng
+            out["mecha_inf_frac_1h"] = (min(c.open, c.close) - c.low) / rng
+    px = ctx.last_close
+    if not atr or px is None:
+        return out
+    if lv.asia_high is not None and lv.asia_low is not None:
+        out["asia_rango_atr"] = (lv.asia_high - lv.asia_low) / atr
+        out["dist_asia_max_atr"] = (px - lv.asia_high) / atr
+        out["dist_asia_min_atr"] = (px - lv.asia_low) / atr
+    if lv.prev_day_high is not None and lv.prev_day_low is not None:
+        out["dist_max_ayer_atr"] = (px - lv.prev_day_high) / atr
+        out["dist_min_ayer_atr"] = (px - lv.prev_day_low) / atr
+    return out
+
+
+def build_lateralidad(events: pd.DataFrame, loader: Loader) -> pd.DataFrame:
+    ev = events.reset_index(drop=True)
+    t_dec = pd.to_datetime(ev["t_decision"], utc=True)
+    _check_holdout(ev, t_dec)
+    out = pd.DataFrame({KEY: event_ids(ev), "primaria": ev["primaria"], "symbol": ev["symbol"], "t_decision": t_dec})
+    parts = []
+    for sym, g in ev.groupby("symbol"):
+        log.info("%s: %d eventos (lateralidad)", sym, len(g))
+        times = sorted(set(t_dec[g.index]))
+        open_ms, cs = hourly_candles_vwap(loader(sym))
+        f = pd.DataFrame([levels_features(sym, open_ms, cs, t) for t in times], index=pd.DatetimeIndex(times))
+        parts.append(f.reindex(pd.DatetimeIndex(t_dec[g.index])).set_axis(g.index))
+    lat = (pd.concat(parts).reindex(ev.index) if parts
+           else pd.DataFrame(index=ev.index, columns=FEATURES_LATERALIDAD))
+    out = pd.concat([out, lat[FEATURES_LATERALIDAD].astype(float)], axis=1)
+    h = t_dec.dt.hour
+    out.attrs["resumen"] = {"nan_por_construccion": {
+        "pct_eventos_antes_0800_utc": round(float((h < 8).mean()) * 100, 2) if len(ev) else 0.0,
+        "pct_eventos_0000_utc": round(float(((h == 0) & (t_dec.dt.minute == 0)).mean()) * 100, 2) if len(ev) else 0.0,
+        "nota": "rango de Asia NaN antes de las 08:00 UTC; VWAP del dia NaN a las 00:00 UTC (no existen todavia)"}}
+    return out[[KEY, *ID_COLS, *FEATURES_LATERALIDAD]]
+
+
 # ---- registro de grupos, resumen y union ------------------------------------------------------------------------
 
 
@@ -514,7 +771,8 @@ class Grupo:
 GRUPOS: dict[str, Grupo] = {
     "basicos": Grupo("features_basicas_v1.parquet", FEATURES_BASICAS, build_basicos),
     "derivados_mercado": Grupo("features_derivados_v1.parquet", FEATURES_DERIVADOS, build_derivados),
-    # 2c: "macro", "lateralidad" -> misma clave KEY, su propio parquet
+    "macro": Grupo("features_macro_v1.parquet", FEATURES_MACRO, build_macro),
+    "lateralidad": Grupo("features_lateralidad_v1.parquet", FEATURES_LATERALIDAD, build_lateralidad),
 }
 
 
@@ -554,7 +812,8 @@ def build(grupos: Iterable[str], out_dir: Path = DEFAULT_DIR, events: pd.DataFra
         if df[KEY].duplicated().any():
             raise RuntimeError(f"{g}: {KEY} duplicado")
         stem = spec.archivo.removesuffix(".parquet")
-        summary = summarize(df, g, spec.features, {"eventos_sha256": ev_hash, "segundos": round(time.time() - t0, 1)})
+        extra = {"eventos_sha256": ev_hash, "segundos": round(time.time() - t0, 1), **df.attrs.pop("resumen", {})}
+        summary = summarize(df, g, spec.features, extra)
         out_dir.mkdir(parents=True, exist_ok=True)
         df.to_parquet(out_dir / spec.archivo, index=False)
         (out_dir / f"{stem}_resumen.json").write_text(json.dumps(summary, indent=2, ensure_ascii=False))

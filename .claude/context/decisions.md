@@ -486,6 +486,15 @@
   lateral 54,9 %, alcista 28,2 %, bajista 16,9 %, sin_datos 0 %. **Agregado antes de entrenar:**
   `btc_daily_trend_dia_anterior` (misma razón: `btc_daily_trend` tiene 47,7 % sin_datos a las 00:00 UTC).
 
+- **Meta-modelo, etapa 2c (macro y lateralidad) hecha (2026-10-19).** `features_macro_v1` (FRED point-in-time: DFF,
+  CPI interanual, DGS10, DTWEXBGS 30d, VIX y percentil 1 año; 0 % NaN) y `features_lateralidad_v1` (iguales a
+  `build_levels` del vivo; Asia NaN antes de 08:00 UTC 59 %, VWAP NaN a las 00:00 UTC 48 %, por construcción).
+  `load_all()`: 80 columnas de features, 8.751 eventos. **Corrección antes de entrenar:** el calendario versionado solo
+  cubría 2026 (días hasta CPI/NFP 100 % NaN, FOMC 92 %) → fechas históricas de CPI y NFP desde los vintages de FRED
+  (`realtime_start` de CPIAUCSL y PAYEMS = día de publicación) y FOMC 2021–2025 desde el calendario oficial de la Fed,
+  versionadas. **Polymarket fuera del entrenamiento** (historia desde 2026-07-20: 0 % de cobertura); sigue en vivo como
+  contexto; evaluarlo en una v2 cuando acumule meses.
+
 ## Abiertas
 - ~~Plan de CoinGlass a contratar.~~ **Ya no aplica al core** — la fuente primaria pasó a WS nativos.
   Solo se retomaría si se implementa la fuente BYOK opcional (y ahí el plan lo elige el usuario).
