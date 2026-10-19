@@ -507,6 +507,20 @@
   **Etapa 3 aprobada por el usuario (2026-10-19)** antes de entrenar: 3b (logística) y 3c (LightGBM) se corren con los
   parámetros del pre-registro una vez validado el marco (3a), dentro del presupuesto de 24 configuraciones.
 
+- **Meta-modelo 3a (marco de validación) hecho y 3b pre-registrada (2026-10-19, ANTES de entrenar).**
+  `lab/meta/validation.py`: purged k-fold (k = 5, embargo 5 d, purga por solape en todo el dataset), base propia
+  `~/heatsignal-lab/meta_trials.sqlite` (append-only; no suma al K del lab), presupuesto 24 por hash de configuración
+  (un intento caído cuenta), calibración isotónica/Platt con k-fold purgado interno, métricas con pesos de unicidad,
+  PnL imputado al día de salida (igual para filtrada y sin filtrar), bootstrap pareado, DSR con K del meta-modelo, PBO.
+  Tests: ruido puro → AUC ≈ 0,5 y p > 0,05; señal sintética → AUC ≈ 0,83 y p < 0,05.
+  **Configuraciones de 3b (4 de 24), fijas:** un solo modelo para las 4 primarias (primaria como categórica), pesos de
+  unicidad. Preproceso dentro de cada fold: mediana + indicador de faltante (columnas con > 5 % NaN), estandarización,
+  one-hot de categóricas (primaria, lado, tipo, daily_trend, daily_trend_dia_anterior, btc_daily_trend*, sesion,
+  cuadrante_oi_funding). Polymarket (`pm_*`) excluido. Núcleo a priori (12): dist_ema200_1d_atr, adx_1d,
+  atr_pct_1d_pctl_1a, ret_log_72h, rsi_1d, daily_trend_dia_anterior, funding_z_30d, delta_oi_24h, cuadrante_oi_funding,
+  btc_daily_trend_dia_anterior, corr_btc_30d, fred_vixcls_pctl_1a.
+  L1 = logística núcleo C = 1; L2 = núcleo C = 0,1; L3 = las 78 features C = 0,1; L4 = las 78 C = 1. Umbral fijo 0,5.
+
 ## Abiertas
 - ~~Plan de CoinGlass a contratar.~~ **Ya no aplica al core** — la fuente primaria pasó a WS nativos.
   Solo se retomaría si se implementa la fuente BYOK opcional (y ahí el plan lo elige el usuario).
