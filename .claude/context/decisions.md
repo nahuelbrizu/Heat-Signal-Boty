@@ -565,6 +565,12 @@
   para cálculos pesados (el DNS de las reconexiones no espera detrás). Servicio: `MemoryHigh=900M`, `MemoryMax=1200M`.
   Descartado midiendo: executor saturado y costo de `/api/htf` (5 ms con cache incremental).
 
+- **Lote 6 exploratorio (60 variantes) aprobado por el usuario (2026-10-20), lista y criterio fijados ANTES de
+  programar** (`estrategias-lote6-exploratorio.md`): rupturas de N días (24), momentum de serie (12), calendario y
+  sesiones (11), derivados (5), RSI(2) diario (4), régimen (4). K del programa 51 → 111. Exploratorio: nada se aprueba
+  por su resultado; pasan a confirmación en paper TODAS las que cumplan veredicto propio + robustez (meseta ≥ 80 %,
+  Sharpe ×3 costos > 0) + Romano–Wolf ≤ 0,10 con el K actualizado. Confirmación con datos desde 2026-10-20.
+
 ## Abiertas
 - ~~Plan de CoinGlass a contratar.~~ **Ya no aplica al core** — la fuente primaria pasó a WS nativos.
   Solo se retomaría si se implementa la fuente BYOK opcional (y ahí el plan lo elige el usuario).
