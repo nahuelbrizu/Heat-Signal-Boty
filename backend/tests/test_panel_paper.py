@@ -57,7 +57,7 @@ async def test_paper_endpoint_with_api(tmp_path) -> None:
         assert body["totals"] == {**body["totals"], "open": 1, "closed": 1}
         assert body["open_trades"][0]["unrealized_pnl"] == 8.8 and body["open_trades"][0]["symbol"] == "TRXUSDT"
         assert body["closed_trades"][0]["pnl"] < 0
-        assert body["frequi"]["tunnel"] == "hs-ft" and body["compare"] is None
+        assert body["frequi"]["tunnel"] == "heatsignal-tunnel" and body["compare"] is None
         assert "clave-muy-secreta" not in r.text
         n = len(calls)
         await c.get("/api/paper")  # cache de 10 s: no vuelve a llamar a Freqtrade

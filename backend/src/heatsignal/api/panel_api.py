@@ -313,6 +313,7 @@ def strategy_json(s: Any, st: dict[str, Any] | None) -> dict[str, Any]:
         "registered_at": s.registered_at.isoformat(),
         "registered_ms": to_ms(s.registered_at),
         "symbol": s.entry_conditions.get("symbol"),
+        "family": s.entry_conditions.get("family"),
         "horizon_s": s.exit_conditions.get("horizon_s"),
         "hypotheses": hypothesis_counts(st),
         "first_hypothesis_ms": None if st.get("first_created_ts") is None else int(st["first_created_ts"] * 1000),
@@ -697,6 +698,8 @@ def register_api(app: FastAPI, ctx: PanelContext, build_id: str) -> None:  # noq
         daily_trend: Literal["alcista", "bajista", "lateral", "sin_datos", "none"] | None = None,
         trend_alignment: Literal["a_favor", "en_contra", "lateral", "sin_datos", "none"] | None = None,
         session: str | None = Query(None, pattern=r"^[a-z0-9_]{1,20}$", description="'none' = sin sesion"),
+        family: str | None = Query(None, pattern=r"^[a-z0-9_-]{1,40}$",
+                                   description="entry_conditions.family, p.ej. 1h-lateralidad (las 3 de dias laterales)"),
         order: Literal["desc", "asc"] = "desc",
         limit: int = Query(50, ge=1, le=MAX_PAGE),
         offset: int = Query(0, ge=0, le=MAX_OFFSET),
@@ -704,17 +707,21 @@ def register_api(app: FastAPI, ctx: PanelContext, build_id: str) -> None:  # noq
         _require_eval()
         a, b = time_range(since, until)
         sym = internal_symbol(symbol) if symbol else None
+        fam_ids = None
+        if family is not None:
+            fam_ids = [s.strategy_id for s in (ctx.registry.get_all() if ctx.registry is not None else [])
+                       if s.entry_conditions.get("family") == family]
         total, recs = ctx.store.query(
             strategy_id=strategy_id, symbol=sym, status=None if status is None else HypothesisStatus(status),
             win=win, since_ts=None if a is None else a / 1000, until_ts=None if b is None else b / 1000,
             timeframe=timeframe, daily_trend=daily_trend, trend_alignment=trend_alignment, session=session,
-            limit=limit, offset=offset, newest_first=order == "desc")
+            strategy_ids=fam_ids, limit=limit, offset=offset, newest_first=order == "desc")
         now = datetime.now(timezone.utc)
         return page(total, limit, offset, [hypothesis_json(r, now) for r in recs],
                     filters={"strategy_id": None if strategy_id is None else str(strategy_id), "symbol": sym,
                              "status": status, "win": win, "since_ms": a, "until_ms": b, "order": order,
                              "timeframe": timeframe, "daily_trend": daily_trend, "trend_alignment": trend_alignment,
-                             "session": session})
+                             "session": session, "family": family})
 
     @app.get("/api/hypotheses/by-trend")
     async def hypotheses_by_trend(
@@ -1519,9 +1526,10 @@ def register_api(app: FastAPI, ctx: PanelContext, build_id: str) -> None:  # noq
         out = await _paper_cached("state", 10.0, work)
         cmp = _paper_compare_file(src)
         return {**out, "compare": _compare_brief(cmp),
-                "frequi": {"url": "http://localhost:8081", "tunnel": "hs-ft",
-                           "help": "FreqUI escucha solo en 127.0.0.1:8081 de la VM: abrir el tunel con `hs-ft` en la PC, "
-                                   "despues `hs-ft-open` (o http://localhost:8081); la clave sale con `hs-ft-pass`."}}
+                "frequi": {"url": "http://localhost:8081", "tunnel": "heatsignal-tunnel",
+                           "help": "FreqUI escucha solo en 127.0.0.1:8081 de la VM y llega por el tunel permanente "
+                                   "`heatsignal-tunnel` de la PC (se reconecta solo): `hs-ft-open` (o http://localhost:8081); "
+                                   "estado con `hs-tunel`, reinicio con `hs-ft`; la clave sale con `hs-ft-pass`."}}
 
     @app.get("/api/paper/compare")
     async def paper_compare() -> Any:

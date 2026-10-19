@@ -75,16 +75,17 @@ export async function mount(root, ctx) {
   return { refresh: () => { load(); loadCompare(); if (loadHyp) loadHyp(); }, unmount: () => charts.forEach(disposeChart) };
 }
 
-// FreqUI: puerto local del tunel hs-ft (la URL viene de /api/paper; sin respuesta se arma con el mismo esquema que el panel)
+// FreqUI: puerto local del tunel permanente heatsignal-tunnel (la URL viene de /api/paper; sin respuesta se arma con el mismo esquema que el panel)
 const FREQUI_FALLBACK = () => location.protocol + "//localhost:8081";
 
 function frequiCard(url) {
   url = url || FREQUI_FALLBACK();
   return card("FreqUI (interfaz de Freqtrade)", "solo por túnel SSH",
-    el("p", {}, "FreqUI escucha solo en 127.0.0.1:8081 de la VM. En la PC: abrí el túnel con ", el("code", {}, "hs-ft"),
-      " (dejalo corriendo), después ", el("code", {}, "hs-ft-open"), " o ", extLink(url, url.replace(/^https?:\/\//, "")),
-      ". Usuario y clave: ", el("code", {}, "hs-ft-pass"), "."),
-    el("p", { class: "small muted" }, "Sin el túnel abierto el link no carga. Este panel no guarda ni muestra la clave."));
+    el("p", {}, "FreqUI escucha solo en 127.0.0.1:8081 de la VM y llega a la PC por el túnel permanente (servicio ",
+      el("code", {}, "heatsignal-tunnel"), ", se reconecta solo). Abrilo con ", el("code", {}, "hs-ft-open"), " o ",
+      extLink(url, url.replace(/^https?:\/\//, "")), ". Usuario y clave: ", el("code", {}, "hs-ft-pass"), "."),
+    el("p", { class: "small muted" }, "Si el link no carga: ", el("code", {}, "hs-tunel"), " muestra el estado y ",
+      el("code", {}, "hs-ft"), " reinicia el túnel (ver conexion.md). Este panel no guarda ni muestra la clave."));
 }
 
 // ------------------------------------------------------------------ estado del dry-run
