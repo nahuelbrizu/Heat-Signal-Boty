@@ -15,7 +15,10 @@ tomarla y con qué tamaño**. Si el meta-modelo no mejora a la estrategia sola f
   monedas es la receta del sobreajuste. Filtrar señales que ya existen es un problema más chico y medible.
 - El grafo LLM ya cumple un rol de filtro: el meta-modelo le da un número calibrado para usar y explicar.
 
-## Etapa 0: preparación (sin entrenar nada)
+## Etapa 0: preparación (sin entrenar nada) — HECHA 2026-10-19
+> Pre-registro congelado en `backend/src/heatsignal/lab/meta/preregistro.json` (sha256 `5b49c49ea27b22e1`).
+> Además: el período 2026-07-16 → 2026-10-19 queda excluido (holdouts ya usados).
+
 - Instalar en el venv del laboratorio (PC, no la VM): `scikit-learn`, `lightgbm`. Fijar versiones.
 - **Nuevo período de prueba limpio.** Los holdouts de julio–octubre 2026 ya se usaron (Donchian, max-ruptura,
   cartera). El examen final del meta-modelo será **el período hacia adelante desde 2026-10-20**: los datos que se

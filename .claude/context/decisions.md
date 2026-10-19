@@ -440,6 +440,18 @@
   `1h-lateral-falsa-ruptura-asia-v1` b266a4c2-9818-4866-a276-ba0d410e1f27; `1h-lateral-rechazo-dia-anterior-v1`
   6f76eedc-4858-44eb-a39f-fb92d3a433a1. El grafo tiene 8 estrategias activas (5 de tendencia + 3 de lateralidad).
 
+- **Meta-modelo, etapa 0: aprobada por el usuario y cerrada (2026-10-19).** Librerías fijas en la PC
+  (`requirements-lab.txt`: scikit-learn 1.9.1, LightGBM 4.7.0). Pre-registro congelado en
+  `backend/src/heatsignal/lab/meta/preregistro.json` (sha256 `5b49c49ea27b22e1`, test que lo congela):
+  primarias Donchian 86061813c7d1691c, tsmom-diario 7515d798e5d66a55, ema-cruce a950979de8e216af, max-ruptura
+  39cb9dee6d3e469a, con sus parámetros por defecto; entrenamiento y validación solo en el desarrollo de cada una
+  (hasta el inicio de su holdout); **2026-07-16 → 2026-10-19 excluido** (holdouts ya abiertos o mirados); **examen
+  final hacia adelante desde 2026-10-20**, mínimo 3 meses (datos nuevos + paper filtrada vs sin filtrar); presupuesto
+  de 24 configuraciones contadas; logística primero y LightGBM chico (profundidad ≤ 4); purged k-fold k = 5 con
+  embargo de 5 días; etiquetas triple barrier (ema-cruce con sus barreras; resto ±2 σ y tope = horizonte); calibración
+  isotónica con ≥ 1.000 eventos por fold, si no Platt; semilla 20261019. Pendiente de aprobación: sumar los grupos
+  macro y de lateralidad a `features-meta-v1`, y el stop de catástrofe para plata real.
+
 ## Abiertas
 - ~~Plan de CoinGlass a contratar.~~ **Ya no aplica al core** — la fuente primaria pasó a WS nativos.
   Solo se retomaría si se implementa la fuente BYOK opcional (y ahí el plan lo elige el usuario).

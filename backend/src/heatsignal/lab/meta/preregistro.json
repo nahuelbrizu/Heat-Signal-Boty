@@ -1,0 +1,52 @@
+{
+  "calibracion": "isotonica si el fold de entrenamiento tiene >= 1000 eventos; si no, Platt",
+  "estado": "etapa 0 aprobada por el usuario 2026-10-19; congelado antes de construir el dataset",
+  "etiquetas": {
+    "ema-cruce-v1": "sus barreras (stop 1,5 ATR, objetivo 3 ATR, tope 30 d), PnL neto > 0",
+    "k_sigma": 2.0,
+    "resto": "triple barrier +-2 sigma (vol diaria trailing) con tope de tiempo = horizonte de la regla; PnL neto > 0"
+  },
+  "features_version": "features-meta-v1 (grupos del plan; macro y lateralidad PENDIENTES de aprobacion del usuario)",
+  "librerias": {
+    "lightgbm": "4.7.0",
+    "scikit-learn": "1.9.1"
+  },
+  "metricas_principales": [
+    "Sharpe neto filtrada vs sin filtrar",
+    "max drawdown",
+    "Brier vs tasa base",
+    "DSR con K del meta-modelo",
+    "PBO"
+  ],
+  "modelos_permitidos": [
+    "regresion logistica (linea base, primero)",
+    "LightGBM chico (max_depth<=4, regularizado)"
+  ],
+  "parametros_primarias": "los por defecto de cada spec congelada (sin elegir por walk-forward)",
+  "periodos": {
+    "entrenamiento_y_validacion": "desarrollo de cada primaria: 2021-03 -> inicio de su holdout (2026-07-16/17)",
+    "examen_final_hacia_adelante": {
+      "desde": "2026-10-20T00:00:00Z",
+      "fuentes": "datos nuevos + bot de paper (filtrada vs sin filtrar)",
+      "minimo_meses": 3
+    },
+    "excluido": "2026-07-16 -> 2026-10-19: holdouts ya abiertos o mirados; no se usa ni para entrenar ni para el examen"
+  },
+  "plan": ".claude/context/plan-entrenamiento.md",
+  "presupuesto_intentos": {
+    "cuenta": "familia de modelo x conjunto de features x hiperparametros; cada una se registra y suma K del meta-modelo",
+    "max_configuraciones": 24
+  },
+  "primarias": {
+    "donchian-ensemble-v1": "86061813c7d1691c",
+    "ema-cruce-v1": "a950979de8e216af",
+    "max-ruptura-10d-v1": "39cb9dee6d3e469a",
+    "tsmom-diario-v1": "7515d798e5d66a55"
+  },
+  "semilla": 20261019,
+  "validacion": {
+    "embargo_dias": 5,
+    "k": 5,
+    "tipo": "purged k-fold con embargo"
+  }
+}
