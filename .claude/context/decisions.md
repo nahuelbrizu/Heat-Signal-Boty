@@ -521,6 +521,16 @@
   btc_daily_trend_dia_anterior, corr_btc_30d, fred_vixcls_pctl_1a.
   L1 = logística núcleo C = 1; L2 = núcleo C = 0,1; L3 = las 78 features C = 0,1; L4 = las 78 C = 1. Umbral fijo 0,5.
 
+- **Meta-modelo 3b (logística, línea base) — resultado (2026-10-19): sin señal.** 4 de 24 configuraciones usadas,
+  corridas una vez (`~/heatsignal-lab/meta/baseline_20261019T055955Z.json`, 8.749 eventos). AUC: L1 0,509, L2 0,534,
+  L3 0,505, L4 0,504. Brier vs base 0,2414: solo L2 apenas mejor (0,2405). Filtrada vs sin filtrar: ninguna diferencia
+  significativa (p del bootstrap pareado 0,13–0,82). PBO de las 4 = 0,80. Con tasas base de 37–47 % y umbral fijo 0,5,
+  el filtro casi no deja operaciones (n 0–230 de miles): la comparación económica es poco informativa.
+  Observación de diseño: el PnL de la evaluación económica es el de las barreras (triple barrier), no el de la salida
+  real de cada regla; por eso los Sharpe "sin filtrar" (don −0,29, ema −0,23, max 0,62, tsm 0,41) no son los del lab.
+  Cualquier cambio (umbral relativo a la tasa base, PnL real de la regla) es una configuración nueva pre-registrada
+  que consume presupuesto; no se re-corren L1–L4.
+
 ## Abiertas
 - ~~Plan de CoinGlass a contratar.~~ **Ya no aplica al core** — la fuente primaria pasó a WS nativos.
   Solo se retomaría si se implementa la fuente BYOK opcional (y ahí el plan lo elige el usuario).
