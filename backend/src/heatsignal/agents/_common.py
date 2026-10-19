@@ -112,6 +112,32 @@ _SETUP_TEXT = {
 }
 
 
+_LATERAL_FLAGS = ("falsa_ruptura_asia", "rechazo_dia_anterior", "extremo_vwap")
+
+
+def lateral_flags(h) -> str:  # noqa: ANN001 - HtfContext
+    lv = h.levels
+    if lv is None:
+        return "n/d"
+    on = [f"{k}={getattr(lv, k)}" for k in _LATERAL_FLAGS if getattr(lv, k)]
+    return ", ".join(on) or "ninguna"
+
+
+def render_levels(h) -> str:  # noqa: ANN001 - HtfContext
+    """Niveles de dias laterales (htf-levels-v1), una linea compacta; lo que falta dice sin_datos."""
+    lv = h.levels
+    if lv is None:
+        return "    niveles (codigo): no calculados"
+    sd = "sin_datos"
+    asia = f"{fmt_price(lv.asia_low)}-{fmt_price(lv.asia_high)}" if lv.asia_high is not None else f"{sd} ({lv.asia_hours}/8)"
+    ayer = (f"{fmt_price(lv.prev_day_low)}-{fmt_price(lv.prev_day_high)}" if lv.prev_day_high is not None else sd)
+    vwap = (f"{fmt_price(lv.vwap)} (cierre {_fmt(lv.dist_vwap_atr, '{:+.2f}')} ATR)" if lv.vwap is not None else sd)
+    return (f"    niveles (codigo {lv.levels_model_id}): Asia 00-08 UTC {asia}; ayer min-max {ayer}; VWAP dia {vwap}; "
+            f"ADX14 1h {_fmt(lv.adx14_1h, '{:.1f}') if lv.adx14_1h is not None else sd}; ultima vela mecha sup/inf "
+            f"{_fmt(lv.upper_wick_frac, '{:.0%}')}/{_fmt(lv.lower_wick_frac, '{:.0%}')} del rango; "
+            f"lateral (codigo): {lateral_flags(h)}")
+
+
 def render_htf(fs: FeatureSet, n_candles: int = 6) -> str:
     """Contexto 1h + tendencia del dia (calculado por CODIGO). Compacto: las 48 velas quedan en el estado/panel."""
     h = fs.htf
@@ -137,6 +163,7 @@ def render_htf(fs: FeatureSet, n_candles: int = 6) -> str:
         f"EMA10 diaria {fmt_price(h.ema10_1d)} (cierre {_fmt(h.close_vs_ema10_1d_pct, '{:+.2f}')}%), "
         f"SMA20 diaria {fmt_price(h.sma20_1d)}, ATR14 1h {fmt_price(h.atr14_1h)} ({_fmt(h.atr14_1h_pct, '{:.3f}')}%)",
         f"    setups (codigo): {'; '.join(setups) or 'ninguno'}",
+        render_levels(h),
     ]
     if n_candles and h.candles_1h:
         lines.append("    ultimas velas 1h (UTC, O/H/L/C): " + " | ".join(
@@ -160,6 +187,7 @@ def htf_digest_line(fs: FeatureSet) -> str:
         f"apertura UTC {_fmt(h.change_from_open_pct, '{:+.2f}')}% ({_fmt(h.change_from_open_atr, '{:+.2f}')} ATR1h); "
         f"posicion en el rango diario {_fmt(h.pos_in_day_range, '{:.2f}')}; cierre vs EMA20 1h "
         f"{_fmt(h.dist_ema20_1h_atr, '{:+.2f}')} ATR; setups: {', '.join(setups) or 'ninguno'}"
+        + (f"; lateral (codigo): {lateral_flags(h)}" if h.daily_trend == "lateral" else "")
     )
 
 

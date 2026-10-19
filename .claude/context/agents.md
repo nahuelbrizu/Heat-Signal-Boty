@@ -126,3 +126,26 @@ del diseño de arriba:
   resuelta, escrita por el job de evaluación con el LLM barato (o por código, marcada). **No se reinyecta**: a
   diferencia de TradingAgents, ninguna lección entra a ningún prompt ni decisión (test `test_lessons.py` que lo verifica
   estática y dinámicamente). Motivo: cambiaría el sistema sin pre-registro ni conteo de intentos.
+
+## Estrategias de días laterales (2026-10-19)
+
+- Spec: `decisions.md`, "3 estrategias del grafo para días laterales". JSON en `backend/strategies/lateralidad-1h/`
+  (family `1h-lateralidad`, `daily_trend_in: ["lateral"]`, `alignment: "lateral"`, `levels_model_id: htf-levels-v1`).
+- Niveles: `HtfContext.levels` (`features/htf.py`, `htf-levels-v1`, versión aparte para NO tocar `htf-trend-v1`, con
+  la que están registradas las 5 de tendencia): rango de Asia (8 velas 1h de 00–08 UTC), máx/mín del día UTC
+  anterior, VWAP del día (precio típico × volumen de velas 1m, sumado por hora en `history/hourly.py`:
+  `Candle1h.vwap_pv/vwap_vol`; una hora sin 1m → `sin_datos`), ADX14 1h de Wilder, mechas y rango de la última vela.
+  Las banderas (`falsa_ruptura_asia`, `rechazo_dia_anterior`, `extremo_vwap`, con la dirección) solo se calculan en
+  día lateral; si se cumplen LONG y SHORT a la vez no hay bandera.
+- Entrada por código (`evaluation/timeframes._check_lateral`): día lateral, versión de niveles, sesión de la CORRIDA
+  (solo la falsa ruptura: europa/eeuu), contexto de la última vela recién cerrada, bandera presente y misma dirección.
+- Tope: `entry_conditions.max_per_symbol_session` (1) por (family, símbolo, sesión del día) en el Sintetizador,
+  contando lo ya registrado en la base (`PendingHypothesisStore.session_hypotheses`) más la corrida. Sin sesión de
+  corrida → rechazo. Mismas llamadas LLM por ciclo.
+- Prompts: el Analista de Contexto ve una línea "niveles (código …)" por símbolo (~70 tokens); el digest suma
+  "lateral (código): …" solo en días laterales; +~85 tokens de sistema en el Sintetizador y ~50 en el Analista.
+- Panel: Moneda/contexto 1h dibuja Asia, ayer y VWAP sobre las velas de 1h y muestra los niveles; Hipótesis filtra
+  por `family`.
+- Ojo con el horario: en BST (hasta el 25-10) Londres abre 07:00 UTC y la corrida de Europa es a las 08:00 UTC con la
+  vela 07–08 (dentro del rango de Asia): la falsa ruptura no puede darse en esa corrida, solo en la de EE.UU. (o en
+  Europa desde el horario de invierno, 09:00 UTC).

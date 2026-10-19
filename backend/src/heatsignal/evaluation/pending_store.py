@@ -474,6 +474,20 @@ class PendingHypothesisStore:
             ).fetchall()
         return {(str(sid).lower(), sym) for sid, sym in rows}
 
+    def session_hypotheses(self, session_day: str, session: str) -> set[tuple[str, str]]:
+        """Pares (strategy_id, symbol) con hipotesis YA emitidas (resueltas o no) en esa sesion de ese dia.
+
+        Lo usa el Sintetizador para el tope "una por moneda y por sesion" de una familia
+        (`entry_conditions.max_per_symbol_session`, p.ej. las 3 de lateralidad): cuenta lo registrado en la base,
+        asi un reinicio o una segunda corrida en la misma sesion no lo saltean.
+        """
+        with self._lock:
+            rows = self._conn.execute(
+                f"SELECT DISTINCT p.strategy_id, p.symbol FROM pending_hypotheses p {_CTX_JOIN}"
+                "WHERE c.session_day = ? AND c.session = ?", (session_day, session)
+            ).fetchall()
+        return {(str(sid).lower(), sym) for sid, sym in rows}
+
     def pending_count(self) -> int:
         """Cantidad de hipotesis sin resolucion (vencidas o no)."""
         with self._lock:
@@ -499,6 +513,7 @@ class PendingHypothesisStore:
         daily_trend: str | None = None,
         trend_alignment: str | None = None,
         session: str | None = None,
+        strategy_ids: list[UUID] | None = None,
         limit: int = 50,
         offset: int = 0,
         newest_first: bool = True,
@@ -512,6 +527,9 @@ class PendingHypothesisStore:
         if strategy_id is not None:
             where.append("p.strategy_id = ?")
             params.append(str(strategy_id))
+        if strategy_ids is not None:  # p.ej. todas las de una familia (lista vacia = ninguna)
+            where.append(f"p.strategy_id IN ({','.join('?' * len(strategy_ids)) or 'NULL'})")
+            params.extend(str(x) for x in strategy_ids)
         if symbol is not None:
             where.append("p.symbol = ?")
             params.append(symbol)

@@ -17,6 +17,10 @@ Reglas (anti-p-hacking, ver CLAUDE.md y `phase-2-agents.md`):
   - Una hipotesis abierta por (estrategia, simbolo): si el store informa una sin resolver, la
     propuesta nueva queda como `no_hypothesis` (no se solapan ventanas sobre el mismo movimiento,
     que inflarian n). El store lo expone con `open_positions()`; sin ese metodo no hay candado.
+  - Tope por familia, moneda y sesion: las estrategias con `entry_conditions.max_per_symbol_session = N` (hoy las 3
+    de lateralidad, family "1h-lateralidad", N = 1) emiten como mucho N hipotesis por (familia, simbolo, sesion del
+    dia) ENTRE TODAS las de la familia. Cuenta lo ya registrado en la base (`store.session_hypotheses`) mas lo
+    aceptado en la misma corrida. Sin sesion de corrida no se puede contar -> rechazo explicito.
   - Las hipotesis aceptadas se persisten via `PendingHypothesisStore.add`.
 """
 
@@ -64,6 +68,9 @@ _SYSTEM_PROMPT = (
     "diaria tras retroceso a la EMA de 1h' o 'contra la tendencia en el extremo del rango diario'. Solo propone una "
     "si el setup que la estrategia exige figura como presente en 'setups (codigo)'; la direccion debe quedar a favor "
     "o en contra segun lo pre-registrado. El horizonte lo fija el sistema (cierre de vela de 1h). "
+    "Familia 1h-lateralidad (solo daily_trend=lateral): falsa ruptura del rango de Asia, rechazo del max/min de ayer "
+    "con mecha, extremo vs VWAP con ADX bajo; solo si su bandera figura en 'lateral (codigo)' y en esa direccion; "
+    "como mucho una por simbolo y sesion entre las tres. "
     + HISTORICAL_LANGUAGE_RULE
 )
 
@@ -146,7 +153,7 @@ def _validate(
     bars = None
     if is_hourly(strategy.exit_conditions):
         entry_problem = check_htf_entry(strategy.entry_conditions, fs.htf, p.direction, fs.session,
-                                        int(created.timestamp() * 1000))
+                                        int(created.timestamp() * 1000), (session or {}).get("name"))
         if entry_problem:
             return f"no cumple la entrada pre-registrada de 1h: {entry_problem}"
         hz = hourly_horizon(strategy.exit_conditions, created)
@@ -179,6 +186,14 @@ def _validate(
     )
 
 
+def session_cap(strategy: StrategyHypothesis) -> tuple[str, int] | None:
+    """(familia, N) si la estrategia tiene tope por moneda y sesion (`max_per_symbol_session`)."""
+    raw = strategy.entry_conditions.get("max_per_symbol_session")
+    if not isinstance(raw, int) or isinstance(raw, bool) or raw < 1:
+        return None
+    return str(strategy.entry_conditions.get("family") or strategy.strategy_id), raw
+
+
 def apply_proposals(
     proposals: list[StrategyProposal],
     features: dict[str, FeatureSet],
@@ -189,12 +204,19 @@ def apply_proposals(
     open_positions: set[tuple[str, str]] | None = None,
     now: datetime | None = None,
     session: dict | None = None,
+    session_taken: set[tuple[str, str]] | None = None,
 ) -> tuple[list[PendingHypothesis], list[SymbolDecision]]:
     """Validacion pura (sin LLM ni I/O): propuestas -> hipotesis + decisiones por simbolo.
 
     `open_positions`: pares (strategy_id en minusculas, symbol) con hipotesis sin resolver.
+    `session_taken`: pares (strategy_id en minusculas, symbol) ya emitidos en la sesion de la corrida (base).
     """
     allowed = {str(s.strategy_id).lower(): s for s in allowed_strategies}
+    cap_count: dict[tuple[str, str], int] = {}
+    for sid, sym in session_taken or ():
+        cap = session_cap(allowed[sid]) if sid in allowed else None
+        if cap:
+            cap_count[(cap[0], sym)] = cap_count.get((cap[0], sym), 0) + 1
     open_keys = set(open_positions or ())
     hypotheses: list[PendingHypothesis] = []
     decisions: list[SymbolDecision] = []
@@ -226,6 +248,21 @@ def apply_proposals(
                 SymbolDecision(symbol=p.symbol, outcome="no_hypothesis", reason=reason, strategy_id=str(result.strategy_id))
             )
             continue
+        cap = session_cap(allowed[key[0]])
+        if cap is not None:
+            if not result.session or not result.session_day:
+                reason = "sin sesion de la corrida: no se puede aplicar el tope de una por moneda y sesion"
+                decisions.append(SymbolDecision(symbol=p.symbol, outcome="rejected", reason=reason,
+                                                strategy_id=str(result.strategy_id)))
+                continue
+            if cap_count.get((cap[0], result.symbol), 0) >= cap[1]:
+                reason = (f"ya hay {cap[1]} hipotesis de la familia {cap[0]} en {result.symbol} en la sesion "
+                          f"{result.session} {result.session_day} (tope por moneda y sesion)")
+                logger.info("synthesizer: %s %s: %s", p.symbol, result.strategy_id, reason)
+                decisions.append(SymbolDecision(symbol=p.symbol, outcome="no_hypothesis", reason=reason,
+                                                strategy_id=str(result.strategy_id)))
+                continue
+            cap_count[(cap[0], result.symbol)] = cap_count.get((cap[0], result.symbol), 0) + 1
         open_keys.add(key)
         hypotheses.append(result)
         decisions.append(
@@ -272,10 +309,18 @@ def make_synthesizer_node(
         open_fn = getattr(hypothesis_store, "open_positions", None)
         open_positions: set[tuple[str, str]] = open_fn() if callable(open_fn) else set()
         open_lines = "\n".join(f"- strategy_id={sid} symbol={sym}" for sid, sym in sorted(open_positions))
+        sess = state.get("session") or {}
+        taken_fn = getattr(hypothesis_store, "session_hypotheses", None)
+        session_taken: set[tuple[str, str]] = set()
+        if callable(taken_fn) and sess.get("day") and sess.get("name") and any(session_cap(s) for s in allowed):
+            session_taken = taken_fn(sess["day"], sess["name"])
         prompt = (
             f"# Estrategias pre-registradas permitidas\n{render_allowed_strategies(allowed)}\n\n"
             "# Hipotesis abiertas (no se puede abrir otra de la misma estrategia en el mismo simbolo)\n"
             f"{open_lines or '(ninguna)'}\n\n"
+            + (f"# Ya emitidas en esta sesion (tope por simbolo y sesion)\n"
+               + "\n".join(f"- strategy_id={sid} symbol={sym}" for sid, sym in sorted(session_taken)) + "\n\n"
+               if session_taken else "") +
             f"# Salidas de los analistas\n{render_analyst_digest(state)}\n\n"
             f"# Debate\n{render_transcript(state.get('debate_transcript') or [])}"
         )
@@ -290,6 +335,7 @@ def make_synthesizer_node(
             default_horizon_s=default_horizon_s,
             open_positions=open_positions,
             session=state.get("session"),
+            session_taken=session_taken,
         )
         if hypothesis_store is not None:
             for h in hypotheses:

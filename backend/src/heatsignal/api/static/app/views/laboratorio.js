@@ -325,6 +325,40 @@ async function detail(root, ctx, id) {
   return { unmount: () => { charts.forEach(disposeChart); } };
 }
 
+/** Calidad de los trades (lab.stats.trade_quality): win-rate contra el minimo para no perder y contra el azar de las
+ * barreras, dependencia entre trades seguidos (rachas), crecimiento si se reinvirtiera (GHPR), regularidad de la curva
+ * (R² con signo) y si el ultimo tramo se parece al primero. `null` = resultado anterior a estas metricas. */
+export function tradeQualityCard(q, title = "Calidad de los trades", trades) {
+  if (!q) return card(title, "", el("p", { class: "muted small" }, trades === 0 ? "Sin trades: no hay nada que medir."
+    : "Este resultado es anterior a estas métricas: aparecen en la próxima corrida del laboratorio."));
+  const r = q.runs || {}, h = q.hpr || {}, st = q.stability || {};
+  const sig = (p) => isNum(p) && p < 0.05;
+  const beChip = q.above_breakeven === true ? chip("acierto suficiente", "ok", "todo el IC 95 % del win-rate está por encima del mínimo")
+    : q.above_breakeven === false ? chip("acierto no alcanza", "warn", "el IC 95 % del win-rate llega por debajo del mínimo para no perder") : null;
+  const runsTxt = !isNum(r.z) ? "sin datos suficientes"
+    : sig(r.p_value) ? (r.z < 0 ? "las ganancias y pérdidas vienen agrupadas en rachas" : "ganancias y pérdidas tienden a alternarse")
+    : "sin dependencia detectable (los trades seguidos se comportan como independientes)";
+  const ghprTxt = !isNum(h.ghpr) ? "" : h.ghpr === 0 ? "algún trade perdió todo el capital asignado: reinvirtiendo, ruina"
+    : h.ghpr < 1 && h.ahpr > 1 ? "gana en promedio, pero reinvirtiendo perdería: la varianza se come el edge"
+    : h.ghpr >= 1 ? "reinvirtiendo, crece" : "pierde con o sin reinversión";
+  const stabTxt = !isNum(st.stability) ? "hacen falta ≥ 10 trades en cada tramo"
+    : sig(st.p_value) ? "el último tramo es distinto del primero (p < 0,05): el edge puede estar cambiando" : "el último tramo se parece al primero";
+  return card(title, beChip || "",
+    el("div", { class: "stats" },
+      stat("Win-rate", frac(q.hit_rate, 0), (q.hit_rate_ci && isNum(q.hit_rate_ci[0]) ? "IC 95 % " + frac(q.hit_rate_ci[0], 0) + "–" + frac(q.hit_rate_ci[1], 0) + " · " : "") + int(q.n) + " trades"),
+      stat("Mínimo para no perder", frac(q.breakeven, 0), isNum(q.payoff) ? "payoff " + num(q.payoff, 2) + " (ganancia media / pérdida media)" : "falta una ganancia o una pérdida"),
+      q.barrier_chance != null ? stat("Win-rate del azar", frac(q.barrier_chance, 0), "stop / (objetivo + stop): paseo al azar con estas barreras") : null,
+      stat("Rachas (Z)", fixed(r.z, 2), runsTxt + (isNum(r.p_value) ? " · p " + fixed(r.p_value, 3) : "")),
+      stat("Racha máxima", int(r.max_win_streak) + " / " + int(r.max_loss_streak), "ganadores / perdedores seguidos"),
+      stat("GHPR / AHPR", isNum(h.ghpr) ? signedFrac(h.ghpr - 1, 2) + " / " + signedFrac(h.ahpr - 1, 2) : "—", ghprTxt || "por trade, sobre el capital asignado"),
+      stat("R² de la curva", fixed(q.equity_r2, 2), "+1 = sube parejo · 0 = sin tendencia · −1 = baja parejo"),
+      stat("Estabilidad", fixed(st.stability, 2), stabTxt + (isNum(st.p_value) ? " · p " + fixed(st.p_value, 3) : ""))),
+    el("p", { class: "small muted", style: { marginTop: "8px" } },
+      "Sin deriva y sin costos, cualquier salida deja expectativa 0: el mínimo para no perder es también el win-rate que daría el azar con este payoff. " +
+      "Rachas: test de Wald–Wolfowitz (|Z| ≥ 2 ≈ p < 0,05); si hay rachas, el bootstrap por trades sueltos subestima el drawdown. " +
+      "Estabilidad: Mann–Whitney entre el primer 70 % y el último 30 % de los trades. Son diagnósticos: no se usan para elegir parámetros."));
+}
+
 /** Render puro del detalle (sin red): lo usa detail() y los tests. */
 export function renderDetail(d) {
   return el("div", {}, detailBody(d, []));
@@ -380,6 +414,7 @@ function detailBody(d, charts) {
     card("Veredicto", pass ? chip("cumple todos los criterios", "ok") : chip("no cumple", "warn"), checkChips(d.verdict && d.verdict.checks),
       d.verdict && d.verdict.criterios ? el("p", { class: "small muted", style: { marginTop: "8px" } }, "Criterios: " + Object.entries(d.verdict.criterios).map(([k, v]) => k + " = " + v).join(" · ")) : null),
     programDetailCard(d.programa),
+    tradeQualityCard(o.trade_quality, "Calidad de los trades (fuera de muestra)", o.trades),
     card("Curva de capital fuera de muestra", "estrategia vs canasta y buy & hold", eqBox),
     diagnosticsCard(d.diagnostics),
     d.holdout && typeof d.holdout === "object" ? holdoutCard(d.holdout, charts) : null,
@@ -454,6 +489,7 @@ function holdoutCard(h, charts) {
       stat("Parámetros usados", el("span", { class: "mono small" }, fmtVal(h.selected_params)), "elegidos con datos anteriores")),
     v.checks ? el("div", { style: { marginTop: "10px" } }, checkChips(v.checks)) : null,
     h.equity_daily ? el("div", { style: { marginTop: "12px" } }, equityChart(h.equity_daily, charts)) : el("p", { class: "muted small" }, "Sin curva diaria del holdout."),
+    "trade_quality" in h ? el("div", { style: { marginTop: "12px" } }, tradeQualityCard(h.trade_quality, "Calidad de los trades del holdout", h.trades)) : null,
     bd ? el("div", { style: { marginTop: "12px", maxWidth: "560px" } }, el("h3", {}, "De dónde sale el retorno del holdout"),
       signedBars([["precio", "Precio"], ["funding", "Funding"], ["comisiones", "Comisiones"], ["slippage", "Slippage"], ["total", "Total"]]
         .filter(([k]) => k in bd).map(([k, label]) => ({ label, value: k === "comisiones" || k === "slippage" ? -Math.abs(bd[k]) : bd[k], bold: k === "total" })))) : null,

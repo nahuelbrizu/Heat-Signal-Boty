@@ -352,7 +352,7 @@ def detail(run: dict[str, Any], run_files: list[Path]) -> dict[str, Any]:
             "oos": wf.get("oos"), "chosen": wf.get("chosen", []),
         },
         "oos": {k: o.get(k) for k in ("sharpe", "sharpe_ci95", "psr", "dsr", "sr0_annual", "min_trl_days", "days",
-                                      "total_return", "max_drawdown", "trades", "hit_rate")},
+                                      "total_return", "max_drawdown", "trades", "hit_rate", "trade_quality")},
         "costs": {
             "breakeven_bps_per_side": be,
             "expected_cost_bps_per_side": EXPECTED_COST_BPS,

@@ -102,6 +102,9 @@ class DataQuality(BaseModel):
 
 
 HTF_MODEL_ID = "htf-trend-v1"
+# Niveles para dias laterales (rango de Asia, extremos de ayer, VWAP, ADX, mechas): version propia para no tocar la
+# regla de tendencia `htf-trend-v1`, con la que estan pre-registradas las 5 estrategias de tendencia diaria.
+LEVELS_MODEL_ID = "htf-levels-v1"
 
 DailyTrend = Literal["alcista", "bajista", "lateral", "sin_datos"]
 TrendAlignment = Literal["a_favor", "en_contra", "lateral", "sin_datos"]
@@ -118,6 +121,9 @@ class Candle1h(BaseModel):
     close: float
     source: CandleSource = Field(description="klines 1m de Binance (base), bars_1m propios o REST 1h de Binance")
     minutes: int = Field(default=60, description="Minutos de 1m con precio usados (60 = completa; REST = 60)")
+    vwap_pv: float | None = Field(default=None, description="Suma de precio tipico (H+L+C)/3 x volumen base de las "
+                                                            "velas 1m de la hora (None si no hay 1m: REST)")
+    vwap_vol: float | None = Field(default=None, description="Suma del volumen base de las velas 1m de la hora")
 
 
 class HtfSetups(BaseModel):
@@ -130,6 +136,42 @@ class HtfSetups(BaseModel):
     continuacion_a_favor: bool = Field(
         default=False, description="Tendencia alcista/bajista, cierre del lado de la tendencia de la EMA20 1h, "
                                    "a <= 1.5 ATR de ella y fuera del 15% extremo del rango diario")
+
+
+LateralSignal = Literal["LONG", "SHORT"]
+
+
+class HtfLevels(BaseModel):
+    """Niveles del dia UTC y banderas de dias laterales (`htf-levels-v1`, ver features/htf.py). Todo por CODIGO.
+
+    Un dato que falta queda en None y su motivo en `sin_datos` (nunca un valor inventado).
+    """
+
+    levels_model_id: str = LEVELS_MODEL_ID
+    asia_high: float | None = Field(default=None, description="Maximo de las velas 1h de 00:00-08:00 UTC del dia")
+    asia_low: float | None = None
+    asia_hours: int = Field(default=0, description="Velas de 1h de Asia (00-07 UTC) disponibles (8 = completo)")
+    prev_day_high: float | None = Field(default=None, description="Maximo del dia UTC anterior (24 velas 1h)")
+    prev_day_low: float | None = None
+    vwap: float | None = Field(default=None, description="VWAP del dia UTC (precio tipico de velas 1m, desde 00:00)")
+    vwap_minutes: int = Field(default=0, description="Minutos de 1m con precio que entraron al VWAP")
+    dist_vwap_atr: float | None = Field(default=None, description="(cierre - VWAP) / ATR14 1h")
+    adx14_1h: float | None = Field(default=None, description="ADX14 de Wilder en 1h")
+    last_range: float | None = Field(default=None, description="high - low de la ultima vela 1h cerrada")
+    last_upper_wick: float | None = Field(default=None, description="high - max(open, close)")
+    last_lower_wick: float | None = Field(default=None, description="min(open, close) - low")
+    upper_wick_frac: float | None = Field(default=None, description="mecha superior / rango (None si rango 0)")
+    lower_wick_frac: float | None = None
+    falsa_ruptura_asia: LateralSignal | None = Field(
+        default=None, description="Dia lateral: ruptura > 0.5 ATR del rango de Asia que cierra adentro (direccion)")
+    rechazo_dia_anterior: LateralSignal | None = Field(
+        default=None, description="Dia lateral: toca el extremo de ayer (0.25 ATR), mecha >= 50% y cierra adentro")
+    extremo_vwap: LateralSignal | None = Field(
+        default=None, description="Dia lateral: |cierre - VWAP| >= 2 ATR y ADX14 1h < 20, hacia el VWAP")
+    sin_datos: list[str] = Field(default_factory=list, description="Datos que faltan, con motivo")
+
+    def brief(self) -> dict:
+        return self.model_dump(exclude={"sin_datos"}) | {"n_sin_datos": len(self.sin_datos)}
 
 
 class HtfContext(BaseModel):
@@ -165,6 +207,7 @@ class HtfContext(BaseModel):
     daily_trend: DailyTrend = "sin_datos"
     trend_reason: str = ""
     setups: HtfSetups = Field(default_factory=HtfSetups)
+    levels: HtfLevels | None = Field(default=None, description="Rango de Asia, extremos de ayer, VWAP, ADX, mechas")
     sources: dict[str, int] = Field(default_factory=dict, description="Velas por fuente (klines/bars_1m/rest)")
     data_gaps: list[str] = Field(default_factory=list)
 
@@ -177,6 +220,7 @@ class HtfContext(BaseModel):
             "dist_ema20_1h_atr": self.dist_ema20_1h_atr, "ema20_1h_slope_atr": self.ema20_1h_slope_atr,
             "close_vs_ema10_1d_pct": self.close_vs_ema10_1d_pct, "atr14_1h": self.atr14_1h,
             "setups": self.setups.model_dump(),
+            "levels": None if self.levels is None else self.levels.brief(),
         }
 
 

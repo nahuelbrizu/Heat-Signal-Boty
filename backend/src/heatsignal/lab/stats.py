@@ -348,6 +348,147 @@ def profit_factor(pnl: Any) -> float:
     return float(gains / losses)
 
 
+# ---------------------------------------------------------------------------- calidad de los trades
+# Investigacion: .claude/context/research/mql5-matematica-trading.md (partes 1 y 2). Todas reciben los trades
+# en ORDEN CRONOLOGICO (por cierre); el llamador ordena.
+
+def breakeven_hit_rate(pnl: Any) -> dict[str, float]:
+    """Win-rate minimo para expectativa 0 con el payoff observado: 1 / (1 + payoff), payoff = ganancia media /
+    perdida media (en valor absoluto). Bajo un paseo sin deriva (martingala) y sin costos, cualquier regla de salida
+    deja expectativa 0 (teorema de parada opcional), asi que este es tambien el win-rate que daria el azar con ese
+    payoff. Un trade con pnl 0 cuenta como perdida (convencion de Vince). NaN si faltan ganancias o perdidas."""
+    x = _clean(pnl)
+    wins, losses = x[x > 0], -x[x <= 0]
+    out = {"payoff": float("nan"), "breakeven": float("nan"), "avg_win": float("nan"), "avg_loss": float("nan")}
+    if wins.size == 0 or losses.size == 0 or losses.mean() == 0:
+        return out
+    aw, al = float(wins.mean()), float(losses.mean())
+    out.update(avg_win=aw, avg_loss=al, payoff=aw / al, breakeven=al / (aw + al))
+    return out
+
+
+def barrier_hit_probability(take_profit: float, stop: float) -> float:
+    """Ruina del jugador: P(tocar el objetivo antes que el stop) en un paseo aleatorio sin deriva = stop / (tp + stop),
+    con las dos distancias en la misma unidad (p. ej. ATR). Es el win-rate de azar de una salida por barreras."""
+    if not (take_profit > 0 and stop > 0):
+        return float("nan")
+    return float(stop / (take_profit + stop))
+
+
+def runs_test(pnl: Any) -> dict[str, Any]:
+    """Test de rachas (Wald-Wolfowitz) sobre la secuencia ganancia/perdida: ¿los trades consecutivos dependen entre si?
+
+    R = cantidad de rachas, W/L = ganadores/perdedores, N = W + L. Bajo independencia E[R] = 2WL/N + 1 y
+    Var[R] = 2WL(2WL - N) / (N^2 (N - 1)); Z = (R - E[R]) / sd. Z < 0: menos rachas de las esperadas (las ganancias
+    se agrupan con ganancias y las perdidas con perdidas); Z > 0: alternan. p bilateral con la normal. (La formula de
+    Vince en el articulo 1492 de MQL5 es la misma con una correccion de continuidad de 0,5.) Pnl 0 = perdida."""
+    x = _clean(pnl)
+    win = x > 0
+    n, w = int(x.size), int(win.sum())
+    lo = n - w
+
+    def longest(flag: bool) -> int:
+        best = cur = 0
+        for v in win:
+            cur = cur + 1 if v == flag else 0
+            best = max(best, cur)
+        return best
+
+    out: dict[str, Any] = {"n": n, "wins": w, "losses": lo, "runs": None, "expected_runs": None, "z": None,
+                           "p_value": None, "max_win_streak": longest(True), "max_loss_streak": longest(False)}
+    if n == 0:
+        return out
+    runs = 1 + int(np.count_nonzero(win[1:] != win[:-1]))
+    out["runs"] = runs
+    p = 2.0 * w * lo
+    if n < 3 or p == 0:
+        return out
+    mean = p / n + 1.0
+    var = p * (p - n) / (n**2 * (n - 1))
+    out["expected_runs"] = float(mean)
+    if var <= 0:
+        return out
+    z = (runs - mean) / math.sqrt(var)
+    out.update(z=float(z), p_value=float(2 * sps.norm.sf(abs(z))))
+    return out
+
+
+def hpr_means(returns: Any) -> dict[str, float]:
+    """AHPR y GHPR (Vince) de los retornos por trade sobre el capital asignado: HPR = 1 + r.
+
+    AHPR = media aritmetica; GHPR = media geometrica = crecimiento por trade SI se reinvirtiera todo. GHPR < 1 con
+    AHPR > 1: la varianza se come el edge al reinvertir. Si algun HPR <= 0 (perdio todo el capital asignado) el GHPR
+    es 0 (ruina)."""
+    r = _clean(returns)
+    if r.size == 0:
+        return {"ahpr": float("nan"), "ghpr": float("nan"), "n": 0}
+    hpr = 1.0 + r
+    ghpr = 0.0 if (hpr <= 0).any() else float(np.exp(np.mean(np.log(hpr))))
+    return {"ahpr": float(hpr.mean()), "ghpr": ghpr, "n": int(r.size)}
+
+
+def equity_r2(returns: Any) -> float:
+    """R² con signo de la curva de capital (articulo 2358 de MQL5): signo(final - inicial) * corr(equity, recta)^2,
+    con equity = 1 + cumsum(r) (nocional fijo, la convencion del simulador). Mide que tan PAREJA sube la curva, no
+    cuanto gana: +1 = recta ascendente, 0 = sin tendencia, -1 = recta descendente. NaN con menos de 3 puntos o curva
+    plana. Solo vale con tamaño fijo (con reinversion usar GHPR)."""
+    r = _clean(returns)
+    if r.size < 2:
+        return float("nan")
+    eq = np.r_[1.0, 1.0 + np.cumsum(r)]
+    if np.ptp(eq) == 0:
+        return float("nan")
+    t = np.arange(eq.size, dtype=np.float64)
+    corr = float(np.corrcoef(t, eq)[0, 1])
+    sign = 1.0 if eq[-1] >= eq[0] else -1.0
+    return sign * corr**2
+
+
+def split_stability(pnl: Any, tail_frac: float = 0.3, min_side: int = 10) -> dict[str, Any]:
+    """¿El ultimo tramo de trades se parece al primero? (articulo 4347 de MQL5). Mann-Whitney entre el primer
+    (1 - tail_frac) y el ultimo tail_frac de los trades: estabilidad = 1 - |1 - 2U/(n1 n2)| (1 = misma distribucion,
+    0 = una domina por completo a la otra). p bilateral. Diagnostico, no criterio: no se optimiza contra esto.
+    None si alguna parte tiene menos de `min_side` trades."""
+    x = _clean(pnl)
+    n = int(x.size)
+    n2 = int(round(n * tail_frac))
+    n1 = n - n2
+    out: dict[str, Any] = {"n_first": n1, "n_last": n2, "stability": None, "p_value": None,
+                           "median_first": None, "median_last": None, "mean_first": None, "mean_last": None}
+    if n1 < min_side or n2 < min_side:
+        return out
+    a, b = x[:n1], x[n1:]
+    res = sps.mannwhitneyu(a, b, alternative="two-sided")
+    u = float(res.statistic)
+    out.update(stability=1.0 - abs(1.0 - 2.0 * u / (n1 * n2)), p_value=float(res.pvalue),
+               median_first=float(np.median(a)), median_last=float(np.median(b)),
+               mean_first=float(a.mean()), mean_last=float(b.mean()))
+    return out
+
+
+def trade_quality(pnl: Any, ret: Any, daily_returns: Any, barrier: tuple[float, float] | None = None,
+                  alpha: float = 0.05) -> dict[str, Any]:
+    """Bloque de calidad de trades para la ficha del laboratorio. `pnl` y `ret` por trade en orden cronologico,
+    `daily_returns` = retornos diarios de la cartera, `barrier` = (objetivo, stop) en la misma unidad si la regla
+    sale por barreras fijas."""
+    hr = hit_rate(pnl, alpha)
+    be = breakeven_hit_rate(pnl)
+    chance = barrier_hit_probability(*barrier) if barrier else None
+    lo = hr.get("lo")
+    return {
+        "hit_rate": hr.get("hit_rate"), "hit_rate_ci": [lo, hr.get("hi")], "n": hr.get("n"),
+        **be,
+        # el IC del win-rate entero por encima del minimo -> el acierto alcanza para el payoff observado
+        "above_breakeven": None if not (math.isfinite(be["breakeven"]) and lo is not None and math.isfinite(lo))
+        else bool(lo > be["breakeven"]),
+        "barrier_chance": chance,
+        "runs": runs_test(pnl),
+        "hpr": hpr_means(ret),
+        "equity_r2": equity_r2(daily_returns),
+        "stability": split_stability(pnl),
+    }
+
+
 # ---------------------------------------------------------------------------- costos
 
 def _gross_and_turnover(result_or_gross: Any, turnover: Any) -> tuple[pd.Series, pd.Series]:

@@ -1,0 +1,24 @@
+{
+  "description": "1h-lateral-extremo-vwap-v1: en dia lateral (htf-trend-v1), si el cierre de la ultima vela de 1h cerrada esta a 2 ATR14 1h o mas del VWAP del dia UTC y el ADX14 1h es < 20, entrada hacia el VWAP; salida al cierre de la 4a vela de 1h completa",
+  "entry_conditions": {
+    "family": "1h-lateralidad",
+    "scope": "rotation",
+    "timeframe": "1h",
+    "htf_model_id": "htf-trend-v1",
+    "levels_model_id": "htf-levels-v1",
+    "htf_setup": "extremo_vwap",
+    "daily_trend_in": ["lateral"],
+    "alignment": "lateral",
+    "max_per_symbol_session": 1,
+    "direction_rule": "SHORT si close > VWAP; LONG si close < VWAP (hacia el VWAP)",
+    "setup_rule": "|close_1h - VWAP| >= 2*ATR14(1h) y ADX14(1h) < 20; VWAP = sum(precio tipico (H+L+C)/3 x volumen) / sum(volumen) de las velas 1m de la base historica desde las 00:00 UTC hasta el cierre de la ultima vela 1h cerrada",
+    "entry_price": "mark price al emitir (lo fija el codigo)"
+  },
+  "exit_conditions": {
+    "timeframe": "1h",
+    "horizon_bars": 4,
+    "exit_rule": "cierre (mark) de la 4a vela de 1h completa posterior a la emision; due_at = ceil_hora(emision) + 4 h",
+    "costs": "10 bps ida y vuelta (resolver por defecto)"
+  },
+  "author": "nahue"
+}

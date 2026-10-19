@@ -23,7 +23,7 @@ async function list(root, ctx) {
   const f = {
     strategy_id: q.get("strategy_id") || "", symbol: q.get("symbol") || "", status: q.get("status") || "", win: q.get("win") || "",
     since: q.get("since") || "", until: q.get("until") || "", order: q.get("order") || "desc",
-    timeframe: q.get("timeframe") || "", daily_trend: q.get("daily_trend") || "", trend_alignment: q.get("trend_alignment") || "", session: q.get("session") || "",
+    timeframe: q.get("timeframe") || "", daily_trend: q.get("daily_trend") || "", trend_alignment: q.get("trend_alignment") || "", session: q.get("session") || "", family: q.get("family") || "",
     limit: Math.min(500, Math.max(1, parseInt(q.get("limit") || "50", 10) || 50)), offset: Math.max(0, parseInt(q.get("offset") || "0", 10) || 0),
   };
   const form = el("form", { class: "filters", role: "search", "aria-label": "Filtros de hipótesis" });
@@ -41,6 +41,8 @@ async function list(root, ctx) {
 
   function drawForm() {
     const sStrat = select("strategy_id", [["", "todas"], ...strategies.map((s) => [s.strategy_id, s.description])], f.strategy_id);
+    const fams = [...new Set(strategies.map((s) => s.family).filter(Boolean))].sort();
+    const sFam = select("family", [["", "todas"], ...fams.map((x) => [x, x === "1h-lateralidad" ? "1h-lateralidad (días laterales: Asia, ayer, VWAP)" : x])], f.family);
     const sSym = select("symbol", [["", "todos"], ...symbols.map((s) => [s, s])], f.symbol ? toSym(f.symbol) : "");
     const sSt = select("status", [["", "todos"], ["pending", "pendientes"], ["resolved", "resueltas"], ["expired_no_data", "sin datos de precio"]], f.status);
     const sWin = select("win", [["", "todos"], ["true", "acertó"], ["false", "falló"]], f.win);
@@ -52,16 +54,16 @@ async function list(root, ctx) {
     const sTr = select("daily_trend", [["", "todas"], ["alcista", "alcista"], ["bajista", "bajista"], ["lateral", "lateral"], ["sin_datos", "sin datos"], ["none", "sin registro (viejas)"]], f.daily_trend);
     const sSe = select("session", [["", "todas"], ["asia", "Asia"], ["europa", "Europa"], ["eeuu", "EE.UU."], ["cierre", "Cierre UTC"], ["none", "sin registro (viejas)"]], f.session);
     const sAl = select("trend_alignment", [["", "todas"], ["a_favor", "a favor"], ["en_contra", "en contra"], ["lateral", "tendencia lateral"], ["sin_datos", "sin datos"], ["none", "sin registro (viejas)"]], f.trend_alignment);
-    clear(form, field("Estrategia", sStrat), field("Símbolo", sSym), field("Estado", sSt), field("¿Acertó?", sWin),
+    clear(form, field("Estrategia", sStrat), field("Familia", sFam), field("Símbolo", sSym), field("Estado", sSt), field("¿Acertó?", sWin),
       field("Temporalidad", sTf), field("Tendencia del día", sTr), field("¿A favor de la tendencia?", sAl), field("Sesión", sSe),
       field("Creada desde (hora local)", iSince), field("hasta", iUntil), field("Orden", sOrd), field("Por página", sLim),
       el("button", { class: "btn primary", type: "submit" }, "Aplicar"),
-      el("button", { class: "btn", type: "button", onclick: () => { Object.assign(f, { strategy_id: "", symbol: "", status: "", win: "", since: "", until: "", order: "desc", timeframe: "", daily_trend: "", trend_alignment: "", session: "", offset: 0 }); sync(); } }, "Limpiar"));
+      el("button", { class: "btn", type: "button", onclick: () => { Object.assign(f, { strategy_id: "", symbol: "", status: "", win: "", since: "", until: "", order: "desc", timeframe: "", daily_trend: "", trend_alignment: "", session: "", family: "", offset: 0 }); sync(); } }, "Limpiar"));
     form.onsubmit = (ev) => {
       ev.preventDefault();
       Object.assign(f, { strategy_id: sStrat.value, symbol: sSym.value, status: sSt.value, win: sWin.value, since: fromLocalInput(iSince.value),
         until: fromLocalInput(iUntil.value), order: sOrd.value, limit: +sLim.value, offset: 0,
-        timeframe: sTf.value, daily_trend: sTr.value, trend_alignment: sAl.value, session: sSe.value });
+        timeframe: sTf.value, daily_trend: sTr.value, trend_alignment: sAl.value, session: sSe.value, family: sFam.value });
       sync();
     };
   }

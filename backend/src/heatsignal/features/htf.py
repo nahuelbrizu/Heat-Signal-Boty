@@ -18,6 +18,21 @@ Regla `daily_trend` (fija; cambiarla = `htf-trend-v2`, nunca pisar esta):
     bajista  si  cambio_desde_apertura <= -1.5 ATR(1h)  Y  ultimo_cierre < EMA10 diaria  Y  pendiente EMA20 1h < 0
     lateral  en cualquier otro caso.
 
+Niveles para dias laterales (`htf-levels-v1`, `HtfContext.levels`; aprobados 2026-10-19, ver decisions.md):
+    rango de Asia: max/min de las velas 1h de 00:00-08:00 UTC del dia (las 8 deben estar cerradas, si no sin_datos).
+    extremos de ayer: max/min del dia UTC anterior completo (24 velas 1h).
+    VWAP del dia UTC: sum(precio tipico (H+L+C)/3 x volumen base) / sum(volumen) de las velas 1m desde las 00:00 UTC
+        hasta el cierre de la ultima vela 1h cerrada (via `Candle1h.vwap_pv/vwap_vol`; una hora sin 1m -> sin_datos).
+    ADX14 1h (Wilder); mecha superior = high - max(O, C), inferior = min(O, C) - low, rango = high - low.
+    Banderas (solo con daily_trend = lateral; su valor es la direccion):
+      falsa_ruptura_asia:   ultima vela (posterior a Asia) high > maxAsia + 0.5 ATR y close < maxAsia -> SHORT;
+                            low < minAsia - 0.5 ATR y close > minAsia -> LONG. (La sesion europa/eeuu la verifica
+                            `evaluation/timeframes.py`.)
+      rechazo_dia_anterior: high >= maxAyer - 0.25 ATR, mecha sup >= 50% del rango y close < maxAyer -> SHORT;
+                            low <= minAyer + 0.25 ATR, mecha inf >= 50% y close > minAyer -> LONG.
+      extremo_vwap:         |close - VWAP| >= 2 ATR y ADX14 1h < 20 -> hacia el VWAP (close > VWAP -> SHORT).
+    Si se cumplen las dos direcciones a la vez (vela gigante), no hay bandera (ambigua, se declara).
+
 Setups (banderas por codigo; las estrategias 1h pre-registradas los exigen):
     pullback_ema20_1h_a_favor: tendencia alcista (bajista) y la ultima vela toco la EMA20 1h desde el lado de la
         tendencia (low <= EMA20 + 0.25 ATR; high >= EMA20 - 0.25 ATR) cerrando a <= 0.5 ATR de ella y del lado de
@@ -31,7 +46,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from ..schema.features import Candle1h, DailyTrend, HtfContext, HtfSetups, TrendAlignment
+from ..schema.features import Candle1h, DailyTrend, HtfContext, HtfLevels, HtfSetups, TrendAlignment
 
 HOUR_MS = 3_600_000
 DAY_MS = 86_400_000
@@ -48,6 +63,14 @@ MIN_RANGE_ATR = 2.0
 PULLBACK_TOUCH_ATR = 0.25
 PULLBACK_MAX_ATR = 0.5
 CONT_MAX_ATR = 1.5
+# htf-levels-v1 (fijos; cambiarlos = -v2 de las estrategias de lateralidad)
+ASIA_END_H = 8
+ADX_PERIOD = 14
+FALSE_BREAK_ATR = 0.5
+PREV_TOUCH_ATR = 0.25
+WICK_MIN_FRAC = 0.5
+VWAP_DIST_ATR = 2.0
+ADX_MAX = 20.0
 
 
 def ema_series(values: Sequence[float], period: int) -> list[float]:
@@ -71,6 +94,118 @@ def wilder_atr(candles: Sequence[Candle1h], period: int = ATR_PERIOD) -> float |
     for tr in trs[period:]:
         atr = (atr * (period - 1) + tr) / period
     return atr
+
+
+def wilder_adx(candles: Sequence[Candle1h], period: int = ADX_PERIOD) -> float | None:
+    """ADX de Wilder: TR/+DM/-DM suavizados (suma inicial de `period`), DX, ADX = media de los primeros `period` DX
+    y despues suavizado de Wilder. Necesita 2*period + 1 velas; None si no alcanzan."""
+    if len(candles) < 2 * period + 1:
+        return None
+    trs, pdm, mdm = [], [], []
+    for p, c in zip(candles, candles[1:]):
+        up, down = c.high - p.high, p.low - c.low
+        pdm.append(up if up > down and up > 0 else 0.0)
+        mdm.append(down if down > up and down > 0 else 0.0)
+        trs.append(max(c.high - c.low, abs(c.high - p.close), abs(c.low - p.close)))
+    tr_s, p_s, m_s = sum(trs[:period]), sum(pdm[:period]), sum(mdm[:period])
+    dxs: list[float] = []
+
+    def _dx() -> float:
+        if tr_s <= 0:
+            return 0.0
+        pdi, mdi = 100 * p_s / tr_s, 100 * m_s / tr_s
+        return 0.0 if pdi + mdi == 0 else 100 * abs(pdi - mdi) / (pdi + mdi)
+
+    dxs.append(_dx())
+    for i in range(period, len(trs)):
+        tr_s = tr_s - tr_s / period + trs[i]
+        p_s = p_s - p_s / period + pdm[i]
+        m_s = m_s - m_s / period + mdm[i]
+        dxs.append(_dx())
+    adx = sum(dxs[:period]) / period
+    for dx in dxs[period:]:
+        adx = (adx * (period - 1) + dx) / period
+    return adx
+
+
+def _one_side(short: bool, long: bool, name: str, gaps: list[str]) -> str | None:
+    if short and long:
+        gaps.append(f"{name}: se cumplen LONG y SHORT a la vez en la misma vela (ambigua, sin bandera)")
+        return None
+    return "SHORT" if short else "LONG" if long else None
+
+
+def build_levels(cs: Sequence[Candle1h], today: Sequence[Candle1h], day_start: int, prev: dict | None,
+                 atr: float | None, trend: str) -> HtfLevels:
+    """Niveles `htf-levels-v1` desde velas 1h CERRADAS (ya filtradas por el caller). Puro."""
+    lv = HtfLevels()
+    miss = lv.sin_datos
+    last = today[-1] if today else None
+    # rango de Asia
+    asia = [c for c in today if c.open_ms < day_start + ASIA_END_H * HOUR_MS]
+    lv.asia_hours = len(asia)
+    if len(asia) == ASIA_END_H:
+        lv.asia_high, lv.asia_low = max(c.high for c in asia), min(c.low for c in asia)
+    elif last is not None and last.open_ms < day_start + (ASIA_END_H - 1) * HOUR_MS:
+        miss.append(f"rango de Asia: en curso ({len(asia)}/{ASIA_END_H} velas cerradas)")
+    else:
+        miss.append(f"rango de Asia: faltan velas de 00-08 UTC ({len(asia)}/{ASIA_END_H})")
+    # extremos de ayer
+    if prev is not None:
+        lv.prev_day_high, lv.prev_day_low = prev["high"], prev["low"]
+    else:
+        miss.append("extremos de ayer: el dia UTC anterior no tiene sus 24 velas de 1h")
+    # VWAP del dia (velas 1m)
+    if not today:
+        miss.append("VWAP: todavia no cerro ninguna vela de 1h del dia")
+    else:
+        hours = {c.open_ms for c in today}
+        holes = [h for h in range(day_start, today[-1].open_ms + HOUR_MS, HOUR_MS) if h not in hours]
+        no_1m = [c for c in today if c.vwap_pv is None or c.vwap_vol is None]
+        vol = sum(c.vwap_vol or 0.0 for c in today)
+        if holes:
+            miss.append(f"VWAP: faltan {len(holes)} hora(s) del dia")
+        elif no_1m:
+            miss.append(f"VWAP: {len(no_1m)} hora(s) del dia sin velas 1m en la base (solo REST 1h)")
+        elif vol <= 0:
+            miss.append("VWAP: volumen 0 en las velas 1m del dia")
+        else:
+            lv.vwap = sum(c.vwap_pv or 0.0 for c in today) / vol
+            lv.vwap_minutes = sum(c.minutes for c in today)
+    lv.adx14_1h = wilder_adx(cs)
+    if lv.adx14_1h is None:
+        miss.append(f"ADX14 1h: menos de {2 * ADX_PERIOD + 1} velas de 1h")
+    if atr is None:
+        miss.append("ATR14 1h: sin datos")
+    if last is None:
+        miss.append("ultima vela 1h del dia: ninguna cerrada")
+        return lv
+    rng = last.high - last.low
+    lv.last_range = rng
+    lv.last_upper_wick = last.high - max(last.open, last.close)
+    lv.last_lower_wick = min(last.open, last.close) - last.low
+    if rng > 0:
+        lv.upper_wick_frac = lv.last_upper_wick / rng
+        lv.lower_wick_frac = lv.last_lower_wick / rng
+    if atr and lv.vwap is not None:
+        lv.dist_vwap_atr = (last.close - lv.vwap) / atr
+    if trend != "lateral" or not atr:
+        return lv
+    # banderas (solo dia lateral)
+    if lv.asia_high is not None and lv.asia_low is not None and last.open_ms >= day_start + ASIA_END_H * HOUR_MS:
+        lv.falsa_ruptura_asia = _one_side(  # type: ignore[assignment]
+            last.high > lv.asia_high + FALSE_BREAK_ATR * atr and last.close < lv.asia_high,
+            last.low < lv.asia_low - FALSE_BREAK_ATR * atr and last.close > lv.asia_low, "falsa_ruptura_asia", miss)
+    if lv.prev_day_high is not None and lv.prev_day_low is not None and rng > 0:
+        lv.rechazo_dia_anterior = _one_side(  # type: ignore[assignment]
+            last.high >= lv.prev_day_high - PREV_TOUCH_ATR * atr and lv.last_upper_wick >= WICK_MIN_FRAC * rng
+            and last.close < lv.prev_day_high,
+            last.low <= lv.prev_day_low + PREV_TOUCH_ATR * atr and lv.last_lower_wick >= WICK_MIN_FRAC * rng
+            and last.close > lv.prev_day_low, "rechazo_dia_anterior", miss)
+    if lv.vwap is not None and lv.adx14_1h is not None:
+        if abs(last.close - lv.vwap) >= VWAP_DIST_ATR * atr and lv.adx14_1h < ADX_MAX:
+            lv.extremo_vwap = "SHORT" if last.close > lv.vwap else "LONG"
+    return lv
 
 
 def trend_alignment(direction: str | None, daily_trend: str | None) -> TrendAlignment:
@@ -213,6 +348,9 @@ def build_htf_context(symbol: str, candles: Sequence[Candle1h], now_ms: int,
         setups.continuacion_a_favor = bool(on_side and abs(dist) <= CONT_MAX_ATR and not at_trend_extreme)
 
     prev = days[-1] if days and days[-1]["open_ms"] == day_start - DAY_MS else None
+    levels = build_levels(cs, today, day_start, prev, atr, trend)
+    data_gaps.extend(f"htf-levels: {m}" for m in levels.sin_datos  # lo "en curso" no es un hueco de datos
+                     if "en curso" not in m and "todavia no cerro" not in m and "ambigua" not in m)
     sources: dict[str, int] = {}
     for c in cs[-OUT_CANDLES:]:
         sources[c.source] = sources.get(c.source, 0) + 1
@@ -227,7 +365,7 @@ def build_htf_context(symbol: str, candles: Sequence[Candle1h], now_ms: int,
         ema10_1d=ema1d_now, sma20_1d=sma20d,
         close_vs_ema10_1d_pct=None if ema1d_now is None else (last.close / ema1d_now - 1) * 100,
         daily_closes=len(dcloses), atr14_1h=atr, atr14_1h_pct=None if atr is None else atr / last.close * 100,
-        daily_trend=trend, trend_reason=reason, setups=setups, sources=sources, data_gaps=data_gaps,
+        daily_trend=trend, trend_reason=reason, setups=setups, levels=levels, sources=sources, data_gaps=data_gaps,
     )
 
 

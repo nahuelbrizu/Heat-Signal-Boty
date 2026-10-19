@@ -6,7 +6,9 @@ Pre-registro de estrategias: `python -m heatsignal.evaluation.register_strategy`
     --dry-run archivo.json     valida y muestra lo que se registraria, sin tocar la base
 
 Estrategias de velas de 1h (exit_conditions.timeframe = "1h"): se valida que el horizonte sea horizon_bars >= 1 o
-horizon = "end_of_day_utc" y que `htf_setup` sea uno conocido (`evaluation/timeframes.py`).
+horizon = "end_of_day_utc" y que `htf_setup` sea uno conocido (`evaluation/timeframes.py`). Las de lateralidad
+(`falsa_ruptura_asia`, `rechazo_dia_anterior`, `extremo_vwap`) ademas exigen daily_trend_in=['lateral'],
+levels_model_id vigente, family + max_per_symbol_session y, la falsa ruptura, sessions dentro de europa/eeuu.
 
 Formato del JSON (ver `StrategyHypothesis`):
     {
@@ -31,7 +33,8 @@ from pathlib import Path
 
 from .job import DEFAULT_DB_PATH
 from .strategy_registry import StrategyHypothesis, StrategyRegistry
-from .timeframes import SETUPS, hourly_horizon, is_hourly
+from ..schema.features import LEVELS_MODEL_ID
+from .timeframes import LATERAL_SETUPS, SETUPS, hourly_horizon, is_hourly
 
 
 def validate_hourly(strategy: StrategyHypothesis) -> str | None:
@@ -44,6 +47,19 @@ def validate_hourly(strategy: StrategyHypothesis) -> str | None:
     setup = strategy.entry_conditions.get("htf_setup")
     if setup is not None and setup not in SETUPS:
         return f"htf_setup desconocido: {setup!r} (validos: {', '.join(SETUPS)})"
+    if setup in LATERAL_SETUPS:
+        ec = strategy.entry_conditions
+        if ec.get("daily_trend_in") != ["lateral"] or ec.get("alignment") != "lateral":
+            return "las estrategias de lateralidad exigen daily_trend_in=['lateral'] y alignment='lateral'"
+        if ec.get("levels_model_id") != LEVELS_MODEL_ID:
+            return f"levels_model_id debe ser {LEVELS_MODEL_ID!r} (version de los niveles con que se calcula la entrada)"
+        cap = ec.get("max_per_symbol_session")
+        if not isinstance(cap, int) or isinstance(cap, bool) or cap < 1 or not ec.get("family"):
+            return "las estrategias de lateralidad exigen family y max_per_symbol_session entero >= 1"
+        if setup == "falsa_ruptura_asia":
+            sess = ec.get("sessions")
+            if not sess or not set(sess) <= {"europa", "eeuu"}:
+                return "falsa_ruptura_asia exige sessions dentro de ['europa', 'eeuu']"
     return None
 
 

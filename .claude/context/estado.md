@@ -83,6 +83,14 @@
   salga por tiempo (`plan-entrenamiento.md`, etapa 5). Falta: deploy del código, reiniciar la ingesta (endpoints),
   republicar el laboratorio y correr `diagnostics salidas --all` en la PC.
 
+- **Calidad de los trades en el laboratorio (2026-10-19, sin desplegar):** `lab/stats.py` suma win-rate mínimo para no
+  perder (`1/(1+payoff)`), win-rate de azar por barreras (ruina del jugador, solo si stop y objetivo están en ATR),
+  test de rachas, AHPR/GHPR, R² con signo de la curva y estabilidad Mann–Whitney (primer 70 % vs. último 30 %). Va en
+  `oos.trade_quality` y `holdout.trade_quality` (`lab/run.py`), y en el panel como tarjeta "Calidad de los trades" en el
+  detalle de cada estrategia y del holdout. Son diagnósticos: no entran al veredicto ni a la selección. Tests en
+  `tests/test_lab_trade_quality.py`. Falta: correr de nuevo el laboratorio (los resultados viejos no traen el bloque;
+  el panel lo avisa) y republicar. Investigación: `research/mql5-matematica-trading.md`.
+
 ## Estado por fase
 
 | Fase | Estado | Dónde |

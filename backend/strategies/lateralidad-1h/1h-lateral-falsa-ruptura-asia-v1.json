@@ -1,0 +1,25 @@
+{
+  "description": "1h-lateral-falsa-ruptura-asia-v1: en dia lateral (htf-trend-v1), en la sesion de Europa (Londres) o EE.UU. (Nueva York), la ultima vela de 1h cerrada rompe el rango de Asia (00:00-08:00 UTC) por mas de 0,5 ATR14 1h y cierra de nuevo adentro: entrada en contra de la ruptura; salida al cierre de la 3a vela de 1h completa",
+  "entry_conditions": {
+    "family": "1h-lateralidad",
+    "scope": "rotation",
+    "timeframe": "1h",
+    "htf_model_id": "htf-trend-v1",
+    "levels_model_id": "htf-levels-v1",
+    "htf_setup": "falsa_ruptura_asia",
+    "daily_trend_in": ["lateral"],
+    "alignment": "lateral",
+    "sessions": ["europa", "eeuu"],
+    "max_per_symbol_session": 1,
+    "direction_rule": "SHORT si high > max_Asia + 0,5*ATR14(1h) y close < max_Asia; LONG si low < min_Asia - 0,5*ATR14(1h) y close > min_Asia (si se cumplen las dos, no hay entrada)",
+    "setup_rule": "rango de Asia = maximo/minimo de las 8 velas 1h de 00:00-08:00 UTC del dia (completas); se evalua la ULTIMA vela 1h cerrada, posterior a las 08:00 UTC, en una corrida de la sesion europa o eeuu",
+    "entry_price": "mark price al emitir (lo fija el codigo)"
+  },
+  "exit_conditions": {
+    "timeframe": "1h",
+    "horizon_bars": 3,
+    "exit_rule": "cierre (mark) de la 3a vela de 1h completa posterior a la emision; due_at = ceil_hora(emision) + 3 h",
+    "costs": "10 bps ida y vuelta (resolver por defecto)"
+  },
+  "author": "nahue"
+}

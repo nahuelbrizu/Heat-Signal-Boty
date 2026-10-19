@@ -200,6 +200,11 @@ rango de la sesión anterior, datos propios del día y banderas por símbolo) y 
 `GET /api/hypotheses` acepta `session` (`asia` | `europa` | `eeuu` | `cierre` | `none`) y cada hipótesis trae
 `session` y `session_day`; `GET /api/hypotheses/by-trend` trae además `by_session`.
 
+`GET /api/hypotheses` acepta `family` (= `entry_conditions.family` de la estrategia, p.ej. `1h-lateralidad`: las 3
+de días laterales juntas). `GET /api/strategies` trae `family` por estrategia. `GET /api/htf/{symbol}` trae `levels`
+(`htf-levels-v1`: rango de Asia, máx/mín de ayer, VWAP del día, ADX14 1h, mechas, banderas de lateralidad y
+`sin_datos` con motivos).
+
 ## `GET /api/hypotheses/{hypothesis_id}`
 
 La misma forma que un item de la lista, más:
@@ -593,7 +598,15 @@ El `lab_summary.json` publicado desde la PC (`python -m heatsignal.lab.publish -
                                "params": {"target_vol": 0.15}, "train_sharpe": 3.6}]},
   "oos": {"sharpe": 1.08, "sharpe_ci95": [0.10, 2.01], "psr": 0.995, "dsr": 0.994, "sr0_annual": 0.013,
           "min_trl_days": 808, "days": 1950, "total_return": 0.43, "max_drawdown": 0.098, "trades": 635,
-          "hit_rate": {"hit_rate": 0.21, "lo": 0.18, "hi": 0.25, "n": 635, "wins": 135}},
+          "hit_rate": {"hit_rate": 0.21, "lo": 0.18, "hi": 0.25, "n": 635, "wins": 135},
+          "trade_quality": {"hit_rate": 0.21, "hit_rate_ci": [0.18, 0.25], "n": 635, "avg_win": 0.004, "avg_loss": 0.001,
+                            "payoff": 4.1, "breakeven": 0.196, "above_breakeven": false, "barrier_chance": null,
+                            "runs": {"n": 635, "wins": 135, "losses": 500, "runs": 190, "expected_runs": 213.6, "z": -2.4,
+                                     "p_value": 0.016, "max_win_streak": 4, "max_loss_streak": 22},
+                            "hpr": {"ahpr": 1.0007, "ghpr": 1.0005, "n": 635}, "equity_r2": 0.81,
+                            "stability": {"n_first": 444, "n_last": 191, "stability": 0.93, "p_value": 0.41,
+                                          "median_first": -0.0003, "median_last": -0.0004, "mean_first": 0.0007,
+                                          "mean_last": 0.0006}}},
   "costs": {"breakeven_bps_per_side": 76.7, "expected_cost_bps_per_side": 7.0, "breakeven_vs_expected": 10.95,
             "cost_curve": [{"cost_bps": 0.0, "sharpe": 1.19, "ann_return": 0.089},
                            {"cost_bps": 7.0, "sharpe": 1.08, "ann_return": 0.081}]},
@@ -611,6 +624,14 @@ El `lab_summary.json` publicado desde la PC (`python -m heatsignal.lab.publish -
   "generated_at": "2026-10-17T15:00:00+00:00"
 }
 ```
+
+`oos.trade_quality` (y `holdout.trade_quality` en el holdout, si se abrió después del 2026-10-19): calidad de los
+trades en orden de cierre (`lab.stats.trade_quality`). `breakeven` = win-rate mínimo para expectativa 0 con el payoff
+observado; `above_breakeven` = el IC 95 % entero del win-rate supera ese mínimo; `barrier_chance` = stop / (objetivo +
+stop) cuando la ficha de salidas tiene los dos niveles en ATR (si no, `null`); `runs` = test de rachas de
+Wald–Wolfowitz; `hpr` = AHPR/GHPR por trade; `equity_r2` = R² con signo de la curva diaria; `stability` = Mann–Whitney
+entre el primer 70 % y el último 30 % de los trades (`null` si un tramo tiene < 10). `null` si no hubo trades;
+ausente en resultados anteriores.
 
 - `equity_daily`: `[fecha UTC, retorno acumulado al cierre de esa fecha]`, suma simple de retornos
   diarios (la misma convención que `total_return`; 0.43 = +43 % sobre el capital inicial). `null` en

@@ -44,8 +44,28 @@ def _hour(ms: int) -> int:
     return ms - ms % HOUR_MS
 
 
-def aggregate_minutes(rows: list[tuple], source: str, min_minutes: int) -> dict[int, Candle1h]:
-    """(minute_ms, o, h, l, c) ordenadas -> velas de 1h. Minutos sin precio (o NULL) no cuentan."""
+def _vwap_parts(g: list[tuple], quote: bool) -> tuple[float | None, float | None]:
+    """Sumas para el VWAP (`htf-levels-v1`): precio tipico (H+L+C)/3 x volumen BASE de cada vela 1m.
+
+    `rows[5]` es el volumen: base (klines.volume) o USD (bars_1m: buy+sell+block; base = USD / precio tipico).
+    Sin columna de volumen -> (None, None) (el VWAP queda sin_datos, nunca inventado)."""
+    if not g or len(g[0]) < 6:
+        return None, None
+    pv = vol = 0.0
+    for r in g:
+        if r[5] is None:
+            return None, None
+        tp = (float(r[2]) + float(r[3]) + float(r[4])) / 3
+        v = float(r[5]) / tp if quote and tp > 0 else (0.0 if quote else float(r[5]))
+        pv += tp * v
+        vol += v
+    return pv, vol
+
+
+def aggregate_minutes(rows: list[tuple], source: str, min_minutes: int, quote_volume: bool = False) -> dict[int, Candle1h]:
+    """(minute_ms, o, h, l, c[, volumen]) ordenadas -> velas de 1h. Minutos sin precio (o NULL) no cuentan.
+
+    Con la columna de volumen la vela trae ademas las sumas para el VWAP del dia (`vwap_pv`, `vwap_vol`)."""
     groups: dict[int, list[tuple]] = {}
     for r in rows:
         if r[1] is None or r[2] is None or r[3] is None or r[4] is None:
@@ -56,9 +76,10 @@ def aggregate_minutes(rows: list[tuple], source: str, min_minutes: int) -> dict[
         if len(g) < min_minutes:
             continue
         g.sort(key=lambda r: r[0])
+        pv, vol = _vwap_parts(g, quote_volume)
         out[h] = Candle1h(open_ms=h, open=float(g[0][1]), high=max(float(r[2]) for r in g),
                           low=min(float(r[3]) for r in g), close=float(g[-1][4]), source=source,  # type: ignore[arg-type]
-                          minutes=min(60, len(g)))
+                          minutes=min(60, len(g)), vwap_pv=pv, vwap_vol=vol)
     return out
 
 
@@ -128,15 +149,15 @@ class HourlyCandleProvider:
         try:
             self.stats["db_queries"] += 1
             kl = conn.execute(  # type: ignore[attr-defined]
-                "SELECT open_time_ms, open, high, low, close FROM klines WHERE exchange=? AND symbol=? "
+                "SELECT open_time_ms, open, high, low, close, volume FROM klines WHERE exchange=? AND symbol=? "
                 "AND interval='1m' AND open_time_ms >= ? AND open_time_ms < ? ORDER BY open_time_ms",
                 (EXCHANGE, symbol, start_ms, end_ms)).fetchall()
             out = {h: c for h, c in aggregate_minutes(kl, "klines", 60).items()}
             bars = conn.execute(  # type: ignore[attr-defined]
-                "SELECT minute_ms, open, high, low, close FROM bars_1m WHERE exchange=? AND symbol=? "
+                "SELECT minute_ms, open, high, low, close, buy_usd + sell_usd + block_usd FROM bars_1m WHERE exchange=? AND symbol=? "
                 "AND minute_ms >= ? AND minute_ms < ? ORDER BY minute_ms",
                 (EXCHANGE, symbol, start_ms, end_ms)).fetchall()
-            for h, c in aggregate_minutes(bars, "bars_1m", MIN_BAR_MINUTES).items():
+            for h, c in aggregate_minutes(bars, "bars_1m", MIN_BAR_MINUTES, quote_volume=True).items():
                 out.setdefault(h, c)
             return out
         except Exception as exc:  # noqa: BLE001 - tabla ausente, base bloqueada: se declara y sigue con REST

@@ -30,8 +30,9 @@ def _series(n_hours: int, end_open_ms: int, price0: float, step: float, *, wiggl
     for i in range(n_hours):
         o = p
         c = p + step
-        out.append(Candle1h(open_ms=start + i * HOUR_MS, open=o, high=max(o, c) + wiggle, low=min(o, c) - wiggle,
-                            close=c, source="klines"))
+        hi, lo = max(o, c) + wiggle, min(o, c) - wiggle
+        out.append(Candle1h(open_ms=start + i * HOUR_MS, open=o, high=hi, low=lo, close=c, source="klines",
+                            vwap_pv=(hi + lo + c) / 3 * 60, vwap_vol=60.0))  # klines 1m: traen volumen (VWAP)
         p = c
     return out
 

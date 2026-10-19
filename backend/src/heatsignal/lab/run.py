@@ -40,6 +40,7 @@ import pandas as pd
 
 from . import stats
 from .baselines import buy_and_hold, equal_weight_basket, random_entries, random_shift_joint
+from .exits import EXITS
 from .sim import Costs, simulate
 from .store import load_funding, load_klines, load_metrics
 from .strategies import CATALOG, SEVEN, MarketData
@@ -259,6 +260,7 @@ def evaluate(cfg: RunConfig, registry: TrialRegistry | None = None, data: dict[s
             "breakeven_bps_per_side": breakeven,
             "cost_curve": stats.cost_curve(oos_g, oos_t) if len(oos_res.trades) else None,
             "trades": int(len(trades_oos)), "hit_rate": hr,
+            "trade_quality": trade_quality_block(cfg.strategy_id, trades_oos, oos),
             "breakdown": oos_res.breakdown,
         },
         "baselines": {
@@ -279,6 +281,24 @@ def evaluate(cfg: RunConfig, registry: TrialRegistry | None = None, data: dict[s
     }
     report["verdict"] = verdict(report)
     return report
+
+
+def barrier_of(strategy_id: str) -> tuple[float, float] | None:
+    """(objetivo, stop) en ATR si la ficha de salidas tiene los dos niveles en ATR; si no, None (no hay win-rate de
+    azar por barreras: sale por tiempo, senal, VWAP, etc.)."""
+    f = EXITS.get(strategy_id) or {}
+    st, tp = f.get("stop") or {}, f.get("take_profit") or {}
+    if st.get("tipo") == "atr" and tp.get("tipo") == "atr" and st.get("valor") and tp.get("valor"):
+        return (float(tp["valor"]), float(st["valor"]))
+    return None
+
+
+def trade_quality_block(strategy_id: str, trades: pd.DataFrame, daily: pd.Series) -> dict[str, Any] | None:
+    """Calidad de los trades (stats.trade_quality) con los trades en orden de cierre. None si no hubo trades."""
+    if not len(trades):
+        return None
+    t = trades.sort_values(["exit_time", "entry_time"], kind="stable")
+    return stats.trade_quality(t["pnl_net"].to_numpy(), t["ret_net"].to_numpy(), daily, barrier_of(strategy_id))
 
 
 PSR_LABEL = "PSR (sin corrección de selección)"
@@ -352,7 +372,8 @@ def open_holdout(cfg: RunConfig, registry: TrialRegistry, data: dict[str, Market
             "sharpe": sharpe, "sharpe_ci95": (lambda c: [c["lo"], c["hi"]])(stats.sharpe_ci(r, seed=cfg.seed))
             if math.isfinite(sharpe) else None,
             "total_return": float(r.sum()), "max_drawdown": stats.max_drawdown(r), "trades": int(len(res.trades)),
-            "hit_rate": hr, "breakdown": res.breakdown, "equity_daily": equity_daily(r),
+            "hit_rate": hr, "trade_quality": trade_quality_block(cfg.strategy_id, res.trades, r),
+            "breakdown": res.breakdown, "equity_daily": equity_daily(r),
         },
         "baselines": {
             "basket_sharpe": basket_sharpe, "basket_return": float(basket.daily_returns.sum()),

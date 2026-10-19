@@ -19,6 +19,15 @@ Familias por sesion (`features/sessions.py`), ademas:
     "sessions":        ["europa", "eeuu"]       sesiones en las que aplica
     "max_minutes_after_trigger": 60             la hipotesis sale a lo sumo N min despues del cierre de la vela
                                                 de apertura (en modo sessions el grafo corre ~1-2 min despues)
+Familia de dias laterales (`features/htf.py`, `htf-levels-v1`; decisions.md 2026-10-19), ademas:
+    "htf_setup":       "falsa_ruptura_asia" | "rechazo_dia_anterior" | "extremo_vwap"
+    "daily_trend_in":  ["lateral"]              y "alignment": "lateral"
+    "levels_model_id": "htf-levels-v1"          version de los niveles (debe coincidir)
+    "sessions":        ["europa", "eeuu"]       (solo falsa ruptura) sesion de la CORRIDA en la que aplica
+    La bandera la calcula el codigo sobre la ULTIMA vela 1h cerrada: el contexto tiene que ser de la vela que acaba de
+    cerrar (open = hora actual - 1h; un contexto atrasado se rechaza) y la direccion propuesta tiene que coincidir con
+    la de la bandera. El tope "una por moneda y por sesion" (`max_per_symbol_session`) lo aplica el Sintetizador
+    contra la base (`agents/synthesizer.py`).
 """
 
 from __future__ import annotations
@@ -30,8 +39,11 @@ from ..features.htf import trend_alignment
 from ..schema.features import HtfContext
 
 HOUR = timedelta(hours=1)
+HOUR_MS = 3_600_000
 SESSION_SETUPS = ("apertura_continuacion_a_favor", "apertura_reversion_en_contra")
-SETUPS = ("pullback_ema20_1h_a_favor", "continuacion_a_favor", "extremo_rango_diario_en_contra", *SESSION_SETUPS)
+LATERAL_SETUPS = ("falsa_ruptura_asia", "rechazo_dia_anterior", "extremo_vwap")
+SETUPS = ("pullback_ema20_1h_a_favor", "continuacion_a_favor", "extremo_rango_diario_en_contra", *SESSION_SETUPS,
+          *LATERAL_SETUPS)
 
 
 def is_hourly(exit_conditions: dict[str, Any]) -> bool:
@@ -63,7 +75,7 @@ def hourly_horizon(exit_conditions: dict[str, Any], created_at: datetime) -> tup
 
 
 def check_htf_entry(entry_conditions: dict[str, Any], htf: HtfContext | None, direction: str,
-                    session: Any = None, now_ms: int | None = None) -> str | None:
+                    session: Any = None, now_ms: int | None = None, run_session: str | None = None) -> str | None:
     """None si la propuesta cumple las condiciones pre-registradas de 1h; si no, el motivo de rechazo."""
     setup = entry_conditions.get("htf_setup")
     if setup is None:
@@ -84,6 +96,8 @@ def check_htf_entry(entry_conditions: dict[str, Any], htf: HtfContext | None, di
         return f"direccion {direction} queda {align} de la tendencia {htf.daily_trend}; la estrategia exige {want_align}"
     if setup in SESSION_SETUPS:
         return _check_session(entry_conditions, setup, session, now_ms)
+    if setup in LATERAL_SETUPS:
+        return _check_lateral(entry_conditions, setup, htf, direction, now_ms, run_session)
     if setup == "extremo_rango_diario_en_contra":
         want = "maximo" if htf.daily_trend == "alcista" else "minimo"
         if htf.setups.extremo_rango_diario != want:
@@ -105,4 +119,31 @@ def _check_session(entry_conditions: dict[str, Any], setup: str, session: Any, n
         return f"pasaron mas de {max_min} min desde el cierre de la vela de apertura de {session.session}"
     if not getattr(session.flags, setup, False):
         return f"el setup {setup} no se cumple en la vela de apertura de {session.session} (codigo)"
+    return None
+
+
+def _check_lateral(entry_conditions: dict[str, Any], setup: str, htf: HtfContext, direction: str,
+                   now_ms: int | None, run_session: str | None) -> str | None:
+    """Setups de dias laterales: bandera de `HtfContext.levels` (codigo) sobre la ultima vela 1h cerrada."""
+    if htf.daily_trend != "lateral":  # tambien lo exige daily_trend_in, pero no depende del JSON
+        return f"daily_trend={htf.daily_trend}: las estrategias de lateralidad solo aplican con daily_trend=lateral"
+    lv = htf.levels
+    if lv is None:
+        return "sin niveles de 1h (htf-levels) para verificar la entrada"
+    want_model = entry_conditions.get("levels_model_id")
+    if want_model and want_model != lv.levels_model_id:
+        return f"la estrategia se pre-registro con {want_model} y los niveles son {lv.levels_model_id}"
+    allowed = entry_conditions.get("sessions")
+    if allowed and run_session not in allowed:
+        return f"la sesion de la corrida es {run_session or 'ninguna'}; la estrategia aplica a {allowed}"
+    if now_ms is not None:
+        expected = now_ms - now_ms % HOUR_MS - HOUR_MS
+        if htf.last_closed_open_ms != expected:
+            return "el contexto de 1h no es de la ultima vela cerrada (atrasado o adelantado): no se verifica la entrada"
+    flag = getattr(lv, setup)
+    if flag is None:
+        why = "; ".join(lv.sin_datos)
+        return f"el setup {setup} no se cumple en la ultima vela 1h cerrada (codigo)" + (f" [sin_datos: {why}]" if why else "")
+    if flag != direction:
+        return f"el setup {setup} da {flag} (codigo) y la propuesta es {direction}"
     return None

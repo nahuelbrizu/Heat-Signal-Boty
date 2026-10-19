@@ -1,0 +1,24 @@
+{
+  "description": "1h-lateral-rechazo-dia-anterior-v1: en dia lateral (htf-trend-v1), la ultima vela de 1h cerrada toca el maximo (minimo) del dia UTC anterior a 0,25 ATR14 1h o menos, deja una mecha superior (inferior) >= 50% de su rango y cierra por debajo (encima) de ese extremo: entrada en contra del extremo; salida al cierre de la 4a vela de 1h completa",
+  "entry_conditions": {
+    "family": "1h-lateralidad",
+    "scope": "rotation",
+    "timeframe": "1h",
+    "htf_model_id": "htf-trend-v1",
+    "levels_model_id": "htf-levels-v1",
+    "htf_setup": "rechazo_dia_anterior",
+    "daily_trend_in": ["lateral"],
+    "alignment": "lateral",
+    "max_per_symbol_session": 1,
+    "direction_rule": "SHORT si high >= max_ayer - 0,25*ATR14(1h), mecha superior (high - max(open, close)) >= 50% de (high - low) y close < max_ayer; LONG si low <= min_ayer + 0,25*ATR14(1h), mecha inferior (min(open, close) - low) >= 50% del rango y close > min_ayer (si se cumplen las dos, no hay entrada)",
+    "setup_rule": "max_ayer/min_ayer = maximo/minimo del dia UTC anterior completo (24 velas 1h); se evalua la ULTIMA vela 1h cerrada",
+    "entry_price": "mark price al emitir (lo fija el codigo)"
+  },
+  "exit_conditions": {
+    "timeframe": "1h",
+    "horizon_bars": 4,
+    "exit_rule": "cierre (mark) de la 4a vela de 1h completa posterior a la emision; due_at = ceil_hora(emision) + 4 h",
+    "costs": "10 bps ida y vuelta (resolver por defecto)"
+  },
+  "author": "nahue"
+}

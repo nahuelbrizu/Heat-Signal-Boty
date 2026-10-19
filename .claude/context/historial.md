@@ -11,6 +11,13 @@
 
 ## Entradas
 
+### 2026-10-19 (noche)
+- Investigación de matemática del trading (MQL5, dos hilos de X, Rankia): `research/mql5-matematica-trading.md`,
+  partes 1 y 2, con lo que ya teníamos, lo nuevo útil y lo descartado.
+- Implementado el punto 1 del orden propuesto: bloque `trade_quality` en el laboratorio + tarjeta en el panel (ver
+  `estado.md`). Suite completa: 934 tests pasan (1 omitido).
+- Próximo: Monte Carlo en bloques (DD P95, P(ruina)) y estacionalidad horaria con FDR.
+
 ### 2026-10-17
 - Ola multi-agente (5 worktrees, mergeados en `ingestion-binance-bybit`): worker OKX (ctVal por REST,
   liquidaciones PARTIAL), persistencia (TimescaleSink, Fanout, Throttle, health, `ingestion/run.py`,

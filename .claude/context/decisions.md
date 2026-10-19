@@ -429,6 +429,14 @@
      VWAP| ≥ 2·ATR14(1h) y ADX14(1h) < 20 → hacia el VWAP (close > VWAP → SHORT; < → LONG). Salida: cierre de la 4ª
      vela 1h.
 
+- **Lateralidad implementada (2026-10-19, sin cambiar umbrales).** Niveles con versión propia `htf-levels-v1`
+  (`HtfContext.levels`); `htf-trend-v1` no cambia (las 5 de tendencia siguen válidas). VWAP con volumen base de las
+  velas 1m (USD / precio típico en `bars_1m`); una hora sin 1m deja el VWAP en `sin_datos`. La entrada exige la vela
+  recién cerrada. Tope `max_per_symbol_session = 1` por (familia `1h-lateralidad`, símbolo, sesión del día), contando lo
+  ya registrado en la base. Si una vela cumple LONG y SHORT a la vez, no se entra. Con horario de verano británico
+  (hasta el 25-10) la corrida de Europa (08:00 UTC) no puede disparar la falsa ruptura (su vela cae dentro del rango
+  de Asia): esta semana esa estrategia solo puede salir en la de EE.UU.
+
 ## Abiertas
 - ~~Plan de CoinGlass a contratar.~~ **Ya no aplica al core** — la fuente primaria pasó a WS nativos.
   Solo se retomaría si se implementa la fuente BYOK opcional (y ahí el plan lo elige el usuario).

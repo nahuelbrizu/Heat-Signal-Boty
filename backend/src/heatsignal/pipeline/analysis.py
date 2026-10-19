@@ -171,6 +171,7 @@ def htf_brief(h: Any) -> dict[str, Any] | None:
         "last_closed_open_ms": h.last_closed_open_ms, "change_from_open_pct": h.change_from_open_pct,
         "change_from_open_atr": h.change_from_open_atr, "pos_in_day_range": h.pos_in_day_range,
         "dist_ema20_1h_atr": h.dist_ema20_1h_atr, "setups": h.setups.model_dump(), "n_gaps": len(h.data_gaps),
+        "levels": None if getattr(h, "levels", None) is None else h.levels.brief(),
     }
 
 

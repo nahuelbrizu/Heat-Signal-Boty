@@ -38,6 +38,10 @@ class InMemoryPendingHypothesisStore:
         """En memoria nada se resuelve: toda hipotesis cuenta como abierta."""
         return {(str(h.strategy_id).lower(), h.symbol) for h in self._items}
 
+    def session_hypotheses(self, session_day: str, session: str) -> set[tuple[str, str]]:
+        return {(str(h.strategy_id).lower(), h.symbol) for h in self._items
+                if h.session_day == session_day and h.session == session}
+
     def all(self) -> list[PendingHypothesis]:
         return list(self._items)
 
