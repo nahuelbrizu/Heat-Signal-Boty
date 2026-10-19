@@ -210,6 +210,53 @@ EXITS: dict[str, dict[str, Any]] = {
     },
 }
 
+def _l6_exits() -> dict[str, dict[str, Any]]:
+    """Fichas del lote 6 (estrategias-lote6-exploratorio.md): mismos ids que `strategies._l6_specs` (un test compara
+    la ficha con el CATALOG). Ninguna tiene stop ni objetivo: salen por tiempo, salvo tsmom (senal y tamano diario)."""
+    out: dict[str, dict[str, Any]] = {}
+
+    def by_time(sid: str, valor: float, unidad: str, param: str, nota: str) -> None:
+        out[sid] = {"stop": None, "take_profit": None, "tiempo": _t(valor, unidad, param), "otra": None,
+                    "nota": nota, "cierre": "tiempo", "giro": "tiempo"}
+
+    for n in (5, 10, 20, 55):
+        for h in (1, 3, 5):
+            for side in ("long", "ambos"):
+                by_time(f"l6-ruptura-n{n}-h{h}-{side}-v1", h, "d", "hold_days", f"Sin stop ni objetivo: cierra a los {h} d.")
+    for lb in (7, 28, 84):
+        for sizing in ("fijo", "vol"):
+            for side in ("long", "ambos"):
+                det = f"cambio de signo del retorno de {lb} d, decidido cada día a las 00:00 UTC"
+                if sizing == "vol":
+                    det += "; el tamaño (vol-target) se ajusta en cada decisión"
+                out[f"l6-tsmom-l{lb}-{sizing}-{side}-v1"] = {
+                    "stop": None, "take_profit": None, "tiempo": None,
+                    "otra": {"tipo": "senal", "detalle": det, "param": None},
+                    "nota": "Sin stop: sale (o gira) con la señal contraria." if side == "ambos"
+                    else "Sin stop: sale cuando el retorno pasa a negativo.",
+                    "cierre": "senal", "giro": "senal"}
+    for name in ("lun", "mar", "mie", "jue", "vie", "sab", "dom"):
+        by_time(f"l6-cal-{name}-v1", 24, "h", "hold_hours", "Calendario: sin stop, cierra a las 24 h.")
+    by_time("l6-cal-finde-v1", 72, "h", "hold_hours", "Calendario: sin stop, cierra el domingo 24:00 UTC (72 h).")
+    for name in ("asia", "londres", "ny"):
+        by_time(f"l6-cal-{name}-v1", 4, "h", "hold_hours", "Sesión: sin stop, cierra a las 4 h.")
+    for h in (24, 72):
+        by_time(f"l6-der-funding-z2-h{h}-v1", h, "h", "hold_hours", f"Sin stop ni objetivo: cierra a las {h} h.")
+    for d in (3, 7):
+        by_time(f"l6-der-oibaja-fneg-d{d}-v1", d, "d", "hold_days", f"Sin stop ni objetivo: cierra a los {d} d.")
+    by_time("l6-der-taker-p95-h4-v1", 4, "h", "hold_hours", "Sin stop ni objetivo: cierra a las 4 h.")
+    for side in ("long", "short"):
+        for h in (1, 3):
+            by_time(f"l6-rsi2-{side}-h{h}-v1", h, "d", "hold_days", f"Sin stop ni objetivo: cierra a los {h} d.")
+    for tag in ("adx25", "atrp50"):
+        for side in ("long", "ambos"):
+            by_time(f"l6-reg-{tag}-{side}-v1", 5, "d", "hold_days", "Sin stop ni objetivo: cierra a los 5 d.")
+    return out
+
+
+EXITS.update(_l6_exits())
+
+
 # Freqtrade (paper): lo configurado en cada estrategia (freqtrade/**/strategies). Un test lo compara con los archivos.
 FREQTRADE_EXITS: dict[str, dict[str, Any]] = {
     "DonchianEnsembleV1": {

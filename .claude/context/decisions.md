@@ -570,6 +570,10 @@
   sesiones (11), derivados (5), RSI(2) diario (4), régimen (4). K del programa 51 → 111. Exploratorio: nada se aprueba
   por su resultado; pasan a confirmación en paper TODAS las que cumplan veredicto propio + robustez (meseta ≥ 80 %,
   Sharpe ×3 costos > 0) + Romano–Wolf ≤ 0,10 con el K actualizado. Confirmación con datos desde 2026-10-20.
+  Programado 2026-10-20: 60 specs (`LOTE6`), hashes congelados en `estrategias-lote6-hashes.json` y en el test, ANTES
+  de correr. Notas: `l6-ruptura-n10-h1-long-v1` repite la regla de `max-ruptura-10d-v1` (queda: es de la lista y cuenta);
+  al medir tiempos se vieron Sharpe de 5 variantes sobre BTC con `--perm 0` en un registro temporal borrado (no se usaron
+  para nada). Corrida: 7 símbolos, `--perm 100`, de a 2 (~6–8 h).
 
 ## Abiertas
 - ~~Plan de CoinGlass a contratar.~~ **Ya no aplica al core** — la fuente primaria pasó a WS nativos.

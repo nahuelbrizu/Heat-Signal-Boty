@@ -1163,3 +1163,302 @@ CATALOG.update({
                "publicada citada: validar propio)"), vwap_reversion),
 })
 LOTE5 = tuple(k for k in CATALOG if k not in LOTE1 + LOTE2 + LOTE3 + LOTE4)
+
+
+# =====================================================================================================
+# Lote 6 (2026-10-20): exploracion masiva, 60 variantes con parametros FIJOS (sin grilla: 1 intento cada una).
+# Especificacion exacta: .claude/context/estrategias-lote6-exploratorio.md. Las reglas y specs anteriores NO
+# cambian. Reloj (`lab/clock.py`): velas diarias fechadas al cierre (00:00 UTC) y decision en ese cierre; metrics
+# disponibles en ts + 5 min; funding en la liquidacion; ratio taker = klines de la ultima hora CERRADA; sesiones
+# con DST via zoneinfo. Cada variante opera los simbolos que reciba (por defecto los 7 de `run.py`).
+# =====================================================================================================
+
+from datetime import datetime as _dt, time as _time, timedelta as _td  # noqa: E402
+from zoneinfo import ZoneInfo  # noqa: E402
+
+_L6_SOURCE = "lote 6 exploratorio (estrategias-lote6-exploratorio.md, aprobado por el usuario 2026-10-20)"
+_SIDE_DIR = {"long": "long", "ambos": "both", "short": "short"}
+
+
+def _daily(md: MarketData) -> pd.DataFrame:
+    return resample_bars(md.klines, "1D")
+
+
+def _breakout_entries(close: pd.Series, n: int, side: str) -> pd.Series:
+    """Cierre = maximo de los ultimos n cierres (incluido el de hoy) -> +1; con side 'ambos', cierre = minimo -> -1.
+    Si se cumplen las dos (n cierres iguales) no hay senal."""
+    hi = close >= close.rolling(n, min_periods=n).max()
+    lo = (close <= close.rolling(n, min_periods=n).min()) if side == "ambos" else pd.Series(False, index=close.index)
+    e = pd.Series(0.0, index=close.index)
+    e[hi & ~lo] = 1.0
+    e[lo & ~hi] = -1.0
+    return e
+
+
+def l6_ruptura(data: dict[str, MarketData], p: dict[str, Any]) -> Signals:
+    """Velas diarias. Ruptura del maximo (y del minimo en 'ambos') de `lookback_days` cierres -> `hold_days` dias."""
+    out: Signals = {}
+    for sym, md in data.items():
+        bars = _daily(md)
+        if bars.empty:
+            out[sym] = _changes({})
+            continue
+        e = _breakout_entries(bars["close"], p["lookback_days"], p["side"])
+        out[sym] = hold_events(e, pd.Timedelta(days=p["hold_days"]), bars.index)
+    return out
+
+
+def l6_tsmom(data: dict[str, MarketData], p: dict[str, Any]) -> Signals:
+    """Decision diaria al cierre de la vela diaria (00:00 UTC): signo de log(close_t / close_{t-L}). Tamano 'fijo'
+    = 1; 'vol' = min(target_vol / vol, max_leverage) con vol = desvio de los retornos diarios de `vol_window_days`
+    dias anualizado con sqrt(365). En 'long' el signo negativo da posicion 0. Se mantiene hasta la proxima
+    decision (se emite un cambio solo si el objetivo cambia). Sin dato del dia (hueco, vol indefinida): se
+    mantiene la posicion."""
+    out: Signals = {}
+    for sym, md in data.items():
+        bars = _daily(md)
+        if bars.empty:
+            out[sym] = _changes({})
+            continue
+        c = bars["close"]
+        mom = np.log(c / c.shift(p["lookback_days"]))
+        if p["sizing"] == "vol":
+            vol = F.realized_vol(c, p["vol_window_days"]) * np.sqrt(365)
+            size = np.minimum(p["target_vol"] / vol.where(vol > 0), p["max_leverage"])
+        else:
+            size = pd.Series(1.0, index=c.index)
+        rows: dict[pd.Timestamp, float] = {}
+        pos = 0.0
+        for t in c.index:
+            m, s = mom[t], size[t]
+            if not (np.isfinite(m) and np.isfinite(s)):
+                continue
+            w = float(np.sign(m) * s)
+            if p["side"] == "long":
+                w = max(w, 0.0)
+            if abs(w - pos) > 1e-12:  # ruido de punto flotante no es un cambio de objetivo
+                rows[t] = w
+                pos = w
+        out[sym] = _changes(rows)
+    return out
+
+
+def _calendar_starts(k: pd.DataFrame, p: dict[str, Any]) -> pd.Series:
+    """Instantes UTC de entrada dentro del rango de datos [primera apertura, ultimo cierre]. Con `weekday` (0 = lunes):
+    las 00:00 UTC de ese dia. Con `tz`/`local_time`/`weekdays`: la hora local de cada dia habil local, pasada a UTC
+    con zoneinfo (DST incluido)."""
+    lo, hi = k.index[0], k.index[-1] + MIN
+    d0, d1 = (lo - DAY * 2).date(), (hi + DAY).date()
+    starts = []
+    d = d0
+    while d <= d1:
+        if "weekday" in p:
+            t = pd.Timestamp(d, tz="UTC") if d.weekday() == p["weekday"] else None
+        elif d.weekday() in p["weekdays"]:
+            hh, mm = map(int, p["local_time"].split(":"))
+            t = pd.Timestamp(_dt.combine(d, _time(hh, mm), tzinfo=ZoneInfo(p["tz"]))).tz_convert("UTC")
+        else:
+            t = None
+        if t is not None and lo <= t <= hi:
+            starts.append(t)
+        d += _td(days=1)
+    return pd.Series(1.0, index=pd.DatetimeIndex(starts, tz="UTC") if not starts else pd.DatetimeIndex(starts), dtype=float)
+
+
+def l6_calendario(data: dict[str, MarketData], p: dict[str, Any]) -> Signals:
+    """Long `hold_hours` desde cada instante de calendario (no usa precios)."""
+    out: Signals = {}
+    for sym, md in data.items():
+        if not len(md.klines):
+            out[sym] = _changes({})
+            continue
+        out[sym] = hold_events(_calendar_starts(md.klines, p), pd.Timedelta(hours=p["hold_hours"]), md.klines.index)
+    return out
+
+
+def _funding_z_time(f: pd.Series, window: str) -> pd.Series:
+    """z-score de cada tasa liquidada contra las liquidadas en la ventana temporal (t - window, t], incluida la
+    actual. Solo definido cuando ya hay `window` completo de historia (desde la primera liquidacion conocida)."""
+    f = f.dropna().sort_index()
+    if f.empty:
+        return f
+    roll = f.rolling(window, min_periods=3)
+    z = (f - roll.mean()) / roll.std().where(lambda s: s > 0)
+    return z[f.index >= f.index[0] + pd.Timedelta(window)]
+
+
+def l6_der_funding_z(data: dict[str, MarketData], p: dict[str, Any]) -> Signals:
+    """En cada liquidacion: z de funding (30 d) > +z -> short; < -z -> long; mantener `hold_hours`."""
+    out: Signals = {}
+    for sym, md in data.items():
+        if md.funding is None or not len(md.funding):
+            out[sym] = _changes({})
+            continue
+        z = _funding_z_time(md.funding, p["z_window"])
+        e = pd.Series(0.0, index=z.index)
+        e[z > p["z"]] = -1.0
+        e[z < -p["z"]] = 1.0
+        out[sym] = hold_events(e, pd.Timedelta(hours=p["hold_hours"]), md.klines.index)
+    return out
+
+
+def l6_der_oi_funding(data: dict[str, MarketData], p: dict[str, Any]) -> Signals:
+    """Decision diaria a las 00:00 UTC (cierre de la vela diaria). OI en CONTRATOS ahora vs hace 24 h (metrics
+    disponibles en ts + 5 min; un dato mas viejo que `oi_max_age` = hueco, sin senal) < 0 y suma de las tasas de
+    funding liquidadas en (t - 24 h, t] < 0 -> long `hold_days`."""
+    out: Signals = {}
+    for sym, md in data.items():
+        bars = _daily(md)
+        if md.metrics is None or md.funding is None or bars.empty or not len(md.metrics):
+            out[sym] = _changes({})
+            continue
+        idx = bars.index
+        m = available_metrics(md.metrics)["oi_contracts"].dropna()
+        tol = pd.Timedelta(p["oi_max_age"])
+        win = pd.Timedelta(hours=p["window_hours"])
+        oi_now = asof(idx, m, tolerance=tol)
+        oi_then = pd.Series(asof(idx - win, m, tolerance=tol).to_numpy(), index=idx)
+        d_oi = oi_now / oi_then - 1
+        f = md.funding.dropna().sort_index()
+        cum = f.cumsum()
+        c_now = asof(idx, cum.rename("c")).fillna(0.0)
+        c_then = pd.Series(asof(idx - win, cum.rename("c")).fillna(0.0).to_numpy(), index=idx)
+        n_now = asof(idx, pd.Series(np.arange(1, len(f) + 1), index=f.index, name="n")).fillna(0)
+        n_then = pd.Series(asof(idx - win, pd.Series(np.arange(1, len(f) + 1), index=f.index, name="n")).fillna(0).to_numpy(),
+                           index=idx)
+        f_sum = (c_now - c_then).where(n_now - n_then > 0)  # sin liquidaciones en la ventana -> sin dato
+        e = pd.Series(0.0, index=idx)
+        e[(d_oi < 0) & (f_sum < 0)] = 1.0
+        out[sym] = hold_events(e, pd.Timedelta(days=p["hold_days"]), idx)
+    return out
+
+
+def l6_der_taker(data: dict[str, MarketData], p: dict[str, Any]) -> Signals:
+    """Velas 1h (fechadas al cierre). Desbalance taker de la ultima hora cerrada (klines) >= percentil `pct_hi` de
+    las `pct_window_hours` horas anteriores -> short; <= percentil `pct_lo` -> long; mantener `hold_hours`."""
+    out: Signals = {}
+    for sym, md in data.items():
+        hour = resample_bars(md.klines, "1h")
+        if hour.empty:
+            out[sym] = _changes({})
+            continue
+        imb = F.taker_imbalance(hour)
+        w = p["pct_window_hours"]
+        hi = F.rolling_percentile(imb, w, p["pct_hi"])
+        lo = F.rolling_percentile(imb, w, p["pct_lo"])
+        e = pd.Series(0.0, index=hour.index)
+        e[imb >= hi] = -1.0
+        e[(imb <= lo) & ~(imb >= hi)] = 1.0
+        out[sym] = hold_events(e, pd.Timedelta(hours=p["hold_hours"]), hour.index)
+    return out
+
+
+def l6_rsi2(data: dict[str, MarketData], p: dict[str, Any]) -> Signals:
+    """Velas diarias. RSI(2) de Wilder < `lo` -> long (side long) / > `hi` -> short (side short); `hold_days`."""
+    out: Signals = {}
+    for sym, md in data.items():
+        bars = _daily(md)
+        if bars.empty:
+            out[sym] = _changes({})
+            continue
+        r = F.rsi(bars["close"], p["rsi_n"])
+        e = pd.Series(0.0, index=bars.index)
+        if p["side"] == "long":
+            e[r < p["lo"]] = 1.0
+        else:
+            e[r > p["hi"]] = -1.0
+        out[sym] = hold_events(e, pd.Timedelta(days=p["hold_days"]), bars.index)
+    return out
+
+
+def l6_regimen(data: dict[str, MarketData], p: dict[str, Any]) -> Signals:
+    """Ruptura de `lookback_days` cierres mantenida `hold_days`, solo si el filtro de regimen del mismo cierre pasa:
+    'adx': ADX(adx_n) diario > adx_min; 'atrp': ATR(atr_n)/close < mediana (percentil `atrp_pct`) de los
+    `atrp_window_days` dias ANTERIORES."""
+    out: Signals = {}
+    for sym, md in data.items():
+        bars = _daily(md)
+        if bars.empty:
+            out[sym] = _changes({})
+            continue
+        e = _breakout_entries(bars["close"], p["lookback_days"], p["side"])
+        if p["filter"] == "adx":
+            ok = F.adx(bars, p["adx_n"]) > p["adx_min"]
+        else:
+            atrp = F.atr(bars, p["atr_n"]) / bars["close"]
+            ok = atrp < F.rolling_percentile(atrp, p["atrp_window_days"], p["atrp_pct"])
+        e = e.where(ok, 0.0)
+        out[sym] = hold_events(e, pd.Timedelta(days=p["hold_days"]), bars.index)
+    return out
+
+
+def _l6_specs() -> dict[str, tuple[Spec, Rule]]:
+    specs: dict[str, tuple[Spec, Rule]] = {}
+
+    def add(sid: str, family: str, desc: str, tf: str, direction: str, horizon: str, params: dict[str, Any],
+            rule: Rule, needs: tuple[str, ...] = ("klines",)) -> None:
+        specs[sid] = (Spec(sid, family, desc, tf, direction, horizon, params, grid={}, needs=needs,
+                           source=_L6_SOURCE), rule)
+
+    for n in (5, 10, 20, 55):
+        for h in (1, 3, 5):
+            for side in ("long", "ambos"):
+                add(f"l6-ruptura-n{n}-h{h}-{side}-v1", "ruptura-n",
+                    f"Velas diarias: cierre = maximo de {n} dias -> long {h} d"
+                    + (f"; cierre = minimo de {n} dias -> short {h} d." if side == "ambos" else "."),
+                    "1D", _SIDE_DIR[side], f"{h} d", {"lookback_days": n, "hold_days": h, "side": side}, l6_ruptura)
+    for lb in (7, 28, 84):
+        for sizing in ("fijo", "vol"):
+            for side in ("long", "ambos"):
+                params: dict[str, Any] = {"lookback_days": lb, "sizing": sizing, "side": side}
+                if sizing == "vol":
+                    params.update({"target_vol": 0.20, "vol_window_days": 30, "max_leverage": 1.0})
+                add(f"l6-tsmom-l{lb}-{sizing}-{side}-v1", "tsmom-n",
+                    f"Signo del retorno de {lb} d, decision diaria 00:00 UTC, "
+                    + ("tamano fijo 1x" if sizing == "fijo" else "vol-target 20 % anual (vol 30 d), tope 1x")
+                    + (", solo long." if side == "long" else ", long y short."),
+                    "1D", _SIDE_DIR[side], "hasta la proxima decision", params, l6_tsmom)
+    for wd, name in enumerate(("lun", "mar", "mie", "jue", "vie", "sab", "dom")):
+        add(f"l6-cal-{name}-v1", "calendario", f"Long 24 h desde las 00:00 UTC de cada {name}.",
+            "calendario", "long", "24 h", {"weekday": wd, "hold_hours": 24}, l6_calendario)
+    add("l6-cal-finde-v1", "calendario", "Long del viernes 00:00 al domingo 24:00 UTC (72 h).",
+        "calendario", "long", "72 h", {"weekday": 4, "hold_hours": 72}, l6_calendario)
+    for name, tz, hhmm in (("asia", "Asia/Tokyo", "09:00"), ("londres", "Europe/London", "08:00"),
+                           ("ny", "America/New_York", "09:30")):
+        add(f"l6-cal-{name}-v1", "calendario",
+            f"Long 4 h desde la apertura {name} ({tz} {hhmm}, con DST), dias habiles locales (lun-vie).",
+            "calendario", "long", "4 h", {"tz": tz, "local_time": hhmm, "weekdays": [0, 1, 2, 3, 4], "hold_hours": 4},
+            l6_calendario)
+    for h in (24, 72):
+        add(f"l6-der-funding-z2-h{h}-v1", "derivados",
+            f"En cada liquidacion: z-score del funding (30 d) > +2 -> short, < -2 -> long, mantener {h} h.",
+            "liquidacion", "both", f"{h} h", {"z_window": "30D", "z": 2.0, "hold_hours": h}, l6_der_funding_z,
+            needs=("klines", "funding"))
+    for d in (3, 7):
+        add(f"l6-der-oibaja-fneg-d{d}-v1", "derivados",
+            f"Diario 00:00 UTC: OI en contratos 24 h < 0 y funding liquidado 24 h < 0 -> long {d} d.",
+            "1D", "long", f"{d} d", {"window_hours": 24, "oi_max_age": "30min", "hold_days": d}, l6_der_oi_funding,
+            needs=("klines", "funding", "metrics"))
+    add("l6-der-taker-p95-h4-v1", "derivados",
+        "Desbalance taker (klines) de la ultima hora cerrada >= p95 de 30 d -> short; <= p5 -> long; mantener 4 h.",
+        "1h", "both", "4 h", {"pct_window_hours": 720, "pct_hi": 0.95, "pct_lo": 0.05, "hold_hours": 4}, l6_der_taker)
+    for side in ("long", "short"):
+        for h in (1, 3):
+            add(f"l6-rsi2-{side}-h{h}-v1", "reversion-diaria",
+                f"RSI(2) diario {'< 10 -> long' if side == 'long' else '> 90 -> short'}, mantener {h} d.",
+                "1D", side, f"{h} d", {"rsi_n": 2, "lo": 10, "hi": 90, "side": side, "hold_days": h}, l6_rsi2)
+    for filt, tag in (("adx", "adx25"), ("atrp", "atrp50")):
+        for side in ("long", "ambos"):
+            params = {"lookback_days": 20, "hold_days": 5, "side": side, "filter": filt}
+            params.update({"adx_n": 14, "adx_min": 25} if filt == "adx" else
+                          {"atr_n": 14, "atrp_window_days": 365, "atrp_pct": 0.50})
+            add(f"l6-reg-{tag}-{side}-v1", "regimen",
+                "Ruptura de 20 d mantenida 5 d"
+                + (" con ADX(14) diario > 25" if filt == "adx" else " con ATR(14)/precio < percentil 50 de 1 anio")
+                + (", solo long." if side == "long" else ", long y short."),
+                "1D", _SIDE_DIR[side], "5 d", params, l6_regimen)
+    return specs
+
+
+CATALOG.update(_l6_specs())
+LOTE6 = tuple(k for k in CATALOG if k.startswith("l6-"))
