@@ -478,6 +478,14 @@
   letra). **Agregado antes de entrenar:** columna `daily_trend_dia_anterior` (htf-trend-v1 sobre el día UTC completo
   anterior a la decisión) en el grupo tendencia; no cambia la regla del grafo.
 
+- **Meta-modelo, etapa 2b (derivados y mercado) hecha (2026-10-19).** `features_derivados_v1.parquet`: funding y z-score
+  90 liquidaciones, ΔOI en contratos 1h/4h/24h, OI vs media 30d, cuadrante OI × funding, taker de la última vela 1h,
+  long/short de top traders, premium; BTC (tendencia, vol, daily_trend), correlación 30d con BTC, cuántas de las 7 sobre
+  su EMA200 diaria, retorno 7d de la canasta. Reloj: metrics en ts+5 min, funding ≤ t. NaN: long/short 28,8 % (Binance no
+  lo publica en buena parte de 2022), ΔOI ~11,7 % (metrics de las alts arranca 2021-12). `daily_trend_dia_anterior`:
+  lateral 54,9 %, alcista 28,2 %, bajista 16,9 %, sin_datos 0 %. **Agregado antes de entrenar:**
+  `btc_daily_trend_dia_anterior` (misma razón: `btc_daily_trend` tiene 47,7 % sin_datos a las 00:00 UTC).
+
 ## Abiertas
 - ~~Plan de CoinGlass a contratar.~~ **Ya no aplica al core** — la fuente primaria pasó a WS nativos.
   Solo se retomaría si se implementa la fuente BYOK opcional (y ahí el plan lo elige el usuario).

@@ -156,6 +156,34 @@ def test_daily_trend_matches_htf_live_window(kl, full) -> None:
     assert len(seen) >= 3  # el caso ejercita varias ramas de la regla (sin_datos a las 00:00, lateral, tendencia)
 
 
+def test_daily_trend_prev_day_is_rule_at_close_of_previous_day(kl, full) -> None:
+    rows = list(zip(kl.index.as_unit("ms").asi8.tolist(), kl["open"], kl["high"], kl["low"], kl["close"]))
+    seen = set()
+    for i, t in enumerate(TIMES):
+        d0 = t.floor("D")
+        now = int(d0.value // 1_000_000)
+        first, last = MF.htf_window(now)
+        cs = list(aggregate_minutes([r for r in rows if first <= r[0] < last + 3_600_000], "klines", 60).values())
+        ref = build_htf_context("BTCUSDT", cs, now, day_start_ms=now - 86_400_000)
+        assert ref.day_hours_closed == 24  # el dia anterior completo
+        seen.add(ref.daily_trend)
+        assert full.iloc[i]["daily_trend_dia_anterior"] == ref.daily_trend
+    assert "sin_datos" not in seen and len(seen) >= 2
+    # a las 00:00 daily_trend es sin_datos pero el del dia anterior no
+    assert full.iloc[0]["daily_trend"] == "sin_datos" != full.iloc[0]["daily_trend_dia_anterior"]
+
+
+def test_daily_trend_prev_day_ignores_today(kl, full) -> None:
+    i, t = 1, TIMES[1]  # 13:00: las velas de hoy (00:00-13:00) ya se conocen pero no entran en el dia anterior
+    k = kl.copy()
+    today = k.index >= t.floor("D")
+    k.loc[today, ["open", "high", "low", "close"]] *= np.linspace(1.0, 3.0, today.sum())[:, None]
+    k.loc[today, "high"] *= 1.05
+    got = MF.build_basicos(_events(TIMES), lambda s: k)
+    assert got.iloc[i]["daily_trend_dia_anterior"] == full.iloc[i]["daily_trend_dia_anterior"]
+    assert not np.isclose(got.iloc[i]["ret_log_4h"], full.iloc[i]["ret_log_4h"])  # control
+
+
 def test_sessions() -> None:
     assert MF.session_name(pd.Timestamp("2025-01-15 00:00", tz="UTC")) == "asia"
     assert MF.session_name(pd.Timestamp("2025-01-15 08:00", tz="UTC")) == "europa"  # Londres en invierno
