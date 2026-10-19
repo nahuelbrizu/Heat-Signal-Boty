@@ -436,6 +436,9 @@
   ya registrado en la base. Si una vela cumple LONG y SHORT a la vez, no se entra. Con horario de verano británico
   (hasta el 25-10) la corrida de Europa (08:00 UTC) no puede disparar la falsa ruptura (su vela cae dentro del rango
   de Asia): esta semana esa estrategia solo puede salir en la de EE.UU.
+  Registradas en la VM (2026-10-19 03:20 UTC): `1h-lateral-extremo-vwap-v1` 29c8efb0-e1d2-450c-8d1d-d20c12374a75;
+  `1h-lateral-falsa-ruptura-asia-v1` b266a4c2-9818-4866-a276-ba0d410e1f27; `1h-lateral-rechazo-dia-anterior-v1`
+  6f76eedc-4858-44eb-a39f-fb92d3a433a1. El grafo tiene 8 estrategias activas (5 de tendencia + 3 de lateralidad).
 
 ## Abiertas
 - ~~Plan de CoinGlass a contratar.~~ **Ya no aplica al core** — la fuente primaria pasó a WS nativos.
