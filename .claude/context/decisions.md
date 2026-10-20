@@ -595,6 +595,14 @@
   **Seguimiento secundario (exploratorio, NO decide nada):** las 20 variantes del lote 6 que pasaron su backtest y
   robustez, cada una en paper, con corrección Benjamini–Hochberg al evaluarlas; y la familia "ambos" no se suma.
   Todo en el bot de paper propio (simulado, sin plata).
+  **Enmienda (2026-10-20, pedido del usuario, ANTES de que corra un solo dato): familia espejo SHORT.**
+  `l6-ruptura-n{5,10,20,55}-h{1,3,5}-short-v1` (12 specs nuevas: cierre diario = mínimo de N días → short por H días;
+  misma regla que la pata short de las "ambos") y `l6-familia-ruptura-short-v1` (1/12 cada una). Se backtestean en el
+  lab como las demás (12 intentos más: K 111 → 123; la familia no se backtestea) para ver su resultado histórico, y la
+  familia short corre en paper al lado de la long. Criterio simétrico (3 meses: Sharpe > 0 y > el de la canasta en
+  corto, es decir > −Sharpe de la canasta; 6 meses: p ≤ 0,05). Lectura conjunta pre-registrada: si las dos familias
+  ganan cuando el mercado va a su favor y pierden poco cuando va en contra → la regla tiene ventaja propia; si solo
+  gana el lado del mercado del período → es beta, no ventaja.
 
 ## Abiertas
 - ~~Plan de CoinGlass a contratar.~~ **Ya no aplica al core** — la fuente primaria pasó a WS nativos.
