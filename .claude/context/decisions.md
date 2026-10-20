@@ -615,6 +615,19 @@
   cacheadas (append-only); historia mínima por spec (máx. 590 días para `reg-atrp50`). Medido en la VM: 151 MB de pico,
   19 s por corrida. Panel `#/paperbot`: tres grupos, criterio con días hasta los hitos, balance de fuerzas por símbolo.
 
+- **Backtest de las 12 rupturas short (2026-10-20): todas negativas** (Sharpe −0,04 a −0,78, DD 43–157 %), con 2022
+  incluido. K real 123; p del máximo del programa 0,145 (ruptura n20-h3 long). Coincide con la consulta al trader: las
+  caídas en cripto se concentran en pocos días y una ruptura de 5–55 días hacia abajo se activa tarde; los rebotes
+  castigan a los shorts. La familia short sigue en paper como espejo pre-registrado (no se saca por este resultado).
+- **Consulta a un trader profesional (2026-10-20)** → `research/consulta-trader.md`. Verificado: el funding real ya
+  está descontado (ruptura n20-h3 long: precio +2,03, funding −0,15, comisiones −0,09, slippage −0,04), Binance ya
+  figura como `PARTIAL`, y las rupturas long le ganan a la canasta (0,63) y al B&H medio (0,02). Se incorpora ahora:
+  criterios de parada de la prueba hacia adelante por bootstrap del drawdown (P95 → alerta y mitad de tamaño, P99 →
+  parar) y estrés de costos con slippage de 7 bps en TRX y XLM (diagnóstico). Para la etapa de plata real: checklist de
+  errores de bots, stops por mark price en el exchange, entradas IOC con tope 5–15 min después de las 00:00, tamaño por
+  volatilidad de la canasta con correlaciones e informe diario. Abiertas para fin de noviembre: plata mínima real
+  después de 1–2 meses de paper, y listón previo declarado para la familia tendencia.
+
 ## Abiertas
 - ~~Plan de CoinGlass a contratar.~~ **Ya no aplica al core** — la fuente primaria pasó a WS nativos.
   Solo se retomaría si se implementa la fuente BYOK opcional (y ahí el plan lo elige el usuario).
