@@ -575,6 +575,16 @@
   al medir tiempos se vieron Sharpe de 5 variantes sobre BTC con `--perm 0` en un registro temporal borrado (no se usaron
   para nada). Corrida: 7 símbolos, `--perm 100`, de a 2 (~6–8 h).
 
+- **Lote 6 exploratorio — resultado (2026-10-20): ninguna de las 60 cumple el criterio; ninguna pasa a confirmación.**
+  60/60 corridas sin error; robustez y PBO de las 60; listón con K real 111. Veredicto propio + robustez: 20 de 60
+  (todas long de tendencia: rupturas de 10/20/55 días mantenidas 1–5 d, tsmom 28 d con vol-target, régimen ADX/ATR).
+  Romano–Wolf: mejor `l6-ruptura-n20-h3-long-v1` Sharpe 1,31, p ajustado 0,135 (criterio ≤ 0,10: falla); siguen
+  n55-h5 0,143, n10-h3 0,159, n55-h3 0,170, tsmom-l28-vol-long 0,237. p del máximo del programa 0,135. Calendario,
+  RSI(2), derivados y casi todas las "ambos" (long y short) sin ventaja. Lectura: patrón consistente en la familia
+  "tendencia long" (muchas variantes vecinas dan Sharpe ~1–1,3, meseta 100 %, aguantan costos ×3), pero con 111
+  pruebas sobre el mismo pasado no alcanza para descartar suerte; además el período 2021–2026 fue mayormente alcista
+  (aunque le ganan a la canasta y al B&H). No se cambia el criterio después de ver el resultado.
+
 ## Abiertas
 - ~~Plan de CoinGlass a contratar.~~ **Ya no aplica al core** — la fuente primaria pasó a WS nativos.
   Solo se retomaría si se implementa la fuente BYOK opcional (y ahí el plan lo elige el usuario).
