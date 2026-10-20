@@ -3,7 +3,7 @@
 # data/paperbot.sqlite (append-only). Ver backend/src/heatsignal/paperbot/. Lo dispara heatsignal-paperbot.timer.
 # Necesita pandas en el venv (requirements-paperbot.txt); el panel y la ingesta NO lo importan.
 [Unit]
-Description=HeatSignal paperbot: paper trading simulado (lote 3 + max-ruptura, una corrida)
+Description=HeatSignal paperbot: paper trading simulado (30 estrategias: prueba hacia adelante + seguimiento + previas; una corrida)
 After=network-online.target
 Wants=network-online.target
 
