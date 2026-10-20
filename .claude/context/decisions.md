@@ -585,6 +585,17 @@
   pruebas sobre el mismo pasado no alcanza para descartar suerte; además el período 2021–2026 fue mayormente alcista
   (aunque le ganan a la canasta y al B&H). No se cambia el criterio después de ver el resultado.
 
+- **Prueba hacia adelante con datos vivos (2026-10-20, pedido del usuario: "mandá bots a probar con datos vivos y no
+  usados"). Pre-registrada ANTES de que corra un solo dato.** Período de prueba: desde la primera corrida del bot en
+  2026-10-20. Nada de ese período se usó para elegir.
+  **Hipótesis principal (1 sola, la que decide):** `l6-familia-ruptura-long-v1` = cartera igual-ponderada de las 12
+  rupturas long del lote 6 (N ∈ {5, 10, 20, 55} × H ∈ {1, 3, 5}), TODAS, sin elegir por resultado; los 7 símbolos.
+  Criterio: a los 3 meses, Sharpe > 0 y > el de la canasta igual-ponderada del mismo período; a los 6 meses, además
+  p ≤ 0,05 de que le gana a la canasta (bootstrap pareado por bloques de 5 días). Si falla a los 3 meses, se registra.
+  **Seguimiento secundario (exploratorio, NO decide nada):** las 20 variantes del lote 6 que pasaron su backtest y
+  robustez, cada una en paper, con corrección Benjamini–Hochberg al evaluarlas; y la familia "ambos" no se suma.
+  Todo en el bot de paper propio (simulado, sin plata).
+
 ## Abiertas
 - ~~Plan de CoinGlass a contratar.~~ **Ya no aplica al core** — la fuente primaria pasó a WS nativos.
   Solo se retomaría si se implementa la fuente BYOK opcional (y ahí el plan lo elige el usuario).
