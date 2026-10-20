@@ -603,6 +603,12 @@
   corto, es decir > −Sharpe de la canasta; 6 meses: p ≤ 0,05). Lectura conjunta pre-registrada: si las dos familias
   ganan cuando el mercado va a su favor y pierden poco cuando va en contra → la regla tiene ventaja propia; si solo
   gana el lado del mercado del período → es beta, no ventaja.
+  **Enmienda 2 (2026-10-20, pedido del usuario: "que compitan las dos posturas y gane la de mayor peso"), ANTES de
+  correr datos:** `l6-familia-ruptura-neta-v1` = en cada símbolo, (n.º de rupturas long activas − n.º de rupturas short
+  activas) / 12, posición entre −1 y +1; sin parámetros nuevos (= familia long + familia short). Corre en paper como
+  tercera principal, con el mismo criterio a 3 y 6 meses contra la canasta (Sharpe > 0 y > canasta). El panel muestra
+  por símbolo el "balance de fuerzas" (votos long vs short) en cada corrida. No se backtestea (sería volver a mirar el
+  mismo pasado): se juzga solo hacia adelante.
 
 ## Abiertas
 - ~~Plan de CoinGlass a contratar.~~ **Ya no aplica al core** — la fuente primaria pasó a WS nativos.
