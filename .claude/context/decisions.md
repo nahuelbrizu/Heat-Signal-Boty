@@ -609,6 +609,11 @@
   tercera principal, con el mismo criterio a 3 y 6 meses contra la canasta (Sharpe > 0 y > canasta). El panel muestra
   por símbolo el "balance de fuerzas" (votos long vs short) en cada corrida. No se backtestea (sería volver a mirar el
   mismo pasado): se juzga solo hacia adelante.
+  **Implementado y desplegado (2026-10-20):** hashes familia long `f7b68dcd66c5c7e4`, short `d39d02babf1466e2`, neta
+  `81005404f0426130`; 12 short en `LOTE6_SHORT` (las 60 del lote 6 sin cambios). Paperbot con 30 estrategias (3
+  principales, 20 seguimiento, 7 paper previo), velas diarias en SQL desde 1m o REST `/fapi/v1/klines?interval=1d`
+  cacheadas (append-only); historia mínima por spec (máx. 590 días para `reg-atrp50`). Medido en la VM: 151 MB de pico,
+  19 s por corrida. Panel `#/paperbot`: tres grupos, criterio con días hasta los hitos, balance de fuerzas por símbolo.
 
 ## Abiertas
 - ~~Plan de CoinGlass a contratar.~~ **Ya no aplica al core** — la fuente primaria pasó a WS nativos.

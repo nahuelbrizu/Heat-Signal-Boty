@@ -329,8 +329,15 @@ def test_targets_match_lab_rules_with_longer_history(lote3_env):
     lab = _lab_data(d, Hh)  # 70 dias (el bot usa 64), solo velas cerradas en H
     entries = P.load()
     nonzero = 0
-    assert set(r["detail"]["estrategias"]) == set(BOT)
-    for sid in BOT:
+    est = r["detail"]["estrategias"]
+    assert set(est) == set(entries) and set(BOT) <= set(est)
+    # las diarias del lote 6 con historia suficiente en 1m (70 d) corren con velas diarias agregadas en SQL y dan el
+    # MISMO objetivo que la regla sobre 1m; las que piden mas (sin REST: download=False) quedan sin datos y lo dicen
+    ran_daily = [sid for sid in entries if sid not in BOT and est[sid]["estado"] == "ok"]
+    assert "l6-tsmom-l28-vol-long-v1" in ran_daily and "l6-familia-ruptura-long-v1" not in ran_daily
+    assert est["l6-familia-ruptura-long-v1"]["estado"] == "sin_datos" and "dias contiguos" in est["l6-familia-ruptura-long-v1"]["motivo"]
+    assert "SIN DATOS" in r["reason"]
+    for sid in (*BOT, *ran_daily):
         spec, rule = CATALOG[sid]
         params = P.effective(sid, entries[sid], spec)
         universe = entries[sid]["universe"]
@@ -366,12 +373,40 @@ def test_rule_never_sees_open_candle(lote3_env):
 BOT = (*LOTE3, "max-ruptura-10d-v1")
 
 
+SEGUIMIENTO = ("l6-reg-adx25-long-v1 l6-reg-atrp50-ambos-v1 l6-ruptura-n10-h1-long-v1 l6-ruptura-n10-h3-ambos-v1 "
+               "l6-ruptura-n10-h3-long-v1 l6-ruptura-n10-h5-long-v1 l6-ruptura-n20-h1-long-v1 l6-ruptura-n20-h3-ambos-v1 "
+               "l6-ruptura-n20-h3-long-v1 l6-ruptura-n20-h5-long-v1 l6-ruptura-n55-h1-long-v1 l6-ruptura-n55-h3-long-v1 "
+               "l6-ruptura-n55-h5-ambos-v1 l6-ruptura-n55-h5-long-v1 l6-tsmom-l28-fijo-ambos-v1 l6-tsmom-l28-fijo-long-v1 "
+               "l6-tsmom-l28-vol-ambos-v1 l6-tsmom-l28-vol-long-v1 l6-tsmom-l7-fijo-long-v1 l6-tsmom-l7-vol-long-v1").split()
+PRINCIPAL = ("l6-familia-ruptura-long-v1", "l6-familia-ruptura-short-v1", "l6-familia-ruptura-neta-v1")
+
+
+def test_params_json_roles_and_from_today():
+    entries = P.load()
+    assert set(entries) == {*BOT, *SEGUIMIENTO, *PRINCIPAL} and len(entries) == 30
+    roles = {sid: P.role(e) for sid, e in entries.items()}
+    assert {s for s, r in roles.items() if r == "paper_previo"} == set(BOT)
+    assert {s for s, r in roles.items() if r == "principal"} == set(PRINCIPAL)
+    assert {s for s, r in roles.items() if r == "seguimiento"} == set(SEGUIMIENTO)
+    assert entries["l6-familia-ruptura-long-v1"]["spec_hash"] == "f7b68dcd66c5c7e4"
+    assert entries["l6-familia-ruptura-short-v1"]["spec_hash"] == "d39d02babf1466e2"
+    assert entries["l6-familia-ruptura-neta-v1"]["spec_hash"] == "81005404f0426130"
+    for sid in (*SEGUIMIENTO, *PRINCIPAL):
+        assert entries[sid]["desde"] == "2026-10-20" and entries[sid]["universe"] == SEVEN and entries[sid]["params"] == {}
+    # las 12 short individuales NO van al paper (solo su familia)
+    assert not [s for s in entries if s.startswith("l6-ruptura-") and s.endswith("-short-v1")]
+    # las 7 que ya corrian no cambiaron (hash, universo, parametros, desde)
+    assert {s: entries[s]["desde"] for s in BOT} == {**{s: "2026-10-18" for s in LOTE3}, "max-ruptura-10d-v1": "2026-10-19"}
+    with pytest.raises(P.ParamsError, match="rol desconocido"):
+        P.role({"rol": "decide"})
+
+
 def test_params_json_matches_catalog_and_grid():
     entries = P.load()
-    assert set(entries) == set(BOT)
+    assert set(BOT) <= set(entries)
     assert "max-ruptura-10d-v1" in LOTE5
     assert entries["max-ruptura-10d-v1"]["spec_hash"] == "39cb9dee6d3e469a" and entries["max-ruptura-10d-v1"]["params"] == {}
-    for sid in BOT:
+    for sid in entries:
         spec = CATALOG[sid][0]
         eff = P.effective(sid, entries[sid], spec)
         assert eff == {**spec.params, **entries[sid]["params"]}

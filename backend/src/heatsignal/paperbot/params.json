@@ -1,5 +1,5 @@
 {
-  "_doc": "Parametros del bot de paper trading del lote 3 y de max-ruptura-10d-v1 (lote 5). Las estrategias que corre el bot son las de este archivo; una nueva entra 'desde hoy' (su primera corrida) sin reescribir la historia de las otras. Versionado: cambiar un valor = commit con su origen. Solo se pueden elegir valores de la grilla congelada del spec (el bot lo valida y falla si no). Nada se optimiza en vivo. Para tomar el valor que eligio el walk-forward del laboratorio: python -m heatsignal.paperbot params-from-lab <strategy_id> [--write].",
+  "_doc": "Parametros del bot de paper trading: lote 3 y max-ruptura-10d-v1 (rol paper_previo) y la prueba hacia adelante del lote 6 desde 2026-10-20 (rol principal: las familias de ruptura long, short y neta; rol seguimiento: 20 variantes exploratorias). 'rol' = principal | seguimiento | paper_previo. Las estrategias que corre el bot son las de este archivo; una nueva entra 'desde hoy' (su primera corrida) sin reescribir la historia de las otras. Versionado: cambiar un valor = commit con su origen. Solo se pueden elegir valores de la grilla congelada del spec (el bot lo valida y falla si no). Nada se optimiza en vivo. Para tomar el valor que eligio el walk-forward del laboratorio: python -m heatsignal.paperbot params-from-lab <strategy_id> [--write].",
   "strategies": {
     "tsmom-diario-v1": {
       "spec_hash": "7515d798e5d66a55",
@@ -16,7 +16,8 @@
         "target_vol": 0.15
       },
       "origen": "walk-forward del lab 2026-10-18 (ultima ventana: test 2026-06-15 a 2026-07-15, corrida 20261017T230238)",
-      "desde": "2026-10-18"
+      "desde": "2026-10-18",
+      "rol": "paper_previo"
     },
     "low-vol-xs-v1": {
       "spec_hash": "307d3572e576e4c2",
@@ -31,7 +32,8 @@
       ],
       "params": {},
       "origen": "spec congelada (sin grilla)",
-      "desde": "2026-10-18"
+      "desde": "2026-10-18",
+      "rol": "paper_previo"
     },
     "pares-eth-btc-v1": {
       "spec_hash": "c9c2243ebcef9393",
@@ -43,7 +45,8 @@
         "entry_z": 2.5
       },
       "origen": "walk-forward del lab 2026-10-18 (ultima ventana: test 2026-05-29 a 2026-06-28, corrida 20261017T230544)",
-      "desde": "2026-10-18"
+      "desde": "2026-10-18",
+      "rol": "paper_previo"
     },
     "rango-reversion-v1": {
       "spec_hash": "a03dba31be20137f",
@@ -54,7 +57,8 @@
       ],
       "params": {},
       "origen": "spec congelada (sin grilla)",
-      "desde": "2026-10-18"
+      "desde": "2026-10-18",
+      "rol": "paper_previo"
     },
     "reversion-xs-1h-v1": {
       "spec_hash": "e2a331826092f698",
@@ -69,7 +73,8 @@
       ],
       "params": {},
       "origen": "spec congelada (sin grilla)",
-      "desde": "2026-10-18"
+      "desde": "2026-10-18",
+      "rol": "paper_previo"
     },
     "funding-prepago-v1": {
       "spec_hash": "3fc248f8641d0402",
@@ -84,7 +89,8 @@
       ],
       "params": {},
       "origen": "spec congelada (sin grilla)",
-      "desde": "2026-10-18"
+      "desde": "2026-10-18",
+      "rol": "paper_previo"
     },
     "max-ruptura-10d-v1": {
       "spec_hash": "39cb9dee6d3e469a",
@@ -99,7 +105,376 @@
       ],
       "params": {},
       "origen": "spec congelada (sin grilla). Lote 5: pasa el backtest del lab; el holdout 2026-07-17 a 10-17 NO confirmo (le gana a la canasta, no al azar: p 0,18). Paper para juntar evidencia en otro regimen, no aprobacion.",
-      "desde": "2026-10-19"
+      "desde": "2026-10-19",
+      "rol": "paper_previo"
+    },
+    "l6-familia-ruptura-long-v1": {
+      "spec_hash": "f7b68dcd66c5c7e4",
+      "universe": [
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "ETHUSDT",
+        "XLMUSDT",
+        "BNBUSDT",
+        "TRXUSDT"
+      ],
+      "params": {},
+      "origen": "spec congelada (sin grilla). Hipotesis principal pre-registrada de la prueba hacia adelante (decisions.md 2026-10-20): 3 meses Sharpe > 0 y > canasta; 6 meses p <= 0,05. No se corre en el laboratorio.",
+      "desde": "2026-10-20",
+      "rol": "principal"
+    },
+    "l6-familia-ruptura-short-v1": {
+      "spec_hash": "d39d02babf1466e2",
+      "universe": [
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "ETHUSDT",
+        "XLMUSDT",
+        "BNBUSDT",
+        "TRXUSDT"
+      ],
+      "params": {},
+      "origen": "spec congelada (sin grilla). Enmienda familia espejo short (decisions.md 2026-10-20), criterio simetrico: 3 meses Sharpe > 0 y > -Sharpe de la canasta; 6 meses p <= 0,05. No se corre en el laboratorio.",
+      "desde": "2026-10-20",
+      "rol": "principal"
+    },
+    "l6-familia-ruptura-neta-v1": {
+      "spec_hash": "81005404f0426130",
+      "universe": [
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "ETHUSDT",
+        "XLMUSDT",
+        "BNBUSDT",
+        "TRXUSDT"
+      ],
+      "params": {},
+      "origen": "spec congelada (sin grilla). Enmienda 2 (decisions.md 2026-10-20): balance de fuerzas = familia long + familia short; 3 meses Sharpe > 0 y > canasta; 6 meses p <= 0,05. No se corre en el laboratorio.",
+      "desde": "2026-10-20",
+      "rol": "principal"
+    },
+    "l6-reg-adx25-long-v1": {
+      "spec_hash": "cf410536851a9f23",
+      "universe": [
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "ETHUSDT",
+        "XLMUSDT",
+        "BNBUSDT",
+        "TRXUSDT"
+      ],
+      "params": {},
+      "origen": "spec congelada (sin grilla). Lote 6: paso backtest y robustez; seguimiento exploratorio de la prueba hacia adelante (NO decide; correccion Benjamini-Hochberg al evaluar).",
+      "desde": "2026-10-20",
+      "rol": "seguimiento"
+    },
+    "l6-reg-atrp50-ambos-v1": {
+      "spec_hash": "41c763b21f75ffe1",
+      "universe": [
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "ETHUSDT",
+        "XLMUSDT",
+        "BNBUSDT",
+        "TRXUSDT"
+      ],
+      "params": {},
+      "origen": "spec congelada (sin grilla). Lote 6: paso backtest y robustez; seguimiento exploratorio de la prueba hacia adelante (NO decide; correccion Benjamini-Hochberg al evaluar).",
+      "desde": "2026-10-20",
+      "rol": "seguimiento"
+    },
+    "l6-ruptura-n10-h1-long-v1": {
+      "spec_hash": "4168b813a90777e7",
+      "universe": [
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "ETHUSDT",
+        "XLMUSDT",
+        "BNBUSDT",
+        "TRXUSDT"
+      ],
+      "params": {},
+      "origen": "spec congelada (sin grilla). Lote 6: paso backtest y robustez; seguimiento exploratorio de la prueba hacia adelante (NO decide; correccion Benjamini-Hochberg al evaluar).",
+      "desde": "2026-10-20",
+      "rol": "seguimiento"
+    },
+    "l6-ruptura-n10-h3-ambos-v1": {
+      "spec_hash": "b6dade33f60497d5",
+      "universe": [
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "ETHUSDT",
+        "XLMUSDT",
+        "BNBUSDT",
+        "TRXUSDT"
+      ],
+      "params": {},
+      "origen": "spec congelada (sin grilla). Lote 6: paso backtest y robustez; seguimiento exploratorio de la prueba hacia adelante (NO decide; correccion Benjamini-Hochberg al evaluar).",
+      "desde": "2026-10-20",
+      "rol": "seguimiento"
+    },
+    "l6-ruptura-n10-h3-long-v1": {
+      "spec_hash": "4f1ce2b0bafde7d2",
+      "universe": [
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "ETHUSDT",
+        "XLMUSDT",
+        "BNBUSDT",
+        "TRXUSDT"
+      ],
+      "params": {},
+      "origen": "spec congelada (sin grilla). Lote 6: paso backtest y robustez; seguimiento exploratorio de la prueba hacia adelante (NO decide; correccion Benjamini-Hochberg al evaluar).",
+      "desde": "2026-10-20",
+      "rol": "seguimiento"
+    },
+    "l6-ruptura-n10-h5-long-v1": {
+      "spec_hash": "256b901a50fb0789",
+      "universe": [
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "ETHUSDT",
+        "XLMUSDT",
+        "BNBUSDT",
+        "TRXUSDT"
+      ],
+      "params": {},
+      "origen": "spec congelada (sin grilla). Lote 6: paso backtest y robustez; seguimiento exploratorio de la prueba hacia adelante (NO decide; correccion Benjamini-Hochberg al evaluar).",
+      "desde": "2026-10-20",
+      "rol": "seguimiento"
+    },
+    "l6-ruptura-n20-h1-long-v1": {
+      "spec_hash": "52454ae187d4c299",
+      "universe": [
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "ETHUSDT",
+        "XLMUSDT",
+        "BNBUSDT",
+        "TRXUSDT"
+      ],
+      "params": {},
+      "origen": "spec congelada (sin grilla). Lote 6: paso backtest y robustez; seguimiento exploratorio de la prueba hacia adelante (NO decide; correccion Benjamini-Hochberg al evaluar).",
+      "desde": "2026-10-20",
+      "rol": "seguimiento"
+    },
+    "l6-ruptura-n20-h3-ambos-v1": {
+      "spec_hash": "a9c0b566f80c753b",
+      "universe": [
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "ETHUSDT",
+        "XLMUSDT",
+        "BNBUSDT",
+        "TRXUSDT"
+      ],
+      "params": {},
+      "origen": "spec congelada (sin grilla). Lote 6: paso backtest y robustez; seguimiento exploratorio de la prueba hacia adelante (NO decide; correccion Benjamini-Hochberg al evaluar).",
+      "desde": "2026-10-20",
+      "rol": "seguimiento"
+    },
+    "l6-ruptura-n20-h3-long-v1": {
+      "spec_hash": "bc7d38a8419ca195",
+      "universe": [
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "ETHUSDT",
+        "XLMUSDT",
+        "BNBUSDT",
+        "TRXUSDT"
+      ],
+      "params": {},
+      "origen": "spec congelada (sin grilla). Lote 6: paso backtest y robustez; seguimiento exploratorio de la prueba hacia adelante (NO decide; correccion Benjamini-Hochberg al evaluar).",
+      "desde": "2026-10-20",
+      "rol": "seguimiento"
+    },
+    "l6-ruptura-n20-h5-long-v1": {
+      "spec_hash": "0c2b23f60bc9f244",
+      "universe": [
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "ETHUSDT",
+        "XLMUSDT",
+        "BNBUSDT",
+        "TRXUSDT"
+      ],
+      "params": {},
+      "origen": "spec congelada (sin grilla). Lote 6: paso backtest y robustez; seguimiento exploratorio de la prueba hacia adelante (NO decide; correccion Benjamini-Hochberg al evaluar).",
+      "desde": "2026-10-20",
+      "rol": "seguimiento"
+    },
+    "l6-ruptura-n55-h1-long-v1": {
+      "spec_hash": "5a03bd8e6bcc3de6",
+      "universe": [
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "ETHUSDT",
+        "XLMUSDT",
+        "BNBUSDT",
+        "TRXUSDT"
+      ],
+      "params": {},
+      "origen": "spec congelada (sin grilla). Lote 6: paso backtest y robustez; seguimiento exploratorio de la prueba hacia adelante (NO decide; correccion Benjamini-Hochberg al evaluar).",
+      "desde": "2026-10-20",
+      "rol": "seguimiento"
+    },
+    "l6-ruptura-n55-h3-long-v1": {
+      "spec_hash": "9372683732f834b1",
+      "universe": [
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "ETHUSDT",
+        "XLMUSDT",
+        "BNBUSDT",
+        "TRXUSDT"
+      ],
+      "params": {},
+      "origen": "spec congelada (sin grilla). Lote 6: paso backtest y robustez; seguimiento exploratorio de la prueba hacia adelante (NO decide; correccion Benjamini-Hochberg al evaluar).",
+      "desde": "2026-10-20",
+      "rol": "seguimiento"
+    },
+    "l6-ruptura-n55-h5-ambos-v1": {
+      "spec_hash": "c67368df63dc1fe7",
+      "universe": [
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "ETHUSDT",
+        "XLMUSDT",
+        "BNBUSDT",
+        "TRXUSDT"
+      ],
+      "params": {},
+      "origen": "spec congelada (sin grilla). Lote 6: paso backtest y robustez; seguimiento exploratorio de la prueba hacia adelante (NO decide; correccion Benjamini-Hochberg al evaluar).",
+      "desde": "2026-10-20",
+      "rol": "seguimiento"
+    },
+    "l6-ruptura-n55-h5-long-v1": {
+      "spec_hash": "b16b4de1db59b396",
+      "universe": [
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "ETHUSDT",
+        "XLMUSDT",
+        "BNBUSDT",
+        "TRXUSDT"
+      ],
+      "params": {},
+      "origen": "spec congelada (sin grilla). Lote 6: paso backtest y robustez; seguimiento exploratorio de la prueba hacia adelante (NO decide; correccion Benjamini-Hochberg al evaluar).",
+      "desde": "2026-10-20",
+      "rol": "seguimiento"
+    },
+    "l6-tsmom-l28-fijo-ambos-v1": {
+      "spec_hash": "ef770aff5fac3a99",
+      "universe": [
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "ETHUSDT",
+        "XLMUSDT",
+        "BNBUSDT",
+        "TRXUSDT"
+      ],
+      "params": {},
+      "origen": "spec congelada (sin grilla). Lote 6: paso backtest y robustez; seguimiento exploratorio de la prueba hacia adelante (NO decide; correccion Benjamini-Hochberg al evaluar).",
+      "desde": "2026-10-20",
+      "rol": "seguimiento"
+    },
+    "l6-tsmom-l28-fijo-long-v1": {
+      "spec_hash": "cdd18535deac2099",
+      "universe": [
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "ETHUSDT",
+        "XLMUSDT",
+        "BNBUSDT",
+        "TRXUSDT"
+      ],
+      "params": {},
+      "origen": "spec congelada (sin grilla). Lote 6: paso backtest y robustez; seguimiento exploratorio de la prueba hacia adelante (NO decide; correccion Benjamini-Hochberg al evaluar).",
+      "desde": "2026-10-20",
+      "rol": "seguimiento"
+    },
+    "l6-tsmom-l28-vol-ambos-v1": {
+      "spec_hash": "6adbde6631883451",
+      "universe": [
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "ETHUSDT",
+        "XLMUSDT",
+        "BNBUSDT",
+        "TRXUSDT"
+      ],
+      "params": {},
+      "origen": "spec congelada (sin grilla). Lote 6: paso backtest y robustez; seguimiento exploratorio de la prueba hacia adelante (NO decide; correccion Benjamini-Hochberg al evaluar).",
+      "desde": "2026-10-20",
+      "rol": "seguimiento"
+    },
+    "l6-tsmom-l28-vol-long-v1": {
+      "spec_hash": "1719460273c57b8b",
+      "universe": [
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "ETHUSDT",
+        "XLMUSDT",
+        "BNBUSDT",
+        "TRXUSDT"
+      ],
+      "params": {},
+      "origen": "spec congelada (sin grilla). Lote 6: paso backtest y robustez; seguimiento exploratorio de la prueba hacia adelante (NO decide; correccion Benjamini-Hochberg al evaluar).",
+      "desde": "2026-10-20",
+      "rol": "seguimiento"
+    },
+    "l6-tsmom-l7-fijo-long-v1": {
+      "spec_hash": "4cd8fa01c63016cd",
+      "universe": [
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "ETHUSDT",
+        "XLMUSDT",
+        "BNBUSDT",
+        "TRXUSDT"
+      ],
+      "params": {},
+      "origen": "spec congelada (sin grilla). Lote 6: paso backtest y robustez; seguimiento exploratorio de la prueba hacia adelante (NO decide; correccion Benjamini-Hochberg al evaluar).",
+      "desde": "2026-10-20",
+      "rol": "seguimiento"
+    },
+    "l6-tsmom-l7-vol-long-v1": {
+      "spec_hash": "88d3f9d680f1365b",
+      "universe": [
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "ETHUSDT",
+        "XLMUSDT",
+        "BNBUSDT",
+        "TRXUSDT"
+      ],
+      "params": {},
+      "origen": "spec congelada (sin grilla). Lote 6: paso backtest y robustez; seguimiento exploratorio de la prueba hacia adelante (NO decide; correccion Benjamini-Hochberg al evaluar).",
+      "desde": "2026-10-20",
+      "rol": "seguimiento"
     }
   }
 }

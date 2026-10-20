@@ -1186,11 +1186,13 @@ def _daily(md: MarketData) -> pd.DataFrame:
 
 def _breakout_entries(close: pd.Series, n: int, side: str) -> pd.Series:
     """Cierre = maximo de los ultimos n cierres (incluido el de hoy) -> +1; con side 'ambos', cierre = minimo -> -1.
-    Si se cumplen las dos (n cierres iguales) no hay senal."""
+    Si se cumplen las dos (n cierres iguales) no hay senal. side 'short' (enmienda 2026-10-20, familia espejo): solo
+    la pata del minimo -> -1 (misma condicion que la pata short de 'ambos'; 'long' y 'ambos' no cambian)."""
     hi = close >= close.rolling(n, min_periods=n).max()
-    lo = (close <= close.rolling(n, min_periods=n).min()) if side == "ambos" else pd.Series(False, index=close.index)
+    lo = (close <= close.rolling(n, min_periods=n).min()) if side in ("ambos", "short") else pd.Series(False, index=close.index)
     e = pd.Series(0.0, index=close.index)
-    e[hi & ~lo] = 1.0
+    if side != "short":
+        e[hi & ~lo] = 1.0
     e[lo & ~hi] = -1.0
     return e
 
@@ -1462,3 +1464,82 @@ def _l6_specs() -> dict[str, tuple[Spec, Rule]]:
 
 CATALOG.update(_l6_specs())
 LOTE6 = tuple(k for k in CATALOG if k.startswith("l6-"))
+
+
+# =====================================================================================================
+# Prueba hacia adelante (2026-10-20, decisions.md "Prueba hacia adelante con datos vivos"): hipotesis principal
+# pre-registrada. NO se corre en el laboratorio (no suma intentos ni se backtestea para elegirla): solo hacia
+# adelante, en el bot de paper (`paperbot/params.json`, rol 'principal'). Es `backtestable` solo para que el test
+# general de look-ahead la recorra.
+# =====================================================================================================
+
+# Enmienda 2026-10-20 (decisions.md, ANTES de que corra un solo dato): familia espejo SHORT. 12 rupturas del minimo
+# (solo short) que SI se backtestean en el lab (12 intentos mas) y `l6-familia-ruptura-short-v1` (solo hacia adelante).
+def _l6_short_specs() -> dict[str, tuple[Spec, Rule]]:
+    out: dict[str, tuple[Spec, Rule]] = {}
+    for n in (5, 10, 20, 55):
+        for h in (1, 3, 5):
+            sid = f"l6-ruptura-n{n}-h{h}-short-v1"
+            out[sid] = (Spec(sid, "ruptura-n", f"Velas diarias: cierre = minimo de {n} dias -> short {h} d.", "1D",
+                             "short", f"{h} d", {"lookback_days": n, "hold_days": h, "side": "short"}, grid={},
+                             source=_L6_SOURCE + "; enmienda familia espejo short (decisions.md, 2026-10-20)"),
+                        l6_ruptura)
+    return out
+
+
+CATALOG.update(_l6_short_specs())
+LOTE6_SHORT = tuple(k for k in CATALOG if k.startswith("l6-ruptura-") and k.endswith("-short-v1"))
+
+L6_FAMILIA_RUPTURA_LONG = tuple(f"l6-ruptura-n{n}-h{h}-long-v1" for n in (5, 10, 20, 55) for h in (1, 3, 5))
+L6_FAMILIA_RUPTURA_SHORT = tuple(f"l6-ruptura-n{n}-h{h}-short-v1" for n in (5, 10, 20, 55) for h in (1, 3, 5))
+
+
+def l6_familia(data: dict[str, MarketData], p: dict[str, Any]) -> Signals:
+    """Cartera igual-ponderada de componentes del CATALOG, cada uno con sus parametros congelados (sin grilla) y
+    `p['components'][id]` del capital de cada simbolo. Misma suma que `cartera_tendencia` (`_combine`)."""
+    sigs, ws = [], []
+    for sid, w in p["components"].items():
+        spec, rule = CATALOG[sid]
+        sigs.append(rule(data, dict(spec.params)))
+        ws.append(w)
+    return _combine(sigs, ws)
+
+
+CATALOG.update({
+    "l6-familia-ruptura-long-v1": (Spec(
+        "l6-familia-ruptura-long-v1", "cartera",
+        "Cartera igual-ponderada (1/12 cada una) de las 12 rupturas long del lote 6: velas diarias, cierre = maximo "
+        "de N dias -> long H dias, N en {5, 10, 20, 55} x H en {1, 3, 5}, TODAS sin elegir por resultado. Los 7 "
+        "simbolos.",
+        "1D", "long", "1-5 d",
+        {"components": {sid: 1 / 12 for sid in L6_FAMILIA_RUPTURA_LONG}},
+        source="prueba hacia adelante con datos vivos (decisions.md, 2026-10-20): hipotesis principal pre-registrada. "
+               "NO se corre en el laboratorio: solo hacia adelante en el bot de paper desde 2026-10-20. Criterio: a los "
+               "3 meses Sharpe > 0 y > canasta igual-ponderada; a los 6 meses ademas p <= 0,05 (bootstrap pareado por "
+               "bloques de 5 dias)."), l6_familia),
+    "l6-familia-ruptura-short-v1": (Spec(
+        "l6-familia-ruptura-short-v1", "cartera",
+        "Cartera igual-ponderada (1/12 cada una) de las 12 rupturas short del lote 6 (familia espejo): velas diarias, "
+        "cierre = minimo de N dias -> short H dias, N en {5, 10, 20, 55} x H en {1, 3, 5}, TODAS sin elegir por "
+        "resultado. Los 7 simbolos.",
+        "1D", "short", "1-5 d",
+        {"components": {sid: 1 / 12 for sid in L6_FAMILIA_RUPTURA_SHORT}},
+        source="prueba hacia adelante con datos vivos, enmienda familia espejo short (decisions.md, 2026-10-20): "
+               "hipotesis principal pre-registrada al lado de la long. NO se corre en el laboratorio: solo hacia "
+               "adelante en el bot de paper. Criterio simetrico: a los 3 meses Sharpe > 0 y > -Sharpe de la canasta "
+               "(la canasta en corto); a los 6 meses ademas p <= 0,05 (bootstrap pareado por bloques de 5 dias)."),
+        l6_familia),
+    # Enmienda 2 (2026-10-20, decisions.md, ANTES de correr datos): compiten las dos posturas. Posicion por simbolo =
+    # (rupturas long activas - rupturas short activas) / 12 en [-1, 1] = familia long + familia short (24 a 1/12).
+    "l6-familia-ruptura-neta-v1": (Spec(
+        "l6-familia-ruptura-neta-v1", "cartera",
+        "Balance de fuerzas de las dos familias de ruptura del lote 6: en cada simbolo, posicion = (n.o de rupturas "
+        "long activas - n.o de rupturas short activas) / 12, entre -1 y +1 (= familia long + familia short, cada una "
+        "de las 24 componentes a 1/12). Sin parametros nuevos. Los 7 simbolos.",
+        "1D", "both", "1-5 d",
+        {"components": {sid: 1 / 12 for sid in L6_FAMILIA_RUPTURA_LONG + L6_FAMILIA_RUPTURA_SHORT}},
+        source="prueba hacia adelante con datos vivos, enmienda 2 (decisions.md, 2026-10-20): tercera hipotesis "
+               "principal. NO se corre en el laboratorio (seria volver a mirar el mismo pasado): solo hacia adelante en "
+               "el bot de paper. Criterio: a los 3 meses Sharpe > 0 y > canasta; a los 6 meses ademas p <= 0,05."),
+        l6_familia),
+})

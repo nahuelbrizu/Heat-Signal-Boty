@@ -24,6 +24,20 @@ class ParamsError(Exception):
     pass
 
 
+# Rol de cada estrategia en la prueba hacia adelante (decisions.md, 2026-10-20). Solo 'principal' decide algo.
+ROLES = ("principal", "seguimiento", "paper_previo")
+ROLE_LABEL = {"principal": "Hipótesis principal (decide)", "seguimiento": "Seguimiento (exploratorio, no decide)",
+              "paper_previo": "Paper previo"}
+
+
+def role(entry: dict[str, Any] | None) -> str:
+    """Rol de una entrada de params.json (sin campo = 'paper_previo', las que corrian antes de la prueba)."""
+    r = (entry or {}).get("rol") or "paper_previo"
+    if r not in ROLES:
+        raise ParamsError(f"rol desconocido {r!r} (validos: {', '.join(ROLES)})")
+    return r
+
+
 def load(path: Path | str = PARAMS_PATH) -> dict[str, dict[str, Any]]:
     try:
         cfg = json.loads(Path(path).read_text(encoding="utf-8"))
@@ -49,6 +63,7 @@ def effective(strategy_id: str, entry: dict[str, Any], spec: Any) -> dict[str, A
     missing = [k for k in spec.grid if k not in chosen]
     if missing:
         raise ParamsError(f"{strategy_id}: falta elegir {missing} de la grilla en params.json")
+    role(entry)
     universe = entry.get("universe") or []
     if not universe:
         raise ParamsError(f"{strategy_id}: falta 'universe' en params.json")

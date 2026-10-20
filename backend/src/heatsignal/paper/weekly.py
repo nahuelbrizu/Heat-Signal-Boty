@@ -50,6 +50,7 @@ from pathlib import Path
 from typing import Any
 
 from ..evaluation.segments import trend_segments, wilson
+from ..paperbot.view import LECTURA_CONJUNTA
 from . import freqtrade_db as ftdb
 
 MODEL_ID = "weekly-review-v1"
@@ -189,6 +190,17 @@ def paperbot_week(db: str | Path, ws: int, we: int) -> dict[str, Any]:
     conn = _ro(db)
     try:
         sids = [r[0] for r in conn.execute("SELECT DISTINCT strategy_id FROM equity WHERE hour_ms <= ? ORDER BY 1", (we,))]
+        # rol de la prueba hacia adelante (decisions.md 2026-10-20): del detalle de la ultima corrida ok de la semana
+        from ..paperbot import view as pbv
+
+        last = conn.execute("SELECT detail FROM runs WHERE status='ok' AND hour_ms < ? ORDER BY hour_ms DESC LIMIT 1",
+                            (we,)).fetchone()
+        try:
+            info_all = (json.loads(last[0] or "{}").get("estrategias") or {}) if last else {}
+        except ValueError:
+            info_all = {}
+        roles = pbv._params_roles()
+        sin_datos = sorted(k for k, v in info_all.items() if v.get("estado") == "sin_datos")
         strategies = []
         for sid in sids:
             first = conn.execute("SELECT MIN(hour_ms) FROM equity WHERE strategy_id=?", (sid,)).fetchone()[0]
@@ -219,8 +231,16 @@ def paperbot_week(db: str | Path, ws: int, we: int) -> dict[str, Any]:
 
             pnl = d("equity")
             bpnl = d("basket_equity")
+            rol = pbv._rol(sid, info_all.get(sid) or {}, roles)
+            eq_rows = [(r[0], r[1], r[2]) for r in conn.execute(
+                "SELECT hour_ms, equity, basket_equity FROM equity WHERE strategy_id=? AND hour_ms <= ? ORDER BY hour_ms", (sid, we))]
+            rs, rb = pbv.daily_returns(eq_rows, first, e1["hour_ms"])
             strategies.append({
-                "strategy_id": sid, "started_ms": first, "started_at": iso(first), "started_in_week": first > ws,
+                "strategy_id": sid, "rol": rol, "rol_label": pbv.ROLE_LABEL[rol],
+                "sharpe_cum": {"valor": pbv.sharpe(rs), "canasta": pbv.sharpe(rb), "dias": len(rs),
+                               "marca": pbv.SEGUIMIENTO_MARCA if rol == "seguimiento" else None},
+                "criterio": pbv.criterio(eq_rows, sid, first, e1["hour_ms"]) if rol == "principal" else None,
+                "started_ms": first, "started_at": iso(first), "started_in_week": first > ws,
                 "end_hour_ms": e1["hour_ms"], "end_hour_at": iso(e1["hour_ms"]), "hours_in_week": len(series),
                 "pnl_week": pnl, "return_week": None if pnl is None else pnl / CAPITAL,
                 "basket_pnl_week": bpnl, "basket_return_week": None if bpnl is None else bpnl / CAPITAL,
@@ -257,7 +277,7 @@ def paperbot_week(db: str | Path, ws: int, we: int) -> dict[str, Any]:
                  "ok_hours": ok_hours, "expected_hours": expected, "missing_hours": max(0, expected - ok_hours)},
         "errors": errors[:20], "n_errors": len(errors),
         "gaps": [{**g, "from_at": iso(g["from_ms"]), "to_at": iso(g["to_ms"])} for g in gaps],
-        "capital": CAPITAL,
+        "capital": CAPITAL, "sin_datos_ultima_corrida": sin_datos,
     }
 
 
@@ -634,19 +654,52 @@ def _exits_text(c: dict[str, int] | None) -> str:
     return ", ".join(f"{_EXIT_LABEL.get(k, k)} {v}" for k, v in sorted((c or {}).items(), key=lambda kv: -kv[1]))
 
 
+_ROLE_TITLE = {"principal": "Hipótesis principal (decide; criterio pre-registrado a 3 y 6 meses)",
+               "seguimiento": "Seguimiento (exploratorio, no decide; corrección BH al evaluar)",
+               "paper_previo": "Paper previo"}
+
+
+def _fmt_num(v: float | None, d: int = 2) -> str:
+    return "s/d" if v is None else f"{v:.{d}f}".replace(".", ",")
+
+
+def _paperbot_line(st: dict[str, Any]) -> str:
+    new = " (entró en la semana: su semana es parcial)" if st["started_in_week"] else ""
+    line = (f"- {st['strategy_id']}{new}: en la semana {_fmt_money(st['pnl_week'])} contra "
+            f"{_fmt_money(st['basket_pnl_week'])} de su canasta; acumulado {_fmt_money(st['pnl_cum'])} "
+            f"(canasta {_fmt_money(st['basket_cum'])}); costos {_fmt_money(st['costs_week'], False)}, funding "
+            f"{_fmt_money(st['funding_week'])}; trades cerrados: {_rate_text(st['trades_week'])}"
+            + (f"; salidas: {_exits_text(st.get('exits_week'))}" if st.get("exits_week") else ""))
+    sh = st.get("sharpe_cum") or {}
+    if st.get("rol") == "seguimiento":
+        line += f"; Sharpe acumulado {_fmt_num(sh.get('valor'))} en {sh.get('dias', 0)} días ({sh.get('marca')})"
+    c = st.get("criterio")
+    if c:
+        cur = c.get("en_curso") or {}
+        line += (f"; {c['dias']} días desde el inicio, criterio: {c['estado']}"
+                 + ("" if c.get("veredicto_3m") else f" (Sharpe en curso {_fmt_num(cur.get('sharpe'))} vs referencia "
+                    f"{_fmt_num(cur.get('sharpe_referencia'))}, informativo hasta los 3 meses)"))
+    return line + "."
+
+
 def summary_text(s: dict[str, Any]) -> str:
     """Resumen por codigo (sin LLM), en lenguaje historico."""
     L = [f"Semana {s['week']} ({s['week_start_at'][:10]} a {iso(s['week_end_ms'] - 1)[:10]}, UTC). {ONE_WEEK_NOTE}"]
     pb = s.get("paperbot") or {}
     if pb.get("available"):
         L.append("Bot propio de paper (dinero ficticio, 10.000 US$ por estrategia, sin reinversión):")
-        for st in pb["strategies"]:
-            new = " (entró en la semana: su semana es parcial)" if st["started_in_week"] else ""
-            L.append(f"- {st['strategy_id']}{new}: en la semana {_fmt_money(st['pnl_week'])} contra "
-                     f"{_fmt_money(st['basket_pnl_week'])} de su canasta; acumulado {_fmt_money(st['pnl_cum'])} "
-                     f"(canasta {_fmt_money(st['basket_cum'])}); costos {_fmt_money(st['costs_week'], False)}, funding "
-                     f"{_fmt_money(st['funding_week'])}; trades cerrados: {_rate_text(st['trades_week'])}"
-                     + (f"; salidas: {_exits_text(st.get('exits_week'))}." if st.get("exits_week") else "."))
+        for rol in ("principal", "seguimiento", "paper_previo"):
+            sts = [st for st in pb["strategies"] if st.get("rol", "paper_previo") == rol]
+            if not sts:
+                continue
+            L.append(f" {_ROLE_TITLE[rol]}:")
+            for st in sts:
+                L.append(_paperbot_line(st))
+            if rol == "principal":
+                L.append("  " + LECTURA_CONJUNTA)
+        if pb.get("sin_datos_ultima_corrida"):
+            L.append("  Sin datos en la última corrida ok de la semana (no operaron esa hora): "
+                     + ", ".join(pb["sin_datos_ultima_corrida"]) + ".")
         r = pb["runs"]
         L.append(f"  Corridas: {r['ok']} ok, {r['error']} con error, {r['missing_hours']} horas sin corrida ok"
                  + (f"; {len(pb['gaps'])} hueco(s) registrados." if pb["gaps"] else "."))

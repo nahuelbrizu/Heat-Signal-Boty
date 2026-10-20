@@ -21,7 +21,7 @@ DEFAULT_DB = "data/paperbot.sqlite"
 HOUR_MS = 3_600_000
 
 TABLES = ("runs", "orders", "funding_events", "equity", "positions", "trades", "basket", "gaps", "funding_rates",
-          "exit_reasons")
+          "exit_reasons", "daily_klines")
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS runs (
@@ -166,6 +166,20 @@ CREATE TABLE IF NOT EXISTS funding_rates (
     fetched_ms   INTEGER NOT NULL,
     PRIMARY KEY (symbol, funding_ms)
 );
+
+-- Velas DIARIAS cerradas de Binance USDS-M (REST /fapi/v1/klines interval=1d, ver paperbot/daily.py), cache para las
+-- estrategias diarias del lote 6 cuando la base historica ya no tiene 1m tan atras (archivado a Drive). Una vela
+-- cerrada no cambia: INSERT OR IGNORE, append-only. open_ms = apertura 00:00 UTC; la regla la ve en open_ms + 1 d.
+CREATE TABLE IF NOT EXISTS daily_klines (
+    symbol       TEXT    NOT NULL,          -- BTCUSDT
+    open_ms      INTEGER NOT NULL,
+    open         REAL    NOT NULL,
+    high         REAL    NOT NULL,
+    low          REAL    NOT NULL,
+    close        REAL    NOT NULL,
+    fetched_ms   INTEGER NOT NULL,
+    PRIMARY KEY (symbol, open_ms)
+);
 """ + "".join(
     f"CREATE TRIGGER IF NOT EXISTS {t}_no_update BEFORE UPDATE ON {t} BEGIN SELECT RAISE(ABORT, 'paperbot: {t} es append-only'); END;\n"
     f"CREATE TRIGGER IF NOT EXISTS {t}_no_delete BEFORE DELETE ON {t} BEGIN SELECT RAISE(ABORT, 'paperbot: {t} es append-only'); END;\n"
@@ -240,6 +254,12 @@ class PaperbotStore:
     def last_funding_ms(self, symbol: str) -> int | None:
         return self.conn.execute("SELECT MAX(funding_ms) FROM funding_rates WHERE symbol=?", (symbol,)).fetchone()[0]
 
+    def daily_klines(self, symbol: str, since_ms: int, until_ms: int) -> list[tuple[int, float, float, float, float]]:
+        """Velas diarias cacheadas con apertura en [since, until)."""
+        return [tuple(r) for r in self.conn.execute(
+            "SELECT open_ms, open, high, low, close FROM daily_klines WHERE symbol=? AND open_ms >= ? AND open_ms < ? "
+            "ORDER BY open_ms", (symbol, since_ms, until_ms))]
+
     # ---- escrituras -----------------------------------------------------------------------------
 
     def add_funding_rates(self, rows: Sequence[tuple]) -> int:
@@ -249,6 +269,16 @@ class PaperbotStore:
         cur = self.conn.executemany(
             "INSERT OR IGNORE INTO funding_rates (symbol, funding_ms, rate, mark_price, fetched_ms) VALUES (?, ?, ?, ?, ?)",
             rows)
+        self.conn.commit()
+        return cur.rowcount
+
+    def add_daily_klines(self, rows: Sequence[tuple]) -> int:
+        """(symbol, open_ms, open, high, low, close, fetched_ms). INSERT OR IGNORE: una vela cerrada no cambia."""
+        if not rows:
+            return 0
+        cur = self.conn.executemany(
+            "INSERT OR IGNORE INTO daily_klines (symbol, open_ms, open, high, low, close, fetched_ms) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)", rows)
         self.conn.commit()
         return cur.rowcount
 

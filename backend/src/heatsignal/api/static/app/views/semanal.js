@@ -80,13 +80,22 @@ function unavailable(src) { return el("div", { class: "note warn" }, el("b", {},
 
 function paperbotCard(pb) {
   if (!pb || !pb.available) return card(SOURCES.paperbot, null, unavailable(pb));
-  const sts = pb.strategies || [];
+  const ROL = { principal: ["Hipótesis principal (decide)", "info"], seguimiento: ["Seguimiento (exploratorio, no decide)", ""], paper_previo: ["Paper previo", ""] };
+  const rank = (s) => ["principal", "seguimiento", "paper_previo"].indexOf(s.rol || "paper_previo");
+  const sts = [...(pb.strategies || [])].sort((a, b) => rank(a) - rank(b));
+  const rolCell = (s) => {
+    const [label, kind] = ROL[s.rol || "paper_previo"] || ROL.paper_previo;
+    const sh = s.sharpe_cum || {}, c = s.criterio;
+    return el("div", { class: "small" }, chip(label, kind),
+      c ? " " + int(c.dias) + " días desde el inicio · criterio: " + c.estado : null,
+      s.rol === "seguimiento" ? " Sharpe " + (isNum(sh.valor) ? num(sh.valor, 2) : DASH) + " (" + (sh.marca || "") + ")" : null);
+  };
   const t = table([{ label: "Estrategia" }, { label: "PnL semana", cls: "n" }, { label: "Canasta", cls: "n", title: "buy & hold igual-ponderado de los mismos símbolos" },
     { label: "vs canasta", cls: "n" }, { label: "Precio", cls: "n" }, { label: "Funding", cls: "n" }, { label: "Costos", cls: "n", title: "comisiones + slippage" },
     { label: "Máx. DD", cls: "n", title: "drawdown máximo dentro de la semana (equity horaria)" }, { label: "Órdenes", cls: "n" },
     { label: "Trades cerrados" }, { label: "Salidas", title: "trades cerrados en la semana por motivo (stop, objetivo, tiempo, señal, rebalanceo)" },
     { label: "Acumulado", cls: "n" }, { label: "Acum. vs canasta", cls: "n" }],
-  sts.map((s) => [el("span", {}, el("b", { class: "mono" }, s.strategy_id),
+  sts.map((s) => [el("span", {}, el("b", { class: "mono" }, s.strategy_id), rolCell(s),
     s.started_in_week ? el("div", {}, chip("entró en la semana", "info", "semana parcial: arrancó con 10.000 US$ el " + day(s.started_at))) : null),
     sMoney(s.pnl_week), sMoney(s.basket_pnl_week), sMoney(s.vs_basket_week), sMoney(s.price_pnl_week), sMoney(s.funding_week), money(s.costs_week),
     isNum(s.max_dd_week) ? signedFrac(s.max_dd_week, 2) : DASH, int(s.orders_week), rateCell(s.trades_week), exitsText(s.exits_week, MOTIVO),

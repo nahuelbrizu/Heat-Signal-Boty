@@ -1,5 +1,7 @@
 // Bot propio de paper trading (/api/paperbot y /api/paperbot/{id}): corre cada hora en la VM, simula las estrategias de
-// params.json (6 del lote 3 + max-ruptura-10d-v1 del lote 5) con las MISMAS reglas del laboratorio, dinero ficticio.
+// params.json con las MISMAS reglas del laboratorio, dinero ficticio. Prueba hacia adelante (2026-10-20): tres grupos
+// por rol — hipótesis principal (las familias de ruptura long, short y neta: deciden con su criterio pre-registrado),
+// seguimiento (20 variantes del lote 6, exploratorio, corrección BH al evaluar) y paper previo (lote 3 + max-ruptura).
 // Cada estrategia tiene su propio inicio (la que se sumó después arranca con su capital y su canasta desde ahí). Honestidad: aviso fijo de que es simulado y de que
 // el backtest todavia puede descartarlas; huecos y corridas con error a la vista; tasas con n e IC.
 import {
@@ -17,6 +19,16 @@ const NAMES = {
   "reversion-xs-1h-v1": "Reversión alts vs BTC 1h",
   "funding-prepago-v1": "Funding prepago",
   "max-ruptura-10d-v1": "Ruptura del máximo de 10 días (lote 5)",
+  "l6-familia-ruptura-long-v1": "Familia ruptura LONG (12 rupturas, 1/12 c/u)",
+  "l6-familia-ruptura-short-v1": "Familia ruptura SHORT (12 rupturas, 1/12 c/u)",
+  "l6-familia-ruptura-neta-v1": "Familia ruptura NETA (balance long − short)",
+};
+const ROLE_ORDER = ["principal", "seguimiento", "paper_previo"];
+const ROLE_LABEL = { principal: "Hipótesis principal (decide)", seguimiento: "Seguimiento (exploratorio, no decide)", paper_previo: "Paper previo" };
+const ROLE_SUB = {
+  principal: "pre-registradas antes del primer dato (decisions.md, 2026-10-20); solo estas deciden, con su criterio a 3 y 6 meses",
+  seguimiento: "20 variantes del lote 6 que pasaron backtest y robustez; NO deciden nada: al evaluarlas se corrige por comparaciones múltiples (Benjamini–Hochberg)",
+  paper_previo: "estrategias que ya corrían antes de la prueba hacia adelante (lote 3 y max-ruptura-10d-v1)",
 };
 const STATUS = { ok: ["ok", "ok"], error: ["bad", "error"], skipped: ["", "omitida"] };
 const REASON = { senal: "señal", resincronizacion: "re-sincronización", inicio: "inicio", hueco: "después de hueco" };
@@ -87,7 +99,7 @@ export function labBlock(lab) {
 }
 
 export async function mount(root, ctx) {
-  const head = pageHead("Bot paper", "Bot propio que corre cada hora en la VM y simula las estrategias del lote 3 y max-ruptura-10d-v1 (lote 5) con las mismas reglas del laboratorio. Solo lectura.",
+  const head = pageHead("Bot paper", "Bot propio que corre cada hora en la VM y simula, con las mismas reglas del laboratorio, la prueba hacia adelante del lote 6 (hipótesis principal y seguimiento) y el paper previo. Solo lectura.",
     el("a", { class: "btn", href: ctx.href("paper") }, "Freqtrade dry-run →"));
   const top = el("div", {}, loading());
   const detailBox = el("div", {});
@@ -145,23 +157,20 @@ export function renderOverview(ov, href, sel) {
     ". El paper sigue corriendo para compararlo con la realidad, no porque estén aprobadas."));
 
   const strategies = ov.strategies || [];
-  const stTable = table([{ label: "Estrategia" }, { label: "Equity", cls: "n" }, { label: "Retorno", cls: "n" },
-    { label: "Canasta", cls: "n", title: "buy & hold igual-ponderado de los mismos símbolos desde el inicio del paper" },
-    { label: "Realizado", cls: "n" }, { label: "No realizado", cls: "n" }, { label: "Funding", cls: "n" }, { label: "Costos", cls: "n", title: "comisiones + slippage" },
-    { label: "Exposición", cls: "n", title: "nocional bruto / capital" }, { label: "Órdenes", cls: "n" }, { label: "Trades cerrados", cls: "n" },
-    { label: "Salidas", title: "stop / objetivo / tiempo de la regla y cierres por motivo (desde que se registra el motivo)" }, { label: "Posición actual" },
-    { label: "Backtest (laboratorio)", title: "veredicto del walk-forward OOS publicado (lab_summary.json)" }],
-  strategies.map((s) => [
-    el("a", { href: href("paperbot", [s.strategy_id]), "aria-current": s.strategy_id === sel ? "true" : null }, el("b", {}, name(s.strategy_id)),
-      el("div", { class: "small muted mono" }, s.strategy_id),
-      s.started_ms ? el("div", { class: "small muted" }, "desde ", when(s.started_ms)) : null),
-    money(s.equity), sFrac(s.return), sFrac(s.basket_return), sMoney(s.realized), sMoney(s.unrealized), sMoney(s.funding),
-    money((s.fees || 0) + (s.slippage || 0)), num(s.exposure, 2) + "×", int(s.n_orders),
-    s.n_trades ? int(s.wins) + "/" + int(s.n_trades) + " ganadores" : "0",
-    { v: el("div", { style: { minWidth: "160px" } }, exitChips(s.exits, { small: true }), countsLine(s.exit_counts)), cls: "wrap" },
-    el("span", { class: "chips" }, ...(s.positions || []).map((p) => weightChip(p.symbol, p.weight)).filter(Boolean),
-      (s.positions || []).some((p) => Math.abs(p.weight) > 1e-9) ? null : el("span", { class: "muted" }, "plana")), labCell(s.lab)]),
-  { empty: "Todavía no hay corridas ok.", label: "Estrategias del bot", scroll: true });
+  const byRole = {};
+  for (const s of strategies) (byRole[s.rol || "paper_previo"] ||= []).push(s);
+  const sinDatos = ov.sin_datos || [];
+  const sections = ROLE_ORDER.map((r) => {
+    const list = byRole[r] || [];
+    const missing = sinDatos.filter((x) => x.rol === r && x.nunca_corrio);
+    const body = r === "principal" ? principalBlock(list, href, sel, ov) : stratTable(list, href, sel, r === "seguimiento");
+    return el("section", { class: "stack", "aria-label": ROLE_LABEL[r], "data-rol": r },
+      card(ROLE_LABEL[r], ROLE_SUB[r], body,
+        missing.length ? el("div", { class: "note warn" }, el("b", {}, "Sin datos todavía: "),
+          missing.map((x) => x.strategy_id + " (" + (x.motivo || "sin motivo") + ")").join("; ")) : null,
+        r === "paper_previo" ? el("p", { class: "small muted" }, "Capital ficticio 10.000 US$ por estrategia repartido en partes iguales entre sus símbolos, sin reinversión. ",
+          "Costos 5 bps de comisión + 2 bps de slippage por lado (igual que el laboratorio); funding real liquidado de Binance.") : null));
+  });
 
   const runs = ov.runs || [];
   const runTable = table([{ label: "Hora" }, { label: "Estado" }, { label: "Modo" }, { label: "Motivo / nota" }, { label: "Duración", cls: "n" }, { label: "Memoria pico", cls: "n" }],
@@ -174,14 +183,97 @@ export function renderOverview(ov, href, sel) {
 
   return [disclaimer(ov), ...notes, stats,
     el("div", { class: "stack" },
-      card("Estrategias", "estado a la última corrida ok (hora cerrada)", stTable,
-        el("p", { class: "small muted" }, "Capital ficticio 10.000 US$ por estrategia repartido en partes iguales entre sus símbolos, sin reinversión. ",
-          "Costos 5 bps de comisión + 2 bps de slippage por lado (igual que el laboratorio); funding real liquidado de Binance.")),
+      ...sections,
       el("div", { class: "grid two" },
         card("Corridas recientes", "una por hora, a los :02 UTC", runTable),
         card("Huecos", "horas que el bot no simuló", gapTable,
           el("p", { class: "small muted" }, "Si la VM estuvo apagada o la corrida falló, esas horas NO se simulan después: al volver, las posiciones se llevan al objetivo de la regla y el hueco queda registrado.")))),
   ];
+}
+
+// ------------------------------------------------------------------ grupos por rol
+
+const sharpeText = (v) => isNum(v) ? num(v, 2) : DASH;
+
+/** Tabla de estrategias (seguimiento: con Sharpe diario y la marca de exploratorio). */
+function stratTable(list, href, sel, seguimiento) {
+  const cols = [{ label: "Estrategia" }, { label: "Equity", cls: "n" }, { label: "Retorno", cls: "n" },
+    { label: "Canasta", cls: "n", title: "buy & hold igual-ponderado de los mismos símbolos desde el inicio del paper" },
+    { label: "Sharpe", cls: "n", title: "Sharpe anualizado de los retornos diarios (00:00 UTC) desde su inicio en paper" },
+    { label: "Realizado", cls: "n" }, { label: "No realizado", cls: "n" }, { label: "Funding", cls: "n" }, { label: "Costos", cls: "n", title: "comisiones + slippage" },
+    { label: "Exposición", cls: "n", title: "nocional bruto / capital" }, { label: "Órdenes", cls: "n" }, { label: "Trades cerrados", cls: "n" },
+    { label: "Salidas", title: "stop / objetivo / tiempo de la regla y cierres por motivo (desde que se registra el motivo)" }, { label: "Posición actual" },
+    { label: "Backtest (laboratorio)", title: "veredicto del walk-forward OOS publicado (lab_summary.json)" }];
+  return table(cols, list.map((s) => {
+    const sh = s.sharpe || {};
+    return [
+      el("a", { href: href("paperbot", [s.strategy_id]), "aria-current": s.strategy_id === sel ? "true" : null }, el("b", {}, name(s.strategy_id)),
+        el("div", { class: "small muted mono" }, s.strategy_id),
+        s.started_ms ? el("div", { class: "small muted" }, "desde ", when(s.started_ms)) : null),
+      money(s.equity), sFrac(s.return), sFrac(s.basket_return),
+      el("span", {}, el("b", { class: isNum(sh.valor) ? (sh.valor >= 0 ? "pos" : "neg") : "" }, sharpeText(sh.valor)),
+        el("div", { class: "small muted" }, int(sh.dias || 0) + " d · canasta " + sharpeText(sh.canasta)),
+        seguimiento && sh.marca ? el("div", { class: "small" }, chip(sh.marca, "warn", "seguimiento exploratorio: no decide; al evaluar se corrige por comparaciones múltiples (Benjamini–Hochberg)")) : null),
+      sMoney(s.realized), sMoney(s.unrealized), sMoney(s.funding),
+      money((s.fees || 0) + (s.slippage || 0)), num(s.exposure, 2) + "×", int(s.n_orders),
+      s.n_trades ? int(s.wins) + "/" + int(s.n_trades) + " ganadores" : "0",
+      { v: el("div", { style: { minWidth: "160px" } }, exitChips(s.exits, { small: true }), countsLine(s.exit_counts)), cls: "wrap" },
+      el("span", { class: "chips" }, ...(s.positions || []).map((p) => weightChip(p.symbol, p.weight)).filter(Boolean),
+        (s.positions || []).some((p) => Math.abs(p.weight) > 1e-9) ? null : el("span", { class: "muted" }, "plana")), labCell(s.lab)];
+  }), { empty: "Ninguna estrategia con corrida ok en este grupo.", label: "Estrategias", scroll: true });
+}
+
+const VERDICT_CHECKS = { sharpe_positivo: "Sharpe > 0", le_gana_a_la_canasta: "Sharpe > referencia", p_menor_igual_005: "p ≤ 0,05" };
+function verdictLine(label, v) {
+  if (!v) return null;
+  const failed = Object.entries(v.checks || {}).filter(([, ok]) => !ok).map(([k]) => VERDICT_CHECKS[k] || k);
+  return el("div", {}, chip(label + ": " + (v.pasa ? "pasa" : "no pasa"), v.pasa ? "ok" : "bad"),
+    " Sharpe " + sharpeText(v.sharpe) + " vs referencia " + sharpeText(v.sharpe_referencia) + " · " + int(v.dias) + " días" +
+    (v.p !== undefined ? " · p " + (isNum(v.p) ? num(v.p, 3) : DASH) : "") + (failed.length ? " · falla: " + failed.join(", ") : "") + ".");
+}
+
+/** Criterio pre-registrado: días desde el inicio, hitos de 3 y 6 meses y el veredicto desde los 3 meses. */
+export function criterioBlock(c) {
+  if (!c) return null;
+  const cur = c.en_curso || {};
+  return el("div", { class: "stack" },
+    el("div", { class: "small" }, el("b", {}, "Criterio pre-registrado: "), c.texto),
+    el("div", { class: "chips" }, chip(int(c.dias) + " días desde el inicio", "info", "inicio " + String(c.inicio_at || "").slice(0, 10)),
+      chip(c.estado || "en curso", /pasa$/.test(c.estado || "") && !/no pasa/.test(c.estado || "") ? "ok" : /no pasa/.test(c.estado || "") ? "bad" : ""),
+      el("span", { class: "small muted" }, "3 meses: " + String(c.hito_3m_at || "").slice(0, 10) + " · 6 meses: " + String(c.hito_6m_at || "").slice(0, 10))),
+    c.veredicto_3m ? null : el("div", { class: "small muted" }, "En curso (informativo, todavía no cuenta): Sharpe " + sharpeText(cur.sharpe) +
+      " vs referencia " + sharpeText(cur.sharpe_referencia) + " con " + int(cur.dias || 0) + " días. El veredicto aparece a los 3 meses."),
+    verdictLine("3 meses", c.veredicto_3m), verdictLine("6 meses", c.veredicto_6m));
+}
+
+/** Balance de fuerzas por símbolo: votos long vs short de las componentes y la posición neta resultante. */
+export function votesBlock(votos) {
+  if (!votos) return null;
+  const rows = Object.entries(votos).map(([s, v]) => {
+    const n = v.componentes || 12;
+    const w = isNum(v.neta) ? v.neta : 0;
+    const bar = el("span", { class: "vbar", role: "img", "aria-label": "posición neta " + num(w, 2),
+      style: { display: "inline-block", position: "relative", width: "90px", height: "8px", background: "var(--line, #8883)", borderRadius: "4px", verticalAlign: "middle" } },
+      el("span", { style: { position: "absolute", top: "0", height: "8px", borderRadius: "4px", left: (w >= 0 ? 50 : 50 + w * 50) + "%",
+        width: Math.abs(w) * 50 + "%", background: w >= 0 ? "var(--pos, #2a9d5c)" : "var(--neg, #d64545)" } }));
+    return el("div", { class: "small" }, el("b", {}, toSym(s).split("-")[0] + " "), int(v.long) + " long · " + int(v.short) + " short",
+      el("span", { class: "muted" }, " de " + int(n) + " "), bar, " neta " + (w > 0 ? "+" : "") + num(w, 2));
+  });
+  return el("div", {}, el("div", { class: "small" }, el("b", {}, "Balance de fuerzas"), el("span", { class: "muted" }, " (última corrida)")), ...rows);
+}
+
+function principalBlock(list, href, sel, ov) {
+  if (!list.length) return el("p", { class: "empty" }, "Las hipótesis principales todavía no tienen una corrida ok.");
+  const order = ["l6-familia-ruptura-long-v1", "l6-familia-ruptura-short-v1", "l6-familia-ruptura-neta-v1"];
+  const sorted = [...list].sort((a, b) => (order.indexOf(a.strategy_id) + 99) % 99 - (order.indexOf(b.strategy_id) + 99) % 99);
+  const cards = sorted.map((s) => el("div", { class: "card", style: { padding: "12px" } },
+    el("a", { href: href("paperbot", [s.strategy_id]), "aria-current": s.strategy_id === sel ? "true" : null }, el("b", {}, name(s.strategy_id))),
+    el("div", { class: "small muted mono" }, s.strategy_id + (s.spec_hash ? " · spec " + s.spec_hash : "")),
+    el("div", { class: "small" }, "Equity " + money(s.equity) + " · retorno ", sFrac(s.return), " · canasta ", sFrac(s.basket_return)),
+    criterioBlock(s.criterio), votesBlock(s.votos)));
+  return el("div", { class: "stack" },
+    el("div", { class: "grid three", style: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: "12px" } }, ...cards),
+    el("div", { class: "note info" }, el("b", {}, "Lectura conjunta: "), ov.lectura_conjunta || DASH));
 }
 
 // ------------------------------------------------------------------ detalle
@@ -246,6 +338,10 @@ export function renderDetail(d) {
 
   return card(name(d.strategy_id), el("span", { class: "chips" }, chip("simulado", "warn"), labChip(d.lab), holdoutChip(d.lab), d.spec_hash ? chip("spec " + d.spec_hash, "", "hash de la regla congelada") : null),
     el("div", { class: "stack" },
+      d.rol ? el("div", { class: "chips" }, chip(ROLE_LABEL[d.rol] || d.rol, d.rol === "principal" ? "info" : ""),
+        d.rol === "seguimiento" && d.sharpe && d.sharpe.marca ? chip(d.sharpe.marca, "warn") : null) : null,
+      d.criterio ? el("div", { class: "note info" }, criterioBlock(d.criterio)) : null,
+      d.votos ? votesBlock(d.votos) : null,
       labBlock(d.lab),
       stats,
       trades.length && trades.length < 30 ? el("div", { class: "note" }, el("b", {}, "Muestra chica: "), int(trades.length) + " trades cerrados no alcanzan para sacar conclusiones.") : null,

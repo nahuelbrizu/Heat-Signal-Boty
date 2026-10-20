@@ -256,6 +256,37 @@ def _l6_exits() -> dict[str, dict[str, Any]]:
 
 EXITS.update(_l6_exits())
 
+# Hipotesis principal de la prueba hacia adelante (2026-10-20): hereda las salidas de sus 12 componentes (todas por
+# tiempo, sin stop ni objetivo). La suma solo baja a 0 cuando vence la ultima componente abierta: motivo 'tiempo'.
+EXITS["l6-familia-ruptura-long-v1"] = {
+    "stop": None, "take_profit": None, "tiempo": None, "otra": None,
+    "hereda": [f"l6-ruptura-n{n}-h{h}-long-v1" for n in (5, 10, 20, 55) for h in (1, 3, 5)],
+    "nota": "Hereda sus 12 rupturas long (1/12 c/u): sin stop ni objetivo, cada una cierra a los 1, 3 o 5 d.",
+    "cierre": "tiempo", "giro": "tiempo",
+}
+
+# Enmienda 2026-10-20: familia espejo SHORT (12 rupturas del minimo, solo short) y su cartera (solo hacia adelante).
+for _n6 in (5, 10, 20, 55):
+    for _h6 in (1, 3, 5):
+        EXITS[f"l6-ruptura-n{_n6}-h{_h6}-short-v1"] = {
+            "stop": None, "take_profit": None, "tiempo": _t(_h6, "d", "hold_days"), "otra": None,
+            "nota": f"Sin stop ni objetivo: cierra a los {_h6} d.", "cierre": "tiempo", "giro": "tiempo"}
+EXITS["l6-familia-ruptura-short-v1"] = {
+    "stop": None, "take_profit": None, "tiempo": None, "otra": None,
+    "hereda": [f"l6-ruptura-n{n}-h{h}-short-v1" for n in (5, 10, 20, 55) for h in (1, 3, 5)],
+    "nota": "Hereda sus 12 rupturas short (1/12 c/u): sin stop ni objetivo, cada una cierra a los 1, 3 o 5 d.",
+    "cierre": "tiempo", "giro": "tiempo",
+}
+
+
+# Enmienda 2: balance de fuerzas (24 componentes a 1/12). Baja a 0 cuando se equilibran o vencen: 'tiempo'.
+EXITS["l6-familia-ruptura-neta-v1"] = {
+    "stop": None, "take_profit": None, "tiempo": None, "otra": None,
+    "hereda": EXITS["l6-familia-ruptura-long-v1"]["hereda"] + EXITS["l6-familia-ruptura-short-v1"]["hereda"],
+    "nota": "Hereda las 24 rupturas (12 long, 12 short, 1/12 c/u): sin stop ni objetivo; cada una vence a los 1, 3 o 5 d.",
+    "cierre": "tiempo", "giro": "senal",
+}
+
 
 # Freqtrade (paper): lo configurado en cada estrategia (freqtrade/**/strategies). Un test lo compara con los archivos.
 FREQTRADE_EXITS: dict[str, dict[str, Any]] = {

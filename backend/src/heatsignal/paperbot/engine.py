@@ -39,6 +39,7 @@ import resource
 import time
 import traceback
 from collections.abc import Callable
+from contextlib import nullcontext
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -51,6 +52,7 @@ from ..history import klines as hk
 from ..history.store import HistoryStore
 from ..lab.exits import capture_exits, reason_map
 from . import params as P
+from .daily import build_daily, daily_source, history_days, update_daily_cache
 from .funding import update_funding
 from .ledger import CAPITAL, EPS, FEE_BPS, SLIPPAGE_BPS, Book
 from .store import HOUR_MS, PaperbotStore
@@ -261,7 +263,10 @@ def _run(cfg: EngineConfig, store: PaperbotStore, base: dict, H: int, now: int, 
         if sid not in entries:
             raise P.ParamsError(f"{sid}: falta en params.json")
         plans[sid] = (spec, rule, P.effective(sid, entries[sid], spec), list(entries[sid]["universe"]), entries[sid])
-    symbols = sorted({s for p in plans.values() for s in p[3]}, key=lambda s: cfg.symbols.index(s) if s in cfg.symbols else 99)
+    order = lambda s: cfg.symbols.index(s) if s in cfg.symbols else 99  # noqa: E731
+    symbols = sorted({s for p in plans.values() for s in p[3]}, key=order)
+    # estrategias diarias (lote 6): velas diarias aparte (daily.py), con su historia minima por spec
+    daily_need = {sid: d for sid, p in plans.items() if (d := history_days(p[0], p[1])) is not None}
 
     detail: dict[str, Any] = {"ventana_dias": cfg.window_days, "simbolos": symbols}
     hist = HistoryStore(cfg.history_db)
@@ -297,6 +302,19 @@ def _run(cfg: EngineConfig, store: PaperbotStore, base: dict, H: int, now: int, 
         # 3. carga (velas hasta `now`: las >= H solo se usan para el precio de los fills)
         start = H - cfg.window_days * DAY_MS
         full = {s: load_klines(hist, s, start, now) for s in symbols}
+
+        # 4. velas diarias: el maximo que necesitan las diarias activas (1m agregadas en SQL o cache REST 1d)
+        daily_bars: dict[str, pd.DataFrame] = {}
+        daily_info: dict[str, dict[str, Any]] = {}
+        if daily_need:
+            days = max(daily_need.values())
+            for s in sorted({s for sid in daily_need for s in plans[sid][3]}, key=order):
+                fetch = None
+                if cfg.download:
+                    def fetch(a: int, b: int, s: str = s) -> int:
+                        return update_daily_cache(store, s, a, b, now, http_get=http_get, sleep=sleep)
+                daily_bars[s], daily_info[s] = build_daily(hist, store, s, H, days, fetch=fetch)
+            detail["velas_diarias"] = {"dias": days, "minimo_por_estrategia": daily_need, "por_simbolo": daily_info}
     finally:
         hist.close()
     prices = {s: Prices.of(k) for s, k in full.items()}
@@ -321,15 +339,38 @@ def _run(cfg: EngineConfig, store: PaperbotStore, base: dict, H: int, now: int, 
         detail["hueco_horas"] = hours
 
     per_strategy = {}
+    sin_datos: dict[str, str] = {}
     for sid, (spec, rule, params, universe, entry) in plans.items():
+        need = daily_need.get(sid)
+        if need is not None:
+            short = {s: daily_info[s]["dias_contiguos"] for s in universe if daily_info[s]["dias_contiguos"] < need}
+            if short:
+                # sin fallos silenciosos: no se opera ni se escribe equity; la proxima corrida con datos entra por hueco
+                errs = sorted({daily_info[s]["rest_error"] for s in short if daily_info[s].get("rest_error")})
+                sin_datos[sid] = (f"faltan velas diarias: se necesitan {need} dias contiguos y hay "
+                                  + ", ".join(f"{s} {n}" for s, n in short.items())
+                                  + (f" (REST: {'; '.join(errs)})" if errs else ""))
+                per_strategy[sid] = {"estado": "sin_datos", "motivo": sin_datos[sid], "spec_hash": spec.spec_hash(),
+                                     "rol": entry.get("rol"), "universe": universe, "desde": entry.get("desde"),
+                                     "historia_dias": need, "origen": entry.get("origen")}
+                continue
         # Cada estrategia lleva su propio inicio: una que se suma despues entra "desde hoy" (orden `inicio` al
         # objetivo de la regla en H, canasta y capital propios desde H) sin tocar la historia de las demas.
         last_eq = store.last_equity_hour(sid)
         s_consecutive = consecutive and last_eq == prev["hour_ms"]
         s_mode = "consecutiva" if s_consecutive else ("inicio" if last_eq is None else "hueco")
-        data = {s: MarketData(closed[s], funding[s]) for s in universe}
-        with capture_exits() as rec:  # misma regla y mismo resultado; registra el motivo de cada salida
-            signals = rule(data, params)
+        if need is not None:
+            data = {s: MarketData(daily_bars[s], funding[s]) for s in universe}
+            source = daily_source({id(md): daily_bars[s] for s, md in data.items()})
+        else:
+            data = {s: MarketData(closed[s], funding[s]) for s in universe}
+            source = nullcontext()
+        votes = None
+        with source:
+            with capture_exits() as rec:  # misma regla y mismo resultado; registra el motivo de cada salida
+                signals = rule(data, params)
+            if need is not None and isinstance(params.get("components"), dict):
+                votes = _votes(params["components"], data, H)
         sigs = {s: _clean(signals.get(s)) for s in universe}
         try:
             reasons = {(s, int(pd.Timestamp(t).value // 1_000_000)): m
@@ -432,15 +473,32 @@ def _run(cfg: EngineConfig, store: PaperbotStore, base: dict, H: int, now: int, 
                              "origen": entry.get("origen"), "universe": universe, "targets": targets,
                              "eventos": n_events, "ordenes": len(new_orders), "funding": len(new_funding),
                              "equity": tot["equity"], "modo": s_mode, "desde": entry.get("desde"),
+                             "estado": "ok", "rol": entry.get("rol"), "historia_dias": need, "votos": votes,
                              "inicio_ms": H if last_eq is None else store.first_equity_hour(sid)}
 
-    detail.update({"modo": mode, "estrategias": per_strategy, "marcas": marks,
+    detail.update({"modo": mode, "estrategias": per_strategy, "marcas": marks, "sin_datos": sin_datos,
                    "anterior_ok_ms": None if prev is None else prev["hour_ms"]})
     note = {"consecutiva": "ok", "inicio": "primera corrida: posiciones llevadas al objetivo de la regla",
             "hueco": f"hueco de {detail.get('hueco_horas')} h sin simular; posiciones llevadas al objetivo"}[mode]
+    if sin_datos:
+        note += f"; SIN DATOS en esta corrida (no operaron): {', '.join(sorted(sin_datos))}"
     return _finish(store, base, "ok", note, detail, t0, orders=rows["orders"], funding=rows["funding"],
                    equity=rows["equity"], positions=rows["positions"], trades=rows["trades"], basket=rows["basket"],
                    gaps=rows["gaps"], exits=rows["exits"])
+
+
+def _votes(components: dict[str, float], data: dict[str, Any], H: int) -> dict[str, dict[str, Any]]:
+    """Balance de fuerzas de una familia en H, por simbolo: cuantas componentes estan long y cuantas short (cada una
+    con su regla congelada). Solo informativo para el panel: la posicion la decide la regla de la familia."""
+    from ..lab.strategies import CATALOG
+
+    comp = {c: CATALOG[c][1](data, dict(CATALOG[c][0].params)) for c in components}
+    out = {}
+    for s in data:
+        t = {c: target_at(_clean(sig.get(s)), H) for c, sig in comp.items()}
+        out[s] = {"long": sum(1 for v in t.values() if v > TARGET_TOL), "short": sum(1 for v in t.values() if v < -TARGET_TOL),
+                  "componentes": len(t), "neta": sum(components[c] * v for c, v in t.items())}
+    return out
 
 
 def summary_line(run: dict[str, Any]) -> str:
