@@ -44,7 +44,7 @@ LONG = [f"l6-ruptura-n{n}-h{h}-long-v1" for n, h in GRID]
 SHORT = [f"l6-ruptura-n{n}-h{h}-short-v1" for n, h in GRID]
 FAMILIES = {"l6-familia-ruptura-long-v1": "long", "l6-familia-ruptura-short-v1": "short",
             "l6-familia-ruptura-neta-v1": "neta"}
-HORIZONS = (30, 90, 180, 365)
+HORIZONS = (1, 3, 7, 14, 30, 90, 180, 365)  # enmienda 2026-10-21: horizontes cortos (antes se interpolaba linealmente desde 0)
 QUANTILES = (50, 95, 99)
 BLOCK_MEAN = 20.0
 N_BOOT = 5000

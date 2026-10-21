@@ -640,6 +640,12 @@
   (diagnóstico; slippage 7 bps en TRX y XLM, resto igual; desarrollo, base congelada, sin holdout, no suma K):
   Sharpe medio del desarrollo long 1,202 → 1,181; short −0,443 → −0,463 (caída por componente 0,008–0,047).
 
+- **Enmienda a los criterios de parada (2026-10-21, día 1 de la prueba, sin datos que la motiven más allá del error de
+  método):** debajo de 30 días los umbrales se interpolaban linealmente desde 0, lo que daba un P95 de 0,3 % al día 1 (la
+  familia short quedó en "alerta" con −0,47 % el primer día). El drawdown crece ~ con la raíz del tiempo: se agregaron los
+  horizontes 1, 3, 7 y 14 días al mismo bootstrap (P95 al día 1 ≈ 1,5–2 %). Nuevo hash `f3b80a86b59b4f0f`; los umbrales de
+  30–365 días quedan prácticamente iguales (difieren en décimas por la secuencia aleatoria).
+
 ## Abiertas
 - ~~Plan de CoinGlass a contratar.~~ **Ya no aplica al core** — la fuente primaria pasó a WS nativos.
   Solo se retomaría si se implementa la fuente BYOK opcional (y ahí el plan lo elige el usuario).

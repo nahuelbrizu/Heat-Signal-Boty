@@ -10,7 +10,7 @@ import pytest
 from heatsignal.lab import parada as lp
 from heatsignal.paperbot import parada as pp
 
-FROZEN_HASH = "ba74b6de38914bb0"  # paperbot/parada_preregistrada.json (2026-10-21): NO cambiar; es pre-registro
+FROZEN_HASH = "f3b80a86b59b4f0f"  # paperbot/parada_preregistrada.json (enmienda 2026-10-21: horizontes cortos 1/3/7/14 d): NO cambiar
 
 
 def test_path_stats_known_path():
