@@ -240,6 +240,7 @@ def paperbot_week(db: str | Path, ws: int, we: int) -> dict[str, Any]:
                 "sharpe_cum": {"valor": pbv.sharpe(rs), "canasta": pbv.sharpe(rb), "dias": len(rs),
                                "marca": pbv.SEGUIMIENTO_MARCA if rol == "seguimiento" else None},
                 "criterio": pbv.criterio(eq_rows, sid, first, e1["hour_ms"]) if rol == "principal" else None,
+                "parada": pbv.parada_estado(sid, rs) if rol == "principal" else None,
                 "started_ms": first, "started_at": iso(first), "started_in_week": first > ws,
                 "end_hour_ms": e1["hour_ms"], "end_hour_at": iso(e1["hour_ms"]), "hours_in_week": len(series),
                 "pnl_week": pnl, "return_week": None if pnl is None else pnl / CAPITAL,
@@ -679,6 +680,13 @@ def _paperbot_line(st: dict[str, Any]) -> str:
         line += (f"; {c['dias']} días desde el inicio, criterio: {c['estado']}"
                  + ("" if c.get("veredicto_3m") else f" (Sharpe en curso {_fmt_num(cur.get('sharpe'))} vs referencia "
                     f"{_fmt_num(cur.get('sharpe_referencia'))}, informativo hasta los 3 meses)"))
+    p = st.get("parada")
+    if p and p.get("estado"):
+        dd, du = p["drawdown"], p["duracion"]
+        line += (f"; parada pre-registrada: {p['label']} (drawdown {_fmt_pct(dd['valor'])} vs P95 {_fmt_pct(dd['p95'])} / "
+                 f"P99 {_fmt_pct(dd['p99'])}; bajo el agua {du['valor']} días vs P95 {du['p95']:.0f} / P99 {du['p99']:.0f})")
+    elif p:
+        line += f"; {p.get('error')}"
     return line + "."
 
 

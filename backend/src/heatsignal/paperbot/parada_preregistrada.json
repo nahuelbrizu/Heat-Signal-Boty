@@ -1,0 +1,243 @@
+{
+ "version": 1,
+ "fecha": "2026-10-21",
+ "pre_registrado": "Antes de que haya datos vivos significativos (decisions.md: consulta a un trader profesional).",
+ "metodo": {
+  "bootstrap": "estacionario (Politis-Romano), circular",
+  "bloque_medio_dias": 20.0,
+  "B": 5000,
+  "semilla": 20261020,
+  "horizontes_dias": [
+   30,
+   90,
+   180,
+   365
+  ],
+  "percentiles": [
+   50,
+   95,
+   99
+  ],
+  "drawdown": "convencion del lab (stats.max_drawdown sin componer): equity = 1 + cumsum(r) desde 1; DD = max (pico - equity) / pico",
+  "duracion": "racha maxima de dias seguidos con equity < pico previo",
+  "serie": "OOS walk-forward de los componentes (oos.equity_daily acumulada por suma, diferenciada); long = media de las 12 long, short = media de las 12 short, neta = long + short (cada componente 1/12)",
+  "aproximacion": "la neta real netea posiciones por simbolo y paga menos costos; aca se suman las patas netas de costos -> drawdown sobrecontado: umbrales conservadores",
+  "periodo": [
+   "2021-03-13",
+   "2026-07-14"
+  ],
+  "componentes": {
+   "l6-ruptura-n5-h1-long-v1": "20261019T184011.json",
+   "l6-ruptura-n5-h3-long-v1": "20261019T184927.json",
+   "l6-ruptura-n5-h5-long-v1": "20261019T185840.json",
+   "l6-ruptura-n10-h1-long-v1": "20261019T190735.json",
+   "l6-ruptura-n10-h3-long-v1": "20261019T191657.json",
+   "l6-ruptura-n10-h5-long-v1": "20261019T192613.json",
+   "l6-ruptura-n20-h1-long-v1": "20261019T193522.json",
+   "l6-ruptura-n20-h3-long-v1": "20261019T194457.json",
+   "l6-ruptura-n20-h5-long-v1": "20261019T195354.json",
+   "l6-ruptura-n55-h1-long-v1": "20261019T200241.json",
+   "l6-ruptura-n55-h3-long-v1": "20261019T201155.json",
+   "l6-ruptura-n55-h5-long-v1": "20261019T202051.json",
+   "l6-ruptura-n5-h1-short-v1": "20261020T012439.json",
+   "l6-ruptura-n5-h3-short-v1": "20261020T012439.json",
+   "l6-ruptura-n5-h5-short-v1": "20261020T013332.json",
+   "l6-ruptura-n10-h1-short-v1": "20261020T013317.json",
+   "l6-ruptura-n10-h3-short-v1": "20261020T014208.json",
+   "l6-ruptura-n10-h5-short-v1": "20261020T014223.json",
+   "l6-ruptura-n20-h1-short-v1": "20261020T015049.json",
+   "l6-ruptura-n20-h3-short-v1": "20261020T015119.json",
+   "l6-ruptura-n20-h5-short-v1": "20261020T020016.json",
+   "l6-ruptura-n55-h1-short-v1": "20261020T020032.json",
+   "l6-ruptura-n55-h3-short-v1": "20261020T021808.json",
+   "l6-ruptura-n55-h5-short-v1": "20261020T021831.json"
+  }
+ },
+ "regla": {
+  "alerta": "drawdown o duracion bajo el agua en vivo desde el inicio > P95 del horizonte transcurrido (interpolado linealmente entre 0 -> 0, 30, 90, 180 y 365 dias; despues de 365 se usa el de 365) -> 'alerta: tamano a la mitad'",
+  "parar": "> P99 -> 'parar'",
+  "paper": "en paper NO cambia operaciones: se muestra en el panel y en la revision semanal y se registra",
+  "plata_real": "en la etapa de plata real es regla OBLIGATORIA: alerta = tamano a la mitad, parar = cerrar y no reabrir sin una decision nueva registrada"
+ },
+ "familias": {
+  "l6-familia-ruptura-long-v1": {
+   "lado": "long",
+   "serie": {
+    "dias": 1950,
+    "media_diaria": 0.00072921,
+    "desvio_diario": 0.01323961,
+    "drawdown_max_historico": 0.223365
+   },
+   "horizontes": {
+    "30": {
+     "drawdown": {
+      "p50": 0.041561,
+      "p95": 0.09159,
+      "p99": 0.129822
+     },
+     "duracion_dias": {
+      "p50": 20.0,
+      "p95": 30.0,
+      "p99": 30.0
+     }
+    },
+    "90": {
+     "drawdown": {
+      "p50": 0.078148,
+      "p95": 0.162298,
+      "p99": 0.20898
+     },
+     "duracion_dias": {
+      "p50": 58.0,
+      "p95": 89.0,
+      "p99": 90.0
+     }
+    },
+    "180": {
+     "drawdown": {
+      "p50": 0.111407,
+      "p95": 0.227086,
+      "p99": 0.297057
+     },
+     "duracion_dias": {
+      "p50": 107.0,
+      "p95": 178.0,
+      "p99": 180.0
+     }
+    },
+    "365": {
+     "drawdown": {
+      "p50": 0.151674,
+      "p95": 0.323848,
+      "p99": 0.399647
+     },
+     "duracion_dias": {
+      "p50": 192.0,
+      "p95": 357.0,
+      "p99": 365.0
+     }
+    }
+   }
+  },
+  "l6-familia-ruptura-short-v1": {
+   "lado": "short",
+   "serie": {
+    "dias": 1950,
+    "media_diaria": -0.00025017,
+    "desvio_diario": 0.01403897,
+    "drawdown_max_historico": 0.678699
+   },
+   "horizontes": {
+    "30": {
+     "drawdown": {
+      "p50": 0.0482,
+      "p95": 0.116658,
+      "p99": 0.166801
+     },
+     "duracion_dias": {
+      "p50": 22.0,
+      "p95": 30.0,
+      "p99": 30.0
+     }
+    },
+    "90": {
+     "drawdown": {
+      "p50": 0.10443,
+      "p95": 0.191446,
+      "p99": 0.237504
+     },
+     "duracion_dias": {
+      "p50": 67.0,
+      "p95": 90.0,
+      "p99": 90.0
+     }
+    },
+    "180": {
+     "drawdown": {
+      "p50": 0.15747,
+      "p95": 0.277334,
+      "p99": 0.336844
+     },
+     "duracion_dias": {
+      "p50": 135.0,
+      "p95": 180.0,
+      "p99": 180.0
+     }
+    },
+    "365": {
+     "drawdown": {
+      "p50": 0.240457,
+      "p95": 0.42278,
+      "p99": 0.514441
+     },
+     "duracion_dias": {
+      "p50": 280.5,
+      "p95": 364.0,
+      "p99": 365.0
+     }
+    }
+   }
+  },
+  "l6-familia-ruptura-neta-v1": {
+   "lado": "neta",
+   "serie": {
+    "dias": 1950,
+    "media_diaria": 0.00047905,
+    "desvio_diario": 0.01738497,
+    "drawdown_max_historico": 0.254398
+   },
+   "horizontes": {
+    "30": {
+     "drawdown": {
+      "p50": 0.060307,
+      "p95": 0.130006,
+      "p99": 0.193976
+     },
+     "duracion_dias": {
+      "p50": 21.0,
+      "p95": 30.0,
+      "p99": 30.0
+     }
+    },
+    "90": {
+     "drawdown": {
+      "p50": 0.116699,
+      "p95": 0.230362,
+      "p99": 0.287632
+     },
+     "duracion_dias": {
+      "p50": 61.0,
+      "p95": 89.0,
+      "p99": 90.0
+     }
+    },
+    "180": {
+     "drawdown": {
+      "p50": 0.16176,
+      "p95": 0.316125,
+      "p99": 0.39861
+     },
+     "duracion_dias": {
+      "p50": 110.0,
+      "p95": 178.0,
+      "p99": 180.0
+     }
+    },
+    "365": {
+     "drawdown": {
+      "p50": 0.218634,
+      "p95": 0.440524,
+      "p99": 0.556644
+     },
+     "duracion_dias": {
+      "p50": 204.0,
+      "p95": 360.0,
+      "p99": 365.0
+     }
+    }
+   }
+  }
+ },
+ "hash": "ba74b6de38914bb0",
+ "generado_at": "2026-10-21T14:50:12+00:00"
+}

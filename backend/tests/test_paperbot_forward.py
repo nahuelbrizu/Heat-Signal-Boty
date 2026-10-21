@@ -295,6 +295,11 @@ def test_view_roles_sharpe_and_criterion(tmp_path):
     # la referencia de la short es la canasta en corto
     assert cs["veredicto_3m"]["sharpe_referencia"] == pytest.approx(-v3["sharpe_referencia"])
     assert by[NETA]["votos"]["BTCUSDT"]["long"] == 5 and "beta" in ov["lectura_conjunta"]
+    # criterios de parada pre-registrados: solo las principales, con semaforo y umbrales del JSON congelado
+    pa = by[FAM]["parada"]
+    assert pa["estado"] in ("ok", "alerta", "parar") and pa["dias"] == 100 and pa["hash"]
+    assert 0 < pa["drawdown"]["p95"] < pa["drawdown"]["p99"]
+    assert by[TS]["parada"] is None and by[NETA]["parada"] is not None
     # antes de 3 meses: en curso, sin veredicto
     _synthetic_db(tmp_path / "pb2.sqlite", 40)
     c2 = {s["strategy_id"]: s for s in V.overview(tmp_path / "pb2.sqlite")["strategies"]}[FAM]["criterio"]
@@ -349,3 +354,4 @@ def test_weekly_review_has_roles(tmp_path):
     i, j, k = (text.index(W._ROLE_TITLE[r]) for r in ("principal", "seguimiento", "paper_previo"))
     assert i < j < k and "criterio: 3m: pasa" in text and "corrección BH al evaluar" in text
     assert "Lectura conjunta" in text
+    assert by[FAM]["parada"]["estado"] in ("ok", "alerta", "parar") and "parada pre-registrada:" in text

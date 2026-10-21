@@ -88,6 +88,9 @@ function paperbotCard(pb) {
     const sh = s.sharpe_cum || {}, c = s.criterio;
     return el("div", { class: "small" }, chip(label, kind),
       c ? " " + int(c.dias) + " días desde el inicio · criterio: " + c.estado : null,
+      s.parada && s.parada.estado ? el("span", {}, " · parada: ", chip(s.parada.label, { ok: "ok", alerta: "warn", parar: "bad" }[s.parada.estado] || "",
+        "DD " + num((s.parada.drawdown.valor || 0) * 100, 1) + " % (P95 " + num(s.parada.drawdown.p95 * 100, 1) + " / P99 " + num(s.parada.drawdown.p99 * 100, 1) +
+        ") · bajo el agua " + int(s.parada.duracion.valor) + " d (P95 " + num(s.parada.duracion.p95, 0) + " / P99 " + num(s.parada.duracion.p99, 0) + ")")) : null,
       s.rol === "seguimiento" ? " Sharpe " + (isNum(sh.valor) ? num(sh.valor, 2) : DASH) + " (" + (sh.marca || "") + ")" : null);
   };
   const t = table([{ label: "Estrategia" }, { label: "PnL semana", cls: "n" }, { label: "Canasta", cls: "n", title: "buy & hold igual-ponderado de los mismos símbolos" },

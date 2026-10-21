@@ -224,6 +224,16 @@ def criterio(rows: list[tuple[int, float, float | None]], sid: str, start_ms: in
     return out
 
 
+def parada_estado(sid: str, rs: list[float]) -> dict[str, Any] | None:
+    """Semaforo de los criterios de parada pre-registrados (paperbot/parada.py); None si falta el JSON (se avisa)."""
+    try:
+        from .parada import evaluate
+
+        return evaluate(sid, rs)
+    except (OSError, ValueError, KeyError) as exc:
+        return {"estado": None, "error": f"criterios de parada no disponibles: {exc}"}
+
+
 def _params_roles() -> dict[str, str]:
     try:
         from .params import load, role
@@ -264,7 +274,8 @@ def _summary(conn: sqlite3.Connection, sid: str, last_ok_detail: dict[str, Any],
                "votos": info.get("votos"),
                "sharpe": {"valor": sharpe(rs), "canasta": sharpe(rb), "dias": len(rs),
                           "marca": SEGUIMIENTO_MARCA if rol == "seguimiento" else None},
-               "criterio": criterio(series, sid, first[0], e["hour_ms"]) if rol == "principal" else None}
+               "criterio": criterio(series, sid, first[0], e["hour_ms"]) if rol == "principal" else None,
+               "parada": parada_estado(sid, rs) if rol == "principal" else None}
     return {**forward,
         "strategy_id": sid, "spec_hash": info.get("spec_hash"), "params": info.get("params"), "origen": info.get("origen"),
         "universe": info.get("universe") or [p["symbol"] for p in pos], "capital": CAPITAL,

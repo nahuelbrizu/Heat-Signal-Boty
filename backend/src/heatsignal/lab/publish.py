@@ -75,10 +75,11 @@ def _latest_diagnostics(folder: Path) -> dict[str, tuple[dict[str, Any], dict[st
             rep = json.loads(f.read_text())
         except (OSError, ValueError):
             continue
-        for kind in ("pbo", "robustez", "salidas"):  # salidas: atribucion de salidas (lab/exits.py)
+        # salidas: atribucion de salidas (lab/exits.py); costos: estres TRX/XLM 7 bps (lab/costos.py)
+        for kind in ("pbo", "robustez", "salidas", "costos"):
             if kind not in out and isinstance(rep.get(kind), dict):
                 out[kind] = (rep, rep[kind])
-        if len(out) == 3:
+        if len(out) == 4:
             break
     return out
 
@@ -111,6 +112,20 @@ def diagnostics_block(folder: Path, current_run: str | None, full: bool = False)
         out["development"] = (rr or pr).get("development")
         out["holdout"] = (rr or pr).get("holdout")
     out["salidas"] = _salidas_block(found.get("salidas"), full)
+    out["costos"] = _costos_block(found.get("costos"), current_run)
+    return out
+
+
+def _costos_block(found: tuple[dict[str, Any], dict[str, Any]] | None, current_run: str | None) -> dict[str, Any] | None:
+    """Estres de costos "costos realistas TRX/XLM 7 bps" (lab/costos.py): Sharpe del desarrollo con los costos del lab y
+    con slippage de 7 bps en TRX y XLM. Diagnostico: no suma intentos. None si no se corrio."""
+    if not found:
+        return None
+    rep, c = found
+    out = {k: c.get(k) for k in ("label", "sharpe_dev", "sharpe_dev_estres", "delta", "costos_lab", "costos_estres",
+                                 "window", "holdout", "base_params", "adds_trials")}
+    out.update({"generated_at": rep.get("generated_at"), "run": rep.get("run"),
+                "stale": bool(current_run) and bool(rep.get("run")) and rep.get("run") != current_run})
     return out
 
 

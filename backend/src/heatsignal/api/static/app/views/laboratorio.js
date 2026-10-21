@@ -243,6 +243,20 @@ function neighborsTable(r) {
 }
 
 /** Tarjeta de diagnosticos del detalle: PBO + robustez por vecinos, con como leerlos. */
+/** Estrés de costos (lab/costos.py): Sharpe del desarrollo con los costos del lab y con slippage realista en TRX/XLM. */
+export function costosBlock(c) {
+  if (!c) return el("p", { class: "muted small" }, "Costos realistas TRX/XLM 7 bps: sin correr (python -m heatsignal.lab.costos <id>).");
+  const sl = (c.costos_estres || {}).slippage_bps || {};
+  return el("div", {},
+    el("h3", { style: { marginTop: "12px" } }, c.label || "costos realistas TRX/XLM 7 bps"),
+    el("div", { class: "stats" },
+      stat("Sharpe desarrollo", fixed(c.sharpe_dev, 2), "costos del lab: " + num(((c.costos_lab || {}).fee_bps || 0) + ((c.costos_lab || {}).slippage_bps || 0), 1) + " bps por lado"),
+      stat("Con estrés", fixed(c.sharpe_dev_estres, 2), "slippage " + Object.entries(sl).map(([k, v]) => k.replace("USDT", "") + " " + num(v, 0)).join(", ") + " bps (resto igual)",
+        isNum(c.sharpe_dev_estres) ? (c.sharpe_dev_estres > 0 ? "ok-t" : "bad-t") : ""),
+      stat("Diferencia", isNum(c.delta) ? fixed(c.delta, 3) : "—", "estrés − lab")),
+    el("p", { class: "small muted" }, "Diagnóstico, no selección: base congelada, sin holdout, no suma intentos." + (c.stale ? " Ojo: corrido sobre un resultado anterior." : "")));
+}
+
 export function diagnosticsCard(dg) {
   const howTo = el("div", { class: "note info" }, el("b", {}, "Cómo leerlo. "),
     "PBO: se parte el desarrollo en bloques y, en cada forma de dividirlo en dos mitades, se elige la mejor combinación de la grilla en una mitad y se mira en qué puesto queda en la otra. " +
@@ -274,6 +288,7 @@ export function diagnosticsCard(dg) {
   dg.robustez_detail ? neighborsChart(r) : null,
   dg.robustez_detail ? neighborsTable(r) : null,
   (r.params_not_numeric || []).length ? el("p", { class: "small muted" }, "No se mueven (no son números): " + r.params_not_numeric.join(", ") + ".") : null,
+  costosBlock(dg.costos),
   howTo);
 }
 

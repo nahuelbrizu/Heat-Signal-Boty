@@ -246,6 +246,23 @@ export function criterioBlock(c) {
     verdictLine("3 meses", c.veredicto_3m), verdictLine("6 meses", c.veredicto_6m));
 }
 
+/** Criterios de parada pre-registrados (bootstrap del drawdown del backtest): drawdown y duración bajo el agua
+ * desde el inicio contra P95 (alerta: tamaño a la mitad) y P99 (parar) del horizonte transcurrido. */
+export function paradaBlock(p) {
+  if (!p) return null;
+  if (!p.estado) return el("div", { class: "small note warn" }, p.error || "criterios de parada no disponibles");
+  const KIND = { ok: "ok", alerta: "warn", parar: "bad" };
+  const pc = (x) => isNum(x) ? num(x * 100, 1) + " %" : DASH;
+  const dd = p.drawdown || {}, du = p.duracion || {};
+  return el("div", { class: "stack" },
+    el("div", { class: "chips" }, el("b", { class: "small" }, "Parada pre-registrada: "),
+      chip(p.label || p.estado, KIND[p.estado] || "", "semáforo ok / alerta / parar (hash " + (p.hash || "?") + ", " + (p.fecha || "") + ")")),
+    el("div", { class: "small" }, chip("DD " + (dd.nivel || ""), KIND[dd.nivel] || ""), " drawdown " + pc(dd.valor) + " · P95 " + pc(dd.p95) + " · P99 " + pc(dd.p99)),
+    el("div", { class: "small" }, chip("bajo el agua " + (du.nivel || ""), KIND[du.nivel] || ""),
+      " " + int(du.valor || 0) + " días (ahora " + int(du.actual || 0) + ") · P95 " + num(du.p95, 0) + " · P99 " + num(du.p99, 0)),
+    el("div", { class: "small muted" }, "Umbrales del horizonte transcurrido (" + int(p.dias || 0) + " días, interpolados). " + (p.nota || "")));
+}
+
 /** Balance de fuerzas por símbolo: votos long vs short de las componentes y la posición neta resultante. */
 export function votesBlock(votos) {
   if (!votos) return null;
@@ -270,7 +287,7 @@ function principalBlock(list, href, sel, ov) {
     el("a", { href: href("paperbot", [s.strategy_id]), "aria-current": s.strategy_id === sel ? "true" : null }, el("b", {}, name(s.strategy_id))),
     el("div", { class: "small muted mono" }, s.strategy_id + (s.spec_hash ? " · spec " + s.spec_hash : "")),
     el("div", { class: "small" }, "Equity " + money(s.equity) + " · retorno ", sFrac(s.return), " · canasta ", sFrac(s.basket_return)),
-    criterioBlock(s.criterio), votesBlock(s.votos)));
+    criterioBlock(s.criterio), paradaBlock(s.parada), votesBlock(s.votos)));
   return el("div", { class: "stack" },
     el("div", { class: "grid three", style: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: "12px" } }, ...cards),
     el("div", { class: "note info" }, el("b", {}, "Lectura conjunta: "), ov.lectura_conjunta || DASH));
@@ -341,6 +358,7 @@ export function renderDetail(d) {
       d.rol ? el("div", { class: "chips" }, chip(ROLE_LABEL[d.rol] || d.rol, d.rol === "principal" ? "info" : ""),
         d.rol === "seguimiento" && d.sharpe && d.sharpe.marca ? chip(d.sharpe.marca, "warn") : null) : null,
       d.criterio ? el("div", { class: "note info" }, criterioBlock(d.criterio)) : null,
+      d.parada ? el("div", { class: "note" }, paradaBlock(d.parada)) : null,
       d.votos ? votesBlock(d.votos) : null,
       labBlock(d.lab),
       stats,

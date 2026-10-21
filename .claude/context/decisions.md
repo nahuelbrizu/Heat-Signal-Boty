@@ -627,6 +627,18 @@
   errores de bots, stops por mark price en el exchange, entradas IOC con tope 5–15 min después de las 00:00, tamaño por
   volatilidad de la canasta con correlaciones e informe diario. Abiertas para fin de noviembre: plata mínima real
   después de 1–2 meses de paper, y listón previo declarado para la familia tendencia.
+  **Implementado (2026-10-21), antes de datos vivos significativos:** (1) criterios de parada pre-registrados en
+  `paperbot/parada_preregistrada.json` (hash `ba74b6de38914bb0`, fijado en `tests/test_parada.py`; generador
+  `python -m heatsignal.lab.parada`, `--check` lo recalcula): bootstrap estacionario (bloque medio 20 días, B = 5000,
+  semilla 20261020) de la serie OOS de cada familia (long = media de las 12 long, short = media de las 12 short, neta =
+  long + short; aproximación conservadora: la neta real netea posiciones y paga menos costos), horizontes 30/90/180/365
+  días, P50/P95/P99 de drawdown máximo (convención de suma del lab) y de duración máxima bajo el agua. Regla: DD o
+  duración en vivo desde el inicio > P95 del horizonte transcurrido (interpolado; 0 → 0) = "alerta: tamaño a la mitad";
+  > P99 = "parar". En paper no cambia operaciones (panel `#/paperbot` y revisión semanal lo muestran y registran);
+  **en plata real es regla obligatoria**. Ojo: la duración bajo el agua del backtest satura (P95/P99 ≈ el horizonte),
+  así que en la práctica decide el drawdown. (2) Estrés de costos `python -m heatsignal.lab.costos --rupturas`
+  (diagnóstico; slippage 7 bps en TRX y XLM, resto igual; desarrollo, base congelada, sin holdout, no suma K):
+  Sharpe medio del desarrollo long 1,202 → 1,181; short −0,443 → −0,463 (caída por componente 0,008–0,047).
 
 ## Abiertas
 - ~~Plan de CoinGlass a contratar.~~ **Ya no aplica al core** — la fuente primaria pasó a WS nativos.
