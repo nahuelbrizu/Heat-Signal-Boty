@@ -103,7 +103,7 @@ def test_json_congelado():
     m = doc["metodo"]
     assert (m["bloque_medio_dias"], m["B"], m["semilla"], m["horizontes_dias"]) == (20.0, 5000, 20261020, [1, 3, 7, 14, 30, 90, 180, 365])
     for f in doc["familias"].values():
-        assert set(f["horizontes"]) == {"30", "90", "180", "365"}
+        assert set(f["horizontes"]) == {"1", "3", "7", "14", "30", "90", "180", "365"}
         for v in f["horizontes"].values():
             for k in ("drawdown", "duracion_dias"):
                 assert v[k]["p50"] <= v[k]["p95"] <= v[k]["p99"]
