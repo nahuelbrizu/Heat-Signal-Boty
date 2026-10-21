@@ -101,7 +101,7 @@ def test_json_congelado():
     assert lp.content_hash(doc) == FROZEN_HASH  # el contenido no se toco despues de generarlo
     assert set(doc["familias"]) == {"l6-familia-ruptura-long-v1", "l6-familia-ruptura-short-v1", "l6-familia-ruptura-neta-v1"}
     m = doc["metodo"]
-    assert (m["bloque_medio_dias"], m["B"], m["semilla"], m["horizontes_dias"]) == (20.0, 5000, 20261020, [30, 90, 180, 365])
+    assert (m["bloque_medio_dias"], m["B"], m["semilla"], m["horizontes_dias"]) == (20.0, 5000, 20261020, [1, 3, 7, 14, 30, 90, 180, 365])
     for f in doc["familias"].values():
         assert set(f["horizontes"]) == {"30", "90", "180", "365"}
         for v in f["horizontes"].values():
