@@ -3,6 +3,41 @@
 > Foto del proyecto **hoy**. Se reescribe (no se acumula) cada vez que cambia el estado: lo histórico va a
 > `historial.md`, las decisiones a `decisions.md`. Última actualización: **2026-10-17**.
 
+## TRASPASO 2026-10-22 — leer primero en una sesión nueva
+
+**Cómo seguir barato (pedido del usuario: el consumo de Claude se lo come esta sesión, no el sistema):** tareas chicas
+directo, sin agentes; agentes solo para trabajo grande y, si es rutina, con modelo liviano (Sonnet); nada de polling;
+revisar una vez por semana (lunes, con la revisión semanal). El grafo de la VM usa Gemini por Vertex (se paga en Google
+Cloud, no en el plan de Claude); Anthropic API sin crédito (se saltea solo).
+
+**Qué corre solo (VM e2-medium 4 GB / 20 GB, todo systemd; acceso por túnel permanente, ver `conexion.md`):**
+- Ingesta 4 exchanges + panel :8000 (ventana compacta, monitor del loop en Sistema → "Event loop"; MemoryMax 1200M).
+- Grafo `graph-v2-cio` en 4 sesiones/día (cierre 00:01, Asia 01:01, Londres 08:01, NY 14:31 UTC): 4 analistas →
+  debate → CIO (decide, solo candidatos verificados) → CRO (vetos por código) → registro → redactor. 8 estrategias de 1h
+  (5 tendencia + 3 lateralidad). Veredictos en `cio_verdicts`; "¿Acierta el CIO?" en `#/analisis`.
+- Puente de hipótesis → Freqtrade de hipótesis (:8082, dry-run). Freqtrade Donchian (:8081, FreqUI, dry-run).
+- Paperbot horario (:02): 30 estrategias. **Prueba hacia adelante desde 2026-10-20** (`decisions.md`, "Prueba hacia
+  adelante con datos vivos"): 3 principales — familias ruptura long / short / neta (votación) — con criterio a 3 meses
+  (2027-01-20: Sharpe > 0 y > canasta) y 6 meses (p ≤ 0,05); semáforo de parada P95/P99 (`paperbot/parada_preregistrada.json`);
+  20 en seguimiento (exploratorio, BH); 7 de paper previo.
+- Timers: macro (:07), evaluación (5 min), archivado a Drive (80 %), historia diaria 00:20, respaldo dom 03:00, revisión
+  semanal lun 00:30 UTC (`#/semanal`).
+
+**Resultados clave hasta hoy (detalle en `decisions.md`):**
+- Laboratorio: 123 pruebas (lotes 1–6 + short). Ninguna pasa el listón del programa (bootstrap Romano–Wolf; mejor p 0,145).
+  Patrón consistente: tendencia LONG (rupturas 10–55 d, tsmom 28 d) Sharpe ~1–1,3, robustas; las 12 short, todas negativas.
+- Meta-modelo (plan-entrenamiento, etapas 0–3): sin señal filtrable (AUC ≤ 0,53); no pasa a etapa 4. Quedan 16/24
+  configuraciones; reintentar solo con datos nuevos o features nuevas pre-registradas.
+
+**Pendientes del usuario:** seguridad VM (deletion protection, borrar `default-allow-rdp`); rotar keys pegadas en el chat
+(Anthropic, Gemini, Vertex `AQ.`, FRED, FreqUI ya rotada); stop de catástrofe para plata real (propuesta 3 ATR, piso 8 %,
+techo 20 %); **fin de noviembre**: decidir plata mínima real tras 1–2 meses de paper y un listón previo para tendencia
+(`research/consulta-trader.md`); 8 familias nuevas para el grafo (propuestas, sin hacer); métricas de tokens del grafo
+(baja prioridad: no consume el plan de Claude).
+
+**A vigilar:** el CRO veta por "hueco real" (p. ej. "trades: sin datos de bybit"): si veta seguido, revisar `features/gaps.py`.
+Primer ciclo con CIO: cierre 2026-10-22 00:01 UTC.
+
 ## Novedades 2026-10-17 (tarde)
 
 - **Panel = SPA** (`api/static/app/`, vanilla, sin build ni CDN; `panel.html` es solo el cascarón). Vistas:
