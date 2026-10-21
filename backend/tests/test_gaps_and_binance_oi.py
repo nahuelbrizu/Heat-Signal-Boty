@@ -15,7 +15,7 @@ from features_helpers import SYM, liq, ticker, trade
 from heatsignal.agents.graph import build_graph
 from heatsignal.agents.redactor import ReportDraft
 from heatsignal.agents.debate import DebateArgumentBatch
-from heatsignal.agents.synthesizer import _SYSTEM_PROMPT as SYNTH_PROMPT
+from heatsignal.agents.cio import _SYSTEM_PROMPT as SYNTH_PROMPT  # el CIO tomo la decision del Sintetizador
 from heatsignal.features.builder import build_feature_set
 from heatsignal.features.gaps import classify_gap, gap_classes, render_gaps, split_gaps
 from heatsignal.ingestion.binance_oi_poller import BinanceOiPoller, oi_url, parse_open_interest

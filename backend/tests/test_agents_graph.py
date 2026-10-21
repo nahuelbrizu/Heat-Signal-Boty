@@ -27,7 +27,8 @@ from heatsignal.agents.liquidation_analyst import LiquidationAnalysisBatch
 from heatsignal.agents.market_context_analyst import MarketContextAnalysisBatch
 from heatsignal.agents.order_flow_analyst import OrderFlowAnalysisBatch
 from heatsignal.agents.redactor import ReportDraft
-from heatsignal.agents.synthesizer import StrategyProposal, SynthesisBatch, apply_proposals
+from heatsignal.agents.cio import CioBatch, CioSymbolVerdict
+from heatsignal.agents.synthesizer import StrategyProposal, apply_proposals
 from heatsignal.evaluation.strategy_registry import StrategyHypothesis
 from heatsignal.schema.signals import Direction
 
@@ -102,7 +103,7 @@ async def test_model_routing_cheap_for_analysts_strong_for_the_rest() -> None:
         OrderFlowAnalysisBatch,
         MarketContextAnalysisBatch,
     }
-    assert {s for s, _ in strong.calls} == {DebateArgumentBatch, SynthesisBatch, ReportDraft}
+    assert {s for s, _ in strong.calls} == {DebateArgumentBatch, CioBatch, ReportDraft}
 
 
 async def test_data_gaps_propagate_into_every_prompt_and_outputs() -> None:
@@ -169,9 +170,10 @@ async def test_synthesizer_emits_hypothesis_with_code_entry_price_and_registered
     assert h.direction is Direction.LONG
     assert h.run_id == "run-1" and h.heatmap_model_id == "liqcluster-v1"
     assert {d.outcome for d in result["synthesis_decisions"]} == {"hypothesis"}
-    # el prompt lista las estrategias permitidas y NO menciona un precio de entrada a elegir
-    synth_prompt = prompt_text(fake.calls_for(SynthesisBatch)[0])
-    assert str(strategy.strategy_id) in synth_prompt
+    assert {h.confidence_score for h in hyps} == {0.62} and {h.graph_version for h in hyps} == {"graph-v2-cio"}
+    # el prompt del CIO lista los candidatos verificados por codigo
+    synth_prompt = prompt_text(fake.calls_for(CioBatch)[0])
+    assert str(strategy.strategy_id) in synth_prompt and "Candidatos verificados por codigo" in synth_prompt
 
 
 async def test_synthesizer_does_not_overlap_open_hypotheses() -> None:
@@ -185,12 +187,10 @@ async def test_synthesizer_does_not_overlap_open_hypotheses() -> None:
     fake = ScriptedChatModel(full_script(SYMBOLS, strategy_id=str(strategy.strategy_id)))
     second = await build_graph(fake, hypothesis_store=store).ainvoke(_input(strategies=[strategy], run_id="run-2"))
     assert second["pending_hypotheses"] == [] and len(store) == 2
-    assert {d.outcome for d in second["synthesis_decisions"]} == {"no_hypothesis"}
-    assert all("abierta" in d.reason for d in second["synthesis_decisions"])
-    # el LLM ve cuales estan abiertas
-    assert f"strategy_id={str(strategy.strategy_id).lower()} symbol=BTC-USDT" in prompt_text(
-        fake.calls_for(SynthesisBatch)[0]
-    )
+    # lo que ya tiene hipotesis abierta no se ofrece como candidato: el CIO no lo puede tomar
+    assert {d.outcome for d in second["synthesis_decisions"]} == {"rejected"}
+    assert all("no hay candidatos" in d.reason for d in second["synthesis_decisions"])
+    assert "(ninguno: el codigo no da por cumplido" in prompt_text(fake.calls_for(CioBatch)[0])
 
 
 def test_apply_proposals_allows_one_per_strategy_and_symbol_within_a_batch() -> None:
@@ -206,23 +206,17 @@ def test_apply_proposals_allows_one_per_strategy_and_symbol_within_a_batch() -> 
     assert [d.outcome for d in decisions] == ["hypothesis", "no_hypothesis"]
 
 
-async def test_synthesizer_rejects_unknown_strategy_id_and_logs(caplog) -> None:
+async def test_cio_rejects_unknown_strategy_id_and_invalid_weight_and_logs(caplog) -> None:
     strategy = _strategy(horizon_s=3600)
     invented = str(uuid4())
     script = full_script(SYMBOLS)
-    script[SynthesisBatch] = [
-        SynthesisBatch(
-            proposals=[
-                StrategyProposal(
-                    symbol="BTC-USDT", decision="hypothesis", strategy_id=invented,
-                    direction="LONG", confidence=0.7, rationale="variante inventada",
-                ),
-                StrategyProposal(
-                    symbol="ETH-USDT", decision="hypothesis", strategy_id=str(strategy.strategy_id),
-                    direction="SHORT", confidence=1.4, rationale="confianza invalida",
-                ),
-            ]
-        )
+    script[CioBatch] = [
+        CioBatch(verdicts=[
+            CioSymbolVerdict(symbol="BTC-USDT", postura_ganadora="alcista", peso=0.7, decision="tomar",
+                             strategy_id=invented, direction="LONG", razones=["variante inventada"]),
+            CioSymbolVerdict(symbol="ETH-USDT", postura_ganadora="bajista", peso=1.4, decision="tomar",
+                             strategy_id=str(strategy.strategy_id), direction="SHORT", razones=["peso invalido"]),
+        ])
     ]
     store = InMemoryPendingHypothesisStore()
     with caplog.at_level(logging.WARNING):
@@ -234,22 +228,19 @@ async def test_synthesizer_rejects_unknown_strategy_id_and_logs(caplog) -> None:
     decisions = {d.symbol: d for d in result["synthesis_decisions"]}
     assert decisions["BTC-USDT"].outcome == "rejected"
     assert invented in decisions["BTC-USDT"].reason
-    assert decisions["ETH-USDT"].outcome == "rejected" and "confidence" in decisions["ETH-USDT"].reason
+    assert decisions["ETH-USDT"].outcome == "rejected" and "peso" in decisions["ETH-USDT"].reason
     assert any("RECHAZADA" in r.message and invented in r.message for r in caplog.records)
 
 
-async def test_synthesizer_no_hypothesis_path_and_omitted_symbol() -> None:
+async def test_cio_no_operar_path_and_omitted_symbol() -> None:
     strategy = _strategy()
     script = full_script(SYMBOLS)
-    script[SynthesisBatch] = [
-        SynthesisBatch(
-            proposals=[StrategyProposal(symbol="BTC-USDT", decision="no_hypothesis", rationale="sin encaje")]
-        )
-    ]
+    script[CioBatch] = [CioBatch(verdicts=[CioSymbolVerdict(
+        symbol="BTC-USDT", postura_ganadora="empate", peso=0.5, decision="no_operar", razones=["sin encaje"])])]
     result = await build_graph(ScriptedChatModel(script)).ainvoke(_input(strategies=[strategy]))
 
     decisions = {d.symbol: d for d in result["synthesis_decisions"]}
-    assert decisions["BTC-USDT"].outcome == "no_hypothesis" and decisions["BTC-USDT"].reason == "sin encaje"
+    assert decisions["BTC-USDT"].outcome == "no_hypothesis" and "sin encaje" in decisions["BTC-USDT"].reason
     assert decisions["ETH-USDT"].outcome == "no_hypothesis" and "omitido" in decisions["ETH-USDT"].reason
     assert result["pending_hypotheses"] == []
 
@@ -258,7 +249,7 @@ async def test_synthesizer_skips_llm_without_allowed_strategies() -> None:
     fake = ScriptedChatModel(full_script(SYMBOLS))
     result = await build_graph(fake).ainvoke(_input(strategies=[]))
 
-    assert fake.calls_for(SynthesisBatch) == []
+    assert fake.calls_for(CioBatch) == []
     assert all(d.outcome == "no_hypothesis" for d in result["synthesis_decisions"])
 
 
@@ -368,20 +359,20 @@ def test_thread_id_is_symbol_set_plus_run_id() -> None:
 async def test_interrupted_run_resumes_from_last_successful_node(tmp_path) -> None:
     strategy = _strategy(horizon_s=3600)
     script = full_script(SYMBOLS, strategy_id=str(strategy.strategy_id))
-    ok_synth = script[SynthesisBatch]
-    script[SynthesisBatch] = [RuntimeError("caida simulada del proveedor"), ok_synth]
+    ok_cio = script[CioBatch]
+    script[CioBatch] = [RuntimeError("caida simulada del proveedor"), ok_cio]
     fake = ScriptedChatModel(script)
     store = InMemoryPendingHypothesisStore()
     db = tmp_path / "checkpoints.sqlite"
     config = make_run_config(SYMBOLS, "run-42")
 
-    # 1er intento: falla en el sintetizador
+    # 1er intento: falla en el CIO
     async with sqlite_checkpointer(db) as saver:
         graph = build_graph(fake, max_debate_rounds=2, checkpointer=saver, hypothesis_store=store)
         with pytest.raises(RuntimeError, match="caida simulada"):
             await graph.ainvoke(_input(strategies=[strategy], run_id="run-42"), config)
         snapshot = await graph.aget_state(config)
-        assert snapshot.next == ("synthesizer",)
+        assert snapshot.next == ("cio",)
 
     calls_before = {s: len(fake.calls_for(s)) for s in (LiquidationAnalysisBatch, DebateArgumentBatch)}
     assert calls_before == {LiquidationAnalysisBatch: 1, DebateArgumentBatch: 4}
@@ -396,7 +387,7 @@ async def test_interrupted_run_resumes_from_last_successful_node(tmp_path) -> No
     assert len(fake.calls_for(OrderFlowAnalysisBatch)) == 1
     assert len(fake.calls_for(MarketContextAnalysisBatch)) == 1
     assert len(fake.calls_for(DebateArgumentBatch)) == 4
-    assert len(fake.calls_for(SynthesisBatch)) == 2
+    assert len(fake.calls_for(CioBatch)) == 2
     # el estado previo (FeatureSet, transcript) sobrevivio la serializacion
     assert len(result["debate_transcript"]) == 4
     assert result["features_by_symbol"]["BTC-USDT"].heatmap.heatmap_model_id == "liqcluster-v1"

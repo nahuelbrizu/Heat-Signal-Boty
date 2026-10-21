@@ -646,6 +646,18 @@
   horizontes 1, 3, 7 y 14 días al mismo bootstrap (P95 al día 1 ≈ 1,5–2 %). Nuevo hash `f3b80a86b59b4f0f`; los umbrales de
   30–365 días quedan prácticamente iguales (difieren en décimas por la secuencia aleatoria).
 
+- **graph-v2-cio (2026-10-21, pedido del usuario: "un tercero superior que escuche el debate y decida").** Jerarquía:
+  analistas → debate (bull/bear) → **CIO** (LLM fuerte, una llamada batcheada: postura ganadora, peso 0–1, decisión y
+  razones por símbolo) → **CRO** (código, veta) → registro (código) → redactor. El CIO solo puede tomar candidatos ya
+  verificados por `timeframes.py`; el código rechaza setups fuera de la lista, direcciones dadas vuelta, dirección
+  contraria a su propia postura, tomar con empate y pesos fuera de [0, 1]. CRO, en orden: hueco real de datos, evento
+  FOMC/CPI/NFP entre −1 h y +2 h (calendario ilegible → veta), tope por sesión, más de 2 en la misma dirección sobre
+  altcoins (abiertas + sesión + nuevas; se aprueban por peso). Llamadas LLM por ciclo: 7 antes y 7 después (el CIO
+  reemplaza al LLM del sintetizador). `cio_verdicts` y `cio_verdict_outcomes` append-only; el acierto del CIO (4 h,
+  velas 1h mark, Wilson, Brier del peso) es descriptivo y no cambia nada automáticamente. Hipótesis con `graph_version`:
+  las de antes y después se evalúan por separado. A vigilar: `gaps.py` clasifica como hueco real cosas como "trades: sin
+  datos de bybit"; si el CRO veta seguido por eso, revisar la clasificación.
+
 ## Abiertas
 - ~~Plan de CoinGlass a contratar.~~ **Ya no aplica al core** — la fuente primaria pasó a WS nativos.
   Solo se retomaría si se implementa la fuente BYOK opcional (y ahí el plan lo elige el usuario).

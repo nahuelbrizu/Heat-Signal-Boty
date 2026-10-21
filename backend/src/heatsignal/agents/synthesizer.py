@@ -1,40 +1,31 @@
 """
-Estratega/Sintetizador: convierte analistas + debate en hipotesis pendientes.
+Registro (antes Estratega/Sintetizador): convierte la decision del CIO, ya revisada por el CRO, en hipotesis pendientes.
 
-Reglas (anti-p-hacking, ver CLAUDE.md y `phase-2-agents.md`):
-  - El LLM SOLO puede elegir entre `allowed_strategies` (pre-registradas en
-    `StrategyRegistry`). La validacion se hace en CODIGO despues de que el LLM
-    responde: un `strategy_id` desconocido se RECHAZA y se loguea, nunca se
-    acepta en silencio ni se "corrige" al mas parecido.
-  - `confidence_score` fuera de [0, 1] -> rechazo (no se recorta en silencio).
-  - `entry_reference_price` lo pone el CODIGO desde `FeatureSet.context.mark_price`
-    (el LLM no ve ni elige el precio de entrada). Sin mark -> rechazo explicito.
-  - `horizon_s` sale de `exit_conditions["horizon_s"]` de la estrategia si esta;
-    si no, `default_horizon_s` (logueado como warning).
-  - Cada simbolo termina con una decision explicita: `hypothesis`,
-    `no_hypothesis` (con motivo) o `rejected` (con motivo). Un simbolo que el LLM
-    omite queda como `no_hypothesis` con motivo "omitido".
-  - Una hipotesis abierta por (estrategia, simbolo): si el store informa una sin resolver, la
-    propuesta nueva queda como `no_hypothesis` (no se solapan ventanas sobre el mismo movimiento,
-    que inflarian n). El store lo expone con `open_positions()`; sin ese metodo no hay candado.
-  - Tope por familia, moneda y sesion: las estrategias con `entry_conditions.max_per_symbol_session = N` (hoy las 3
-    de lateralidad, family "1h-lateralidad", N = 1) emiten como mucho N hipotesis por (familia, simbolo, sesion del
-    dia) ENTRE TODAS las de la familia. Cuenta lo ya registrado en la base (`store.session_hypotheses`) mas lo
-    aceptado en la misma corrida. Sin sesion de corrida no se puede contar -> rechazo explicito.
-  - Las hipotesis aceptadas se persisten via `PendingHypothesisStore.add`.
+Desde graph-v2-cio NO llama al LLM: la decision que tomaba el LLM del Sintetizador la toma el CIO (`cio.py`) y el CRO
+(`cro.py`) puede vetarla. Este modulo conserva la validacion en codigo y el registro:
+  - Solo se instancian `allowed_strategies` (pre-registradas en `StrategyRegistry`); un `strategy_id` desconocido se
+    RECHAZA y se loguea, nunca se "corrige" al mas parecido.
+  - `confidence_score` (= `peso` del CIO) fuera de [0, 1] -> rechazo (no se recorta en silencio).
+  - `entry_reference_price` lo pone el CODIGO desde `FeatureSet.context.mark_price`. Sin mark -> rechazo explicito.
+  - `horizon_s` sale de `exit_conditions["horizon_s"]` de la estrategia si esta; si no, `default_horizon_s`
+    (logueado como warning). Las de 1h usan `timeframes.hourly_horizon` y verifican la entrada por codigo.
+  - Cada simbolo termina con una decision explicita: `hypothesis`, `no_hypothesis` (con motivo: no operar del CIO,
+    veto del CRO, solapamiento...) o `rejected` (con motivo).
+  - Una hipotesis abierta por (estrategia, simbolo) (`store.open_positions()`).
+  - Tope por familia, moneda y sesion (`entry_conditions.max_per_symbol_session`): lo veta el CRO y se vuelve a
+    verificar aca contra la base (`store.session_hypotheses`) como defensa.
+  - Las hipotesis aceptadas se persisten via `PendingHypothesisStore.add` con `graph_version`, y cada simbolo deja su
+    fila en `cio_verdicts` (`evaluation/cio_verdicts.py`), se opere o no.
 """
 
 from __future__ import annotations
 
-import json
 import logging
 from datetime import datetime, timezone
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any, Callable, Literal
 from uuid import UUID
 
-from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 
 from ..evaluation.strategy_registry import StrategyHypothesis
@@ -43,40 +34,19 @@ from ..features.htf import trend_alignment
 from ..schema.features import FeatureSet
 from ..schema.hypotheses import PendingHypothesis
 from ..schema.signals import Direction
-from ._common import HISTORICAL_LANGUAGE_RULE
-from .debate import render_analyst_digest, render_transcript
 from .hypothesis_store import PendingHypothesisStore
 
 if TYPE_CHECKING:
+    from .cio import CioDecision
+    from .cro import CroReview
     from .state import GraphState
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_HORIZON_S = 4 * 3600
 
-_SYSTEM_PROMPT = (
-    "Sos el Estratega/Sintetizador de HeatSignal. Leiste las salidas de los analistas y el "
-    "debate Alcista/Bajista. Para CADA simbolo decidi: o instanciar UNA de las estrategias "
-    "pre-registradas listadas (copiando su strategy_id EXACTO, direccion LONG/SHORT, confianza "
-    "en [0, 1] y, si aplica, la distancia del trigger en unidades de ATR), o declarar "
-    "'no_hypothesis' explicando el motivo. NUNCA inventes una estrategia ni una variante: si "
-    "ninguna estrategia listada encaja, la respuesta correcta es 'no_hypothesis'. No elijas el "
-    "precio de entrada: lo fija el sistema. Los huecos de datos declarados deben bajar la "
-    "confianza o justificar 'no_hypothesis'; las notas de cobertura no son huecos ni fallas severas. "
-    "Estrategias de temporalidad 1h (salida con timeframe='1h'): formula la hipotesis sobre velas de 1h CERRADAS y "
-    "en relacion con la tendencia del dia UTC calculada por codigo (daily_trend), p.ej. 'a favor de la tendencia "
-    "diaria tras retroceso a la EMA de 1h' o 'contra la tendencia en el extremo del rango diario'. Solo propone una "
-    "si el setup que la estrategia exige figura como presente en 'setups (codigo)'; la direccion debe quedar a favor "
-    "o en contra segun lo pre-registrado. El horizonte lo fija el sistema (cierre de vela de 1h). "
-    "Familia 1h-lateralidad (solo daily_trend=lateral): falsa ruptura del rango de Asia, rechazo del max/min de ayer "
-    "con mecha, extremo vs VWAP con ADX bajo; solo si su bandera figura en 'lateral (codigo)' y en esa direccion; "
-    "como mucho una por simbolo y sesion entre las tres. "
-    + HISTORICAL_LANGUAGE_RULE
-)
-
-
 class StrategyProposal(BaseModel):
-    """Lo que devuelve el LLM por simbolo (sin restricciones duras: se validan en codigo)."""
+    """Propuesta por simbolo (desde graph-v2-cio la arma el codigo a partir del CIO + CRO; se valida en codigo)."""
 
     symbol: str
     decision: Literal["hypothesis", "no_hypothesis"]
@@ -88,6 +58,8 @@ class StrategyProposal(BaseModel):
 
 
 class SynthesisBatch(BaseModel):
+    """Esquema del Sintetizador LLM de graph-v1 (ya no se llama). Se conserva para leer corridas viejas."""
+
     proposals: list[StrategyProposal]
 
 
@@ -102,16 +74,6 @@ class SymbolDecision(BaseModel):
     reason: str
     strategy_id: str | None = None
     hypothesis_id: UUID | None = None
-
-
-def render_allowed_strategies(strategies: list[StrategyHypothesis]) -> str:
-    if not strategies:
-        return "(ninguna estrategia pre-registrada habilitada)"
-    return "\n".join(
-        f"- strategy_id={s.strategy_id}: {s.description} | entrada={json.dumps(s.entry_conditions, sort_keys=True)} "
-        f"| salida={json.dumps(s.exit_conditions, sort_keys=True)}"
-        for s in strategies
-    )
 
 
 def _horizon_for(strategy: StrategyHypothesis, default_horizon_s: int) -> int:
@@ -283,65 +245,104 @@ def apply_proposals(
     return hypotheses, decisions
 
 
-def make_synthesizer_node(
-    llm: BaseChatModel,
+def _proposals_from_cio(decisions: list["CioDecision"], reviews: dict[str, "CroReview"]
+                        ) -> tuple[list[StrategyProposal], dict[str, SymbolDecision]]:
+    """CIO + CRO -> propuestas para `apply_proposals` (solo las aprobadas) y decisiones ya cerradas (el resto)."""
+    proposals: list[StrategyProposal] = []
+    closed: dict[str, SymbolDecision] = {}
+    for d in decisions:
+        r = reviews.get(d.symbol)
+        why = " ".join(d.razones) or "sin razones"
+        if d.rejection and d.strategy_id is not None:
+            closed[d.symbol] = SymbolDecision(symbol=d.symbol, outcome="rejected", strategy_id=d.strategy_id,
+                                              reason=f"decision del CIO rechazada por codigo: {d.rejection}")
+        elif not d.takes:
+            closed[d.symbol] = SymbolDecision(symbol=d.symbol, outcome="no_hypothesis",
+                                              reason=f"CIO: no operar ({d.postura}). {why}")
+        elif r is None or not r.approved:
+            closed[d.symbol] = SymbolDecision(symbol=d.symbol, outcome="no_hypothesis", strategy_id=d.strategy_id,
+                                              reason=f"veto del CRO: {r.veto if r else 'sin revision'}")
+        else:
+            proposals.append(StrategyProposal(symbol=d.symbol, decision="hypothesis", strategy_id=d.strategy_id,
+                                              direction=d.direction, confidence=d.peso, rationale=f"CIO: {why}"))
+    return proposals, closed
+
+
+def make_registrar_node(
     *,
     hypothesis_store: PendingHypothesisStore | None = None,
+    verdict_log: Any = None,
     default_horizon_s: int = DEFAULT_HORIZON_S,
 ) -> Callable[["GraphState"], Any]:
-    structured_llm = llm.with_structured_output(SynthesisBatch)
+    """Registro (codigo, sin LLM) despues del CRO: valida con `apply_proposals`, persiste via
+    `PendingHypothesisStore.add` (con `graph_version`) y escribe una fila de `cio_verdicts` por simbolo."""
+    from .cio import GRAPH_VERSION
 
     async def _node(state: "GraphState") -> dict[str, Any]:
         features: dict[str, FeatureSet] = state.get("features_by_symbol") or {}
         allowed: list[StrategyHypothesis] = list(state.get("allowed_strategies") or [])
+        cio: list = list(state.get("cio_decisions") or [])
         if not features:
             return {"pending_hypotheses": [], "synthesis_decisions": []}
-        if not allowed:
-            # Sin estrategias pre-registradas no hay nada legitimo que instanciar: no se llama al LLM.
-            return {
-                "pending_hypotheses": [],
-                "synthesis_decisions": [
-                    SymbolDecision(symbol=s, outcome="no_hypothesis", reason="sin estrategias pre-registradas habilitadas")
-                    for s in features
-                ],
-            }
-
+        reviews = {r.symbol: r for r in state.get("cro_reviews") or []}
+        proposals, closed = _proposals_from_cio(cio, reviews)
+        sess = state.get("session") or {}
         open_fn = getattr(hypothesis_store, "open_positions", None)
         open_positions: set[tuple[str, str]] = open_fn() if callable(open_fn) else set()
-        open_lines = "\n".join(f"- strategy_id={sid} symbol={sym}" for sid, sym in sorted(open_positions))
-        sess = state.get("session") or {}
         taken_fn = getattr(hypothesis_store, "session_hypotheses", None)
         session_taken: set[tuple[str, str]] = set()
         if callable(taken_fn) and sess.get("day") and sess.get("name") and any(session_cap(s) for s in allowed):
             session_taken = taken_fn(sess["day"], sess["name"])
-        prompt = (
-            f"# Estrategias pre-registradas permitidas\n{render_allowed_strategies(allowed)}\n\n"
-            "# Hipotesis abiertas (no se puede abrir otra de la misma estrategia en el mismo simbolo)\n"
-            f"{open_lines or '(ninguna)'}\n\n"
-            + (f"# Ya emitidas en esta sesion (tope por simbolo y sesion)\n"
-               + "\n".join(f"- strategy_id={sid} symbol={sym}" for sid, sym in sorted(session_taken)) + "\n\n"
-               if session_taken else "") +
-            f"# Salidas de los analistas\n{render_analyst_digest(state)}\n\n"
-            f"# Debate\n{render_transcript(state.get('debate_transcript') or [])}"
-        )
-        result: SynthesisBatch = await structured_llm.ainvoke(
-            [SystemMessage(content=_SYSTEM_PROMPT), HumanMessage(content=prompt)]
-        )
-        hypotheses, decisions = apply_proposals(
-            result.proposals,
-            features,
-            allowed,
-            run_id=state.get("run_id"),
-            default_horizon_s=default_horizon_s,
-            open_positions=open_positions,
-            session=state.get("session"),
-            session_taken=session_taken,
-        )
+        ts_ms = state.get("cio_ts_ms")
+        now = datetime.fromtimestamp(ts_ms / 1000, tz=timezone.utc) if ts_ms else None
+        accepted, decided = apply_proposals(
+            proposals, {p.symbol: features[p.symbol] for p in proposals if p.symbol in features}, allowed,
+            run_id=state.get("run_id"), default_horizon_s=default_horizon_s, open_positions=open_positions,
+            now=now, session=state.get("session"), session_taken=session_taken)
+        hypotheses = [h.model_copy(update={"graph_version": GRAPH_VERSION}) for h in accepted]
+        ids = {h.symbol: h.hypothesis_id for h in hypotheses}
+        by_symbol = {**closed, **{d.symbol: d for d in decided}}
+        decisions = []
+        for sym in features:
+            d = by_symbol.get(sym) or SymbolDecision(symbol=sym, outcome="no_hypothesis",
+                                                     reason="sin veredicto del CIO")
+            if d.hypothesis_id is not None:
+                d = d.model_copy(update={"hypothesis_id": ids.get(sym, d.hypothesis_id)})
+            decisions.append(d)
         if hypothesis_store is not None:
             for h in hypotheses:
                 hypothesis_store.add(h)
         elif hypotheses:
-            logger.warning("synthesizer: sin hypothesis_store; %d hipotesis quedan solo en el estado", len(hypotheses))
-        return {"pending_hypotheses": hypotheses, "synthesis_decisions": decisions}
+            logger.warning("registro: sin hypothesis_store; %d hipotesis quedan solo en el estado", len(hypotheses))
+        rows = verdict_rows(state, cio, reviews, {d.symbol: d for d in decisions}, GRAPH_VERSION)
+        if verdict_log is not None:
+            verdict_log.append(rows)
+        return {"pending_hypotheses": hypotheses, "synthesis_decisions": decisions, "cio_verdicts": rows}
 
     return _node
+
+
+def verdict_rows(state: "GraphState", cio: list, reviews: dict[str, Any], decisions: dict[str, SymbolDecision],
+                 graph_version: str) -> list[dict[str, Any]]:
+    """Filas de `cio_verdicts` (una por simbolo del ciclo, se opere o no)."""
+    sess = state.get("session") or {}
+    ts_ms = int(state.get("cio_ts_ms") or datetime.now(timezone.utc).timestamp() * 1000)
+    by_sym = {d.symbol: d for d in cio}
+    rows = []
+    for sym in state.get("features_by_symbol") or {}:
+        c = by_sym.get(sym)
+        r = reviews.get(sym)
+        fin = decisions.get(sym)
+        rows.append({
+            "run_id": str(state.get("run_id") or ""), "ts_ms": ts_ms, "symbol": sym,
+            "postura": c.postura if c else "empate", "peso": c.peso if c else None,
+            "decision": "tomar" if c is not None and c.takes else "no_operar",
+            "strategy_id": c.strategy_id if c else None, "direction": c.direction if c else None,
+            "razones": list(c.razones) if c else ["sin veredicto del CIO"],
+            "candidates": [x.model_dump() for x in c.candidates] if c else [],
+            "cio_rejection": c.rejection if c else None, "cro_veto": r.veto if r else None,
+            "outcome": fin.outcome if fin else None, "outcome_reason": fin.reason if fin else None,
+            "hypothesis_id": str(fin.hypothesis_id) if fin and fin.hypothesis_id else None,
+            "session": sess.get("name"), "session_day": sess.get("day"), "graph_version": graph_version,
+        })
+    return rows

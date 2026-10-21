@@ -57,6 +57,8 @@ API de solo lectura para la single page (`api/panel_api.py`; contrato y ejemplos
                                          el bloque que recibe el grafo (api/panel_macro.py)
     GET /api/lessons                     diario de lecciones (solo para el usuario; filtros strategy_id, symbol,
                                          daily_trend, outcome, source, window_verdict)
+    GET /api/cio/accuracy                ¿acierta el CIO? (n, acierto + IC de Wilson, Brier del peso; descriptivo)
+    GET /api/cio/verdicts/{run_id}       veredictos del CIO y vetos del CRO de un ciclo (tambien en /api/cycles/{run_id})
     GET /api/lessons/{hypothesis_id}     la leccion de una hipotesis (404 si no tiene)
     GET /api/system                      operacion: uptime, version, tamanos de bases, export/backup, config,
                                          errores recientes

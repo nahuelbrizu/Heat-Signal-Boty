@@ -10,7 +10,9 @@ Entrada (la arma quien invoca el grafo):
 Salidas por nodo:
     liquidation_analyses / order_flow_analyses / market_context_analyses / news_analyses  (analistas)
     debate_transcript (reducer: concatenacion) + debate_round             (debate)
-    pending_hypotheses + synthesis_decisions                              (sintetizador)
+    cio_decisions + cio_ts_ms                                             (CIO, LLM fuerte)
+    cro_reviews                                                           (CRO, codigo)
+    pending_hypotheses + synthesis_decisions + cio_verdicts               (registro, codigo)
     report                                                                (redactor)
 """
 
@@ -28,6 +30,8 @@ from .market_context_analyst import MarketContextAnalysis
 from .news_analyst import NewsAnalysis
 from .order_flow_analyst import OrderFlowAnalysis
 from .redactor import RunReport
+from .cio import CioDecision
+from .cro import CroReview
 from .synthesizer import SymbolDecision
 
 
@@ -47,8 +51,13 @@ class GraphState(TypedDict, total=False):
     # --- debate ---
     debate_transcript: Annotated[list[DebateTurn], operator.add]
     debate_round: int
-    # --- sintetizador ---
+    # --- CIO (decide) y CRO (veta por riesgo) ---
+    cio_decisions: list[CioDecision]
+    cio_ts_ms: int
+    cro_reviews: list[CroReview]
+    # --- registro (codigo) ---
     pending_hypotheses: list[PendingHypothesis]
     synthesis_decisions: list[SymbolDecision]
+    cio_verdicts: list[dict]   # filas de cio_verdicts del ciclo (tambien persistidas)
     # --- redactor ---
     report: RunReport

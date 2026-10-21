@@ -118,7 +118,7 @@ def _require_aware(dt: datetime, field: str) -> datetime:
 
 def _has_context(h: PendingHypothesis) -> bool:
     return any(v is not None for v in (h.timeframe, h.horizon_bars, h.daily_trend, h.trend_alignment,
-                                       h.htf_model_id, h.htf_snapshot, h.session, h.session_day))
+                                       h.htf_model_id, h.htf_snapshot, h.session, h.session_day, h.graph_version))
 
 
 def due_at(h: PendingHypothesis) -> datetime:
@@ -134,8 +134,8 @@ _HYP_COLUMNS = (
 _P_COLUMNS = ", ".join("p." + c.strip() for c in _HYP_COLUMNS.split(","))
 # Contexto multi-temporalidad (tabla aparte, migracion aditiva: las hipotesis viejas no tienen fila -> NULLs)
 _CTX_COLUMNS = ("c.timeframe, c.horizon_bars, c.daily_trend, c.trend_alignment, c.htf_model_id, c.htf_snapshot, "
-                "c.session, c.session_day")
-_N_CTX = 8
+                "c.session, c.session_day, c.graph_version")
+_N_CTX = 9
 _CTX_JOIN = "LEFT JOIN hypothesis_context c ON c.hypothesis_id = p.hypothesis_id "
 _RES_COLUMNS = (
     "r.status, r.resolved_at, r.exit_price, r.pnl_pct, r.win, r.gross_pnl_pct, r.cost_bps, "
@@ -266,7 +266,7 @@ class PendingHypothesisStore:
         )
         # Columnas agregadas despues de crear la tabla (migracion aditiva: ADD COLUMN no toca filas ni triggers).
         have = {r[1] for r in self._conn.execute("PRAGMA table_info(hypothesis_context)")}
-        for col in ("session", "session_day"):
+        for col in ("session", "session_day", "graph_version"):
             if col not in have:
                 self._conn.execute(f"ALTER TABLE hypothesis_context ADD COLUMN {col} TEXT")
         self._conn.commit()
@@ -317,11 +317,11 @@ class PendingHypothesisStore:
                 if _has_context(h):
                     self._conn.execute(
                         "INSERT INTO hypothesis_context (hypothesis_id, timeframe, horizon_bars, daily_trend, "
-                        "trend_alignment, htf_model_id, htf_snapshot, session, session_day) "
-                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        "trend_alignment, htf_model_id, htf_snapshot, session, session_day, graph_version) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                         (str(h.hypothesis_id), h.timeframe, h.horizon_bars, h.daily_trend, h.trend_alignment,
                          h.htf_model_id, None if h.htf_snapshot is None else json.dumps(h.htf_snapshot),
-                         h.session, h.session_day),
+                         h.session, h.session_day, h.graph_version),
                     )
                 self._conn.commit()
             except sqlite3.IntegrityError as exc:
@@ -487,6 +487,17 @@ class PendingHypothesisStore:
                 "WHERE c.session_day = ? AND c.session = ?", (session_day, session)
             ).fetchall()
         return {(str(sid).lower(), sym) for sid, sym in rows}
+
+    def exposure(self, session_day: str | None, session: str | None) -> list[tuple[str, str, str]]:
+        """(hypothesis_id, symbol, direction) de las hipotesis ABIERTAS (sin resolucion) mas las ya emitidas en esa
+        sesion de ese dia (resueltas o no). Lo usa el CRO para la regla de exposicion correlacionada."""
+        with self._lock:
+            rows = self._conn.execute(
+                f"SELECT DISTINCT p.hypothesis_id, p.symbol, p.direction FROM pending_hypotheses p {_CTX_JOIN}"
+                "WHERE NOT EXISTS (SELECT 1 FROM hypothesis_resolutions r WHERE r.hypothesis_id = p.hypothesis_id) "
+                "OR (c.session_day = ? AND c.session = ?)", (session_day, session)
+            ).fetchall()
+        return [(str(i), str(s), str(d)) for i, s, d in rows]
 
     def pending_count(self) -> int:
         """Cantidad de hipotesis sin resolucion (vencidas o no)."""
@@ -703,7 +714,7 @@ class PendingHypothesisStore:
             run_id,
         ) = row[:14]
         ctx = row[14:14 + _N_CTX] if len(row) >= 14 + _N_CTX else (None,) * _N_CTX
-        timeframe, horizon_bars, daily_trend, alignment, htf_model_id, htf_snapshot, session, session_day = ctx
+        timeframe, horizon_bars, daily_trend, alignment, htf_model_id, htf_snapshot, session, session_day, gv = ctx
         return PendingHypothesis(
             hypothesis_id=UUID(hypothesis_id),
             strategy_id=UUID(strategy_id),
@@ -725,6 +736,7 @@ class PendingHypothesisStore:
             htf_snapshot=None if htf_snapshot is None else json.loads(htf_snapshot),
             session=session,
             session_day=session_day,
+            graph_version=gv,
         )
 
     @classmethod

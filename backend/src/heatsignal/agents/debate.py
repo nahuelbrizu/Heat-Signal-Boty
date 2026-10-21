@@ -164,11 +164,11 @@ def make_debate_node(llm: BaseChatModel, side: DebateSide) -> Callable[["GraphSt
 
 
 def make_debate_router(max_debate_rounds: int) -> Callable[["GraphState"], str]:
-    """Arista condicional despues del bajista: otra ronda o pasar al sintetizador."""
+    """Arista condicional despues del bajista: otra ronda o pasar al CIO."""
 
     # Sin anotaciones: LangGraph evalua los type hints del router y `GraphState`
     # solo existe bajo TYPE_CHECKING (evita import circular).
     def _route(state):  # type: ignore[no-untyped-def]
-        return "bull_strategist" if (state.get("debate_round") or 0) < max_debate_rounds else "synthesizer"
+        return "bull_strategist" if (state.get("debate_round") or 0) < max_debate_rounds else "cio"
 
     return _route

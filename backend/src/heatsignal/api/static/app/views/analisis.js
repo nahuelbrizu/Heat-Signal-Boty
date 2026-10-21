@@ -1,14 +1,22 @@
-// Ultimo analisis del grafo por cripto (/api/analysis/latest). Se recarga cuando cambia summary.analysis.last_ran.run_id.
+// Ultimo analisis del grafo por cripto (/api/analysis/latest) y "¿Acierta el CIO?" (/api/cio/accuracy). Se recarga cuando cambia summary.analysis.last_ran.run_id.
 import { el, clear, api, errorBox, when, ago, card, pageHead, loading, statusChip, OUTCOME, CYCLE_STATUS, chip } from "../core.js";
 import { symbolAnalysis } from "../analysis-ui.js";
+import { cioAccuracyCard } from "../cio-ui.js";
 
 export async function mount(root, ctx) {
   const body = el("div", {}, loading());
+  const cioBox = el("div");
   clear(root, pageHead("Análisis del grafo", "Último análisis de cada cripto. Con rotación, cada ciclo cubre solo algunas: la hora de cada tarjeta dice cuándo fue.",
-    el("a", { class: "btn", href: "#/ciclos" }, "Historial de ciclos →")), body);
+    el("a", { class: "btn", href: "#/ciclos" }, "Historial de ciclos →")), cioBox, body);
   let lastRun = null;
 
+  async function loadCio() {
+    try { clear(cioBox, cioAccuracyCard(await api("/api/cio/accuracy", null, ctx.signal), ctx.href)); }
+    catch (e) { const b = errorBox(e, "el acierto del CIO"); clear(cioBox, b || ""); }
+  }
+
   async function load() {
+    loadCio();
     try {
       const d = await api("/api/analysis/latest", null, ctx.signal);
       lastRun = d.last_ran && d.last_ran.run_id;

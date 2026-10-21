@@ -149,3 +149,23 @@ del diseño de arriba:
 - Ojo con el horario: en BST (hasta el 25-10) Londres abre 07:00 UTC y la corrida de Europa es a las 08:00 UTC con la
   vela 07–08 (dentro del rango de Asia): la falsa ruptura no puede darse en esa corrida, solo en la de EE.UU. (o en
   Europa desde el horario de invierno, 09:00 UTC).
+
+## CIO y CRO — graph-v2-cio (2026-10-21)
+
+- Orden nuevo: analistas → debate (N rondas) → **CIO** (`agents/cio.py`, LLM fuerte) → **CRO** (`agents/cro.py`, sin LLM)
+  → **registro** (`synthesizer.make_registrar_node`, código) → redactor. El CIO reemplaza la llamada LLM del Sintetizador:
+  **mismas llamadas por ciclo** (tests `test_cio.py::test_llm_calls_per_cycle_unchanged…` y `test_budget_session_context…`).
+- CIO: una llamada batcheada (`CioBatch`). Recibe digest de analistas, transcript y, por símbolo, los **candidatos
+  verificados por código** (`code_candidates`: estrategia activa + dirección cuya entrada `timeframes.check_htf_entry` da
+  por cumplida y cuyo horizonte entra; sin lo que ya tiene hipótesis abierta). Devuelve postura (alcista/bajista/empate),
+  `peso` 0–1, tomar candidato o no operar, 2–4 razones. Código (`validate_verdicts`) rechaza: setup fuera de los
+  candidatos, dirección distinta del candidato, dirección contraria a la postura, empate con "tomar", peso fuera de [0,1].
+- CRO (reglas fijas, en orden): hueco REAL (`features/gaps.py`), FOMC/CPI/NFP en −1 h…+2 h (`macro/calendar.py`; calendario
+  ilegible → veto), tope por sesión (`max_per_symbol_session`), exposición correlacionada (> 2 en la misma dirección en
+  altcoins contando abiertas + emitidas en la sesión + nuevas; las nuevas por `peso` descendente).
+- Registro: `apply_proposals` (defensa en profundidad), `store.add` con `graph_version="graph-v2-cio"` (columna aditiva en
+  `hypothesis_context`), `confidence_score` = `peso`. Escribe `cio_verdicts` (append-only) en CADA ciclo, se opere o no.
+- Evaluación (job, `evaluation/cio_verdicts.py`, tabla `cio_verdict_outcomes`): postura vs retorno 4 h con velas 1h
+  cerradas a mark, acierto + IC de Wilson y Brier del `peso`. Descriptivo; no vuelve al grafo.
+- Panel: tabla "Veredicto del CIO" en el detalle de `#/ciclos`, tarjeta "¿Acierta el CIO?" en `#/analisis`
+  (`static/app/cio-ui.js`, `/api/cio/accuracy`, `/api/cio/verdicts/{run_id}`, `cio_verdicts` en `/api/cycles/{run_id}`).

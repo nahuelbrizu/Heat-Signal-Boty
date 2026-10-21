@@ -157,8 +157,8 @@ def make_feature_set(
 def full_script(symbols: list[str], *, strategy_id: str | None = None, rounds: int = 1) -> dict:
     """Guion que hace correr el grafo completo para `symbols`.
 
-    Con `strategy_id`, el Sintetizador propone LONG con esa estrategia para cada simbolo;
-    sin el, declara `no_hypothesis` para todos. Las respuestas son callables, asi el
+    Con `strategy_id`, el CIO da postura alcista y toma LONG con esa estrategia en cada simbolo;
+    sin el, empate y `no_operar` para todos. Las respuestas son callables, asi el
     guion soporta cualquier cantidad de rondas de debate.
     """
     from heatsignal.agents.debate import DebateArgumentBatch, SymbolArgument
@@ -167,7 +167,7 @@ def full_script(symbols: list[str], *, strategy_id: str | None = None, rounds: i
     from heatsignal.agents.news_analyst import NewsAnalysis, NewsAnalysisBatch
     from heatsignal.agents.order_flow_analyst import OrderFlowAnalysis, OrderFlowAnalysisBatch
     from heatsignal.agents.redactor import ReportDraft, SymbolReportSection
-    from heatsignal.agents.synthesizer import StrategyProposal, SynthesisBatch
+    from heatsignal.agents.cio import CioBatch, CioSymbolVerdict
 
     def liq(_):
         return LiquidationAnalysisBatch(
@@ -206,25 +206,16 @@ def full_script(symbols: list[str], *, strategy_id: str | None = None, rounds: i
             arguments=[SymbolArgument(symbol=s, argument="en casos similares...", strength=0.4) for s in symbols]
         )
 
-    def synth(_):
+    def cio(_):
         if strategy_id is None:
-            return SynthesisBatch(
-                proposals=[StrategyProposal(symbol=s, decision="no_hypothesis", rationale="evidencia debil") for s in symbols]
-            )
-        return SynthesisBatch(
-            proposals=[
-                StrategyProposal(
-                    symbol=s,
-                    decision="hypothesis",
-                    strategy_id=strategy_id,
-                    direction="LONG",
-                    confidence=0.62,
-                    atr_normalized_trigger=-1.8,
-                    rationale="clusters similares reaccionaron en el 58% de los casos",
-                )
-                for s in symbols
-            ]
-        )
+            return CioBatch(verdicts=[CioSymbolVerdict(symbol=s, postura_ganadora="empate", peso=0.5,
+                                                       decision="no_operar", razones=["evidencia debil"])
+                                      for s in symbols])
+        return CioBatch(verdicts=[
+            CioSymbolVerdict(symbol=s, postura_ganadora="alcista", peso=0.62, decision="tomar",
+                             strategy_id=strategy_id, direction="LONG",
+                             razones=["clusters similares reaccionaron en el 58% de los casos"])
+            for s in symbols])
 
     def report(_):
         return ReportDraft(
@@ -239,6 +230,6 @@ def full_script(symbols: list[str], *, strategy_id: str | None = None, rounds: i
         MarketContextAnalysisBatch: ctx,
         NewsAnalysisBatch: news,
         DebateArgumentBatch: debate,
-        SynthesisBatch: synth,
+        CioBatch: cio,
         ReportDraft: report,
     }

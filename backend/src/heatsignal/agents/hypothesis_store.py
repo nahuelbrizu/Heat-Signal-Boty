@@ -42,6 +42,10 @@ class InMemoryPendingHypothesisStore:
         return {(str(h.strategy_id).lower(), h.symbol) for h in self._items
                 if h.session_day == session_day and h.session == session}
 
+    def exposure(self, session_day: str | None, session: str | None) -> list[tuple[str, str, str]]:
+        """(hypothesis_id, simbolo, direccion): en memoria todas cuentan como abiertas (regla de correlacion del CRO)."""
+        return [(str(h.hypothesis_id), h.symbol, h.direction.value) for h in self._items]
+
     def all(self) -> list[PendingHypothesis]:
         return list(self._items)
 

@@ -10,11 +10,12 @@ from pathlib import Path
 import pytest
 from _agent_fakes import ScriptedChatModel, make_feature_set, prompt_text
 
-from heatsignal.agents import synthesizer as synth_mod
 from heatsignal.agents._common import htf_digest_line, render_htf
 from heatsignal.agents.hypothesis_store import InMemoryPendingHypothesisStore
 from heatsignal.agents.market_context_analyst import _SYSTEM_PROMPT as CTX_SYSTEM
-from heatsignal.agents.synthesizer import StrategyProposal, SynthesisBatch, apply_proposals, make_synthesizer_node
+from heatsignal.agents.cio import CioBatch, CioSymbolVerdict, make_cio_node
+from heatsignal.agents.cro import make_cro_node
+from heatsignal.agents.synthesizer import StrategyProposal, apply_proposals, make_registrar_node
 from heatsignal.evaluation.pending_store import PendingHypothesisStore
 from heatsignal.evaluation.register_strategy import main as register_main
 from heatsignal.evaluation.register_strategy import validate_hourly
@@ -316,30 +317,34 @@ def test_cap_needs_a_session() -> None:
     assert dec[0].outcome == "rejected" and "sin sesion" in dec[0].reason
 
 
-class _FrozenDatetime(datetime):
-    @classmethod
-    def now(cls, tz=None):  # noqa: ANN001, ANN206
-        return T
-
-
-async def test_synthesizer_node_reads_session_cap_from_store_and_prompt_mentions_families(monkeypatch) -> None:
-    monkeypatch.setattr(synth_mod, "datetime", _FrozenDatetime)  # el nodo usa el reloj: lo fijamos a las 10:02 UTC
+async def test_cio_chain_reads_session_cap_from_store_and_prompt_lists_lateral_candidate() -> None:
     s = _strat("1h-lateral-extremo-vwap-v1")
     store = InMemoryPendingHypothesisStore()
     fs = _fs(VWAP_LONG)
-    model = ScriptedChatModel({SynthesisBatch: [SynthesisBatch(proposals=[_prop(s, "LONG")]),
-                                                SynthesisBatch(proposals=[_prop(s, "LONG")])]})
-    node = make_synthesizer_node(model, hypothesis_store=store)
+    take = CioBatch(verdicts=[CioSymbolVerdict(symbol=SYM, postura_ganadora="alcista", peso=0.55, decision="tomar",
+                                               strategy_id=str(s.strategy_id), direction="LONG",
+                                               razones=["en dias laterales similares..."])])
+    model = ScriptedChatModel({CioBatch: [take, take]})
+    clock = lambda: NOW  # noqa: E731 - el CIO verifica la entrada con el reloj: 10:02 UTC
+    cio, cro, reg = (make_cio_node(model, hypothesis_store=store, clock_ms=clock),
+                     make_cro_node(hypothesis_store=store, clock_ms=clock), make_registrar_node(hypothesis_store=store))
+
+    async def run(state):
+        for node in (cio, cro, reg):
+            state = {**state, **await node(state)}
+        return state
+
     state = {"run_id": "r1", "features_by_symbol": {SYM: fs}, "allowed_strategies": [s], "session": EUROPA}
-    out = await node(state)
+    out = await run(state)
     assert len(out["pending_hypotheses"]) == 1 and len(store) == 1
-    # la hipotesis anterior ya se resolvio (sin candado de abiertas): el tope por sesion sigue frenando
+    prompt = prompt_text(model.calls_for(CioBatch)[0])
+    assert f"strategy_id={str(s.strategy_id).lower()} direction=LONG setup=extremo_vwap" in prompt
+    assert "familia=1h-lateralidad" in prompt and "lateral (codigo): extremo_vwap=LONG" in prompt
+    # la hipotesis anterior ya se resolvio (sin candado de abiertas): el tope por sesion lo veta el CRO
     store.open_positions = lambda: set()  # type: ignore[method-assign]
-    out = await node({**state, "run_id": "r2"})
-    assert out["pending_hypotheses"] == [] and "tope" in out["synthesis_decisions"][0].reason
-    prompt = prompt_text(model.calls_for(SynthesisBatch)[1])
-    assert "Ya emitidas en esta sesion" in prompt and "lateral (codigo): extremo_vwap=LONG" in prompt
-    assert "1h-lateralidad" in synth_mod._SYSTEM_PROMPT
+    out = await run({**state, "run_id": "r2"})
+    assert out["pending_hypotheses"] == [] and "tope por sesion" in out["synthesis_decisions"][0].reason
+    assert out["cio_verdicts"][0]["cro_veto"].startswith("tope por sesion")
     assert len(model.calls) == 2  # una llamada por corrida: nada extra
 
 

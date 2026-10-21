@@ -7,6 +7,8 @@ Rutas de solo lectura del panel para el contexto macro y el diario de lecciones 
     GET /api/lessons                 diario de lecciones (strategy_id, symbol, daily_trend, outcome, source,
                                      window_verdict, limit, offset) + facetas para los filtros
     GET /api/lessons/{hypothesis_id} la leccion de una hipotesis (404 si todavia no tiene)
+    GET /api/cio/accuracy            ¿acierta el CIO? postura vs retorno 4 h: n, acierto + IC de Wilson, Brier del peso
+    GET /api/cio/verdicts/{run_id}   veredictos del CIO (y vetos del CRO) de un ciclo
 
 Las lecciones son para el usuario: el panel las muestra, el grafo nunca las lee (evaluation/lessons.py).
 Todo corre en otro hilo con conexiones SQLite de solo lectura abiertas y cerradas ahi (las bases las escriben otros
@@ -22,6 +24,7 @@ from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 from fastapi import FastAPI, HTTPException, Query
+from fastapi import Path as Path_
 
 from ..ingestion.loop_monitor import run_heavy
 
@@ -142,6 +145,19 @@ def register_macro_api(app: FastAPI, ctx: PanelContext) -> None:
         return await asyncio.to_thread(_lessons_read, lambda c: ls.query(
             c, limit=limit, offset=offset, strategy_id=None if strategy_id is None else str(strategy_id), symbol=sym,
             daily_trend=daily_trend, outcome=outcome, source=source, window_verdict=window_verdict))
+
+    @app.get("/api/cio/accuracy")
+    async def cio_accuracy() -> dict[str, Any]:
+        """¿Acierta el CIO? Postura vs retorno 4 h (velas 1h cerradas, mark): n, acierto con IC de Wilson, Brier."""
+        from ..evaluation import cio_verdicts as cv
+
+        return await asyncio.to_thread(_lessons_read, cv.accuracy)
+
+    @app.get("/api/cio/verdicts/{run_id}")
+    async def cio_run(run_id: str = Path_(..., max_length=120, pattern=r"^[A-Za-z0-9:._-]+$")) -> dict[str, Any]:
+        from ..evaluation import cio_verdicts as cv
+
+        return {"run_id": run_id, "items": await asyncio.to_thread(_lessons_read, lambda c: cv.by_run(c, run_id))}
 
     @app.get("/api/lessons/{hypothesis_id}")
     async def lesson(hypothesis_id: UUID) -> dict[str, Any]:

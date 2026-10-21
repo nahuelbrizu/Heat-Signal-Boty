@@ -99,10 +99,20 @@ async def test_end_to_end_persists_hypotheses(tmp_path) -> None:
     fake = ScriptedChatModel(full_script([SYM], strategy_id=str(strategy.strategy_id)))
     graph = build_graph(fake, fake, hypothesis_store=store)
 
+    strip = {"on": False}
+
     async def runner(state, run_id):
+        if strip["on"]:  # la memoria de prueba solo tiene Binance: sin esto el CRO veta por hueco real (bien)
+            state = {**state, "features_by_symbol": {k: v.model_copy(update={"data_gaps": []})
+                                                     for k, v in state["features_by_symbol"].items()}}
         return await graph.ainvoke(state)
 
     loop = AnalysisLoop(memory, [SYM], registry, graph_runner=runner, clock_ms=clock)
+    vetoed = await loop.run_cycle()
+    assert vetoed.status == "ran" and vetoed.n_hypotheses == 0
+    assert vetoed.decisions[0]["reason"].startswith("veto del CRO: hueco real de datos")
+    strip["on"] = True
+    clock.ms += 1_000
     result = await loop.run_cycle()
     assert result.status == "ran" and result.n_hypotheses == 1
     [stored] = store.list_by_strategy(strategy.strategy_id)

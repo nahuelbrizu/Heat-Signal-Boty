@@ -57,6 +57,8 @@ class PendingHypothesis(BaseModel):
     htf_snapshot: dict | None = Field(default=None, description="Numeros del contexto 1h al emitir (auditoria)")
     session: str | None = Field(default=None, description="Sesion de la que salio (asia/europa/eeuu/cierre)")
     session_day: str | None = Field(default=None, description="Dia UTC del diario de esa sesion (YYYY-MM-DD)")
+    graph_version: str | None = Field(
+        default=None, description="Version del grafo que la emitio (p.ej. graph-v2-cio); None = anterior al CIO")
 
 
 class Resolution(BaseModel):

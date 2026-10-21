@@ -9,6 +9,8 @@ Job de evaluacion (Fase 3): `python -m heatsignal.evaluation.job`.
    hipotesis, LLM barato o version por codigo). Son SOLO para el usuario: no vuelven a ningun prompt.
 3b. Calcula el MAE/MFE de las resueltas que no lo tienen (`excursion.py`: cuanto fue en contra y a favor, con velas
    1m de la base historica o 1h de Binance). Dato descriptivo, append-only; no vuelve al grafo ni a la evaluacion.
+3c. Evalua los veredictos del CIO (`cio_verdicts.py`): retorno del simbolo en las 4 h siguientes con velas 1h cerradas
+   a mark, acierto de la postura y Brier del peso. Descriptivo: no cambia nada del grafo.
 4. Imprime un JSON con el resumen de resolucion, las lecciones y los reportes.
 
 Por defecto registry, pendientes, log y reportes viven en el mismo archivo SQLite
@@ -63,6 +65,7 @@ def run_once(
     now: datetime | None = None,
     lesson_writer: Any = None,
     excursion_writer: Any = None,
+    cio_writer: Any = None,
 ) -> dict[str, Any]:
     """Una corrida completa: resolver vencidas y evaluar todas las estrategias."""
     config = config or JobConfig()
@@ -84,6 +87,12 @@ def run_once(
             excursions = excursion_writer(now)
         except Exception as exc:  # noqa: BLE001
             excursions = {"error": f"{type(exc).__name__}: {exc}"}
+    cio = None
+    if cio_writer is not None:  # acierto del CIO (descriptivo; nunca frena la evaluacion)
+        try:
+            cio = cio_writer(now)
+        except Exception as exc:  # noqa: BLE001
+            cio = {"error": f"{type(exc).__name__}: {exc}"}
     reporter = StrategyReporter(
         store,
         registry,
@@ -99,6 +108,7 @@ def run_once(
         "pending_count": store.pending_count(),
         "lessons": lessons,
         "excursions": excursions,
+        "cio": cio,
         "reports": [r.model_dump(mode="json") for r in reports],
         "public": [r.public_view() for r in reports],
     }
@@ -119,6 +129,7 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
                         help="no escribir el diario de lecciones (tambien HEATSIGNAL_LESSONS=0)")
     parser.add_argument("--no-lesson-llm", action="store_true", help="lecciones solo por codigo (sin LLM)")
     parser.add_argument("--no-excursions", action="store_true", help="no calcular el MAE/MFE de las hipotesis resueltas")
+    parser.add_argument("--no-cio", action="store_true", help="no evaluar los veredictos del CIO")
     parser.add_argument("--history-db", default=os.environ.get("HEATSIGNAL_HISTORY_DB"),
                         help="base historica (velas 1m para el MAE/MFE); default: heatsignal_history.sqlite junto a --db")
     return parser.parse_args(argv)
@@ -168,6 +179,14 @@ def main(argv: list[str] | None = None) -> int:
 
         def excursion_writer(now: datetime) -> dict[str, Any]:
             return write_excursions(db_path, store, candles, now=now)
+    cio_writer = None
+    if not args.no_cio:
+        from .cio_verdicts import evaluate_missing
+
+        cio_prices = BinanceHourlyClosePriceSource(price_kind="mark")
+
+        def cio_writer(now: datetime) -> dict[str, Any]:
+            return evaluate_missing(db_path, cio_prices, now=now)
     try:
         result = run_once(
             registry=registry,
@@ -179,6 +198,7 @@ def main(argv: list[str] | None = None) -> int:
             config=config,
             lesson_writer=lesson_writer,
             excursion_writer=excursion_writer,
+            cio_writer=cio_writer,
         )
     finally:
         for closable in (report_log, hypothesis_log, store, registry, lesson_store, cycle_log):
@@ -186,7 +206,7 @@ def main(argv: list[str] | None = None) -> int:
                 closable.close()
 
     output = ({"ran_at": result["ran_at"], "lessons": result["lessons"], "excursions": result["excursions"],
-               "public": result["public"]}
+               "cio": result["cio"], "public": result["public"]}
               if args.public_only else result)
     print(json.dumps(output, indent=2, default=str))
     # Exit code != 0 si hubo errores transitorios de la fuente: que el scheduler lo vea.

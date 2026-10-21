@@ -547,6 +547,17 @@ def _rss_bytes() -> int | None:
 
 # ---- rutas ---------------------------------------------------------------------------------------
 
+def _cio_by_run(db: Path, run_id: str) -> list[dict[str, Any]]:
+    from ..evaluation.cio_verdicts import by_run
+    from ..history.store import open_readonly
+
+    conn = open_readonly(db)
+    try:
+        return by_run(conn, run_id)
+    finally:
+        conn.close()
+
+
 def register_api(app: FastAPI, ctx: PanelContext, build_id: str) -> None:  # noqa: C901 - una ruta por bloque
     from .panel import _cycle_view, _history_summary, _history_view, _lab_view, _per_symbol_view, json_safe
 
@@ -894,7 +905,14 @@ def register_api(app: FastAPI, ctx: PanelContext, build_id: str) -> None:  # noq
         if ctx.store is not None:
             _, recs = ctx.store.query(run_id=run_id, limit=MAX_PAGE, newest_first=False)
             hyps = [hypothesis_json(r) for r in recs]
-        return {**cycle_json(row), "report_source": source, "hypotheses": hyps, "notes": notes}
+        cio: list[dict[str, Any]] = []
+        eval_db = ctx.db_paths.get("eval")
+        if eval_db is not None and Path(eval_db).exists():
+            try:
+                cio = await asyncio.to_thread(_cio_by_run, Path(eval_db), run_id)
+            except Exception as exc:  # noqa: BLE001 - el veredicto nunca tumba el detalle: se informa
+                notes.append(f"no se pudo leer el veredicto del CIO: {type(exc).__name__}: {exc}"[:300])
+        return {**cycle_json(row), "report_source": source, "hypotheses": hyps, "notes": notes, "cio_verdicts": cio}
 
     @app.get("/api/analysis/latest")
     async def analysis_latest() -> dict[str, Any]:

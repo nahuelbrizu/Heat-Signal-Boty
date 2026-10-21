@@ -1,11 +1,12 @@
 // Historial de ciclos (/api/cycles, filtro por estado y paginacion) y detalle de un ciclo (/api/cycles/{run_id}):
-// decisiones, analistas, noticias, debate, reporte del Redactor e hipotesis emitidas.
+// decisiones, veredicto del CIO (y vetos del CRO), analistas, noticias, debate, reporte del Redactor e hipotesis emitidas.
 import {
   el, clear, api, errorBox, when, ago, int, card, table, pageHead, loading, statusChip, CYCLE_STATUS, OUTCOME, seg, pager, chip,
   shortId, prose,
 } from "../core.js";
 import { symbolAnalysis } from "../analysis-ui.js";
 import { hypTable } from "../hyp-ui.js";
+import { cioVerdictCard } from "../cio-ui.js";
 
 const LIMIT = 50;
 const STATUSES = [["", "todos"], ["ran", "corrió"], ["error", "error"], ["warmup", "calentando"], ["no_strategies", "sin estrategias"], ["no_llm", "sin LLM"]];
@@ -87,6 +88,7 @@ async function detail(root, ctx, runId) {
       decisions.map((x) => [el("a", { href: ctx.href("mercado", [x.symbol]) }, x.symbol), el("span", { class: "chip " + (OUTCOME[x.outcome] || [""])[0] }, (OUTCOME[x.outcome] || [0, x.outcome])[1]),
         { v: prose(x.reason || ""), cls: "wrap" }, x.strategy_id ? el("a", { href: ctx.href("estrategias", [x.strategy_id]) }, shortId(x.strategy_id)) : "—"]),
       { empty: "Este ciclo no registró decisiones.", label: "Decisiones" })),
+    (d.cio_verdicts || []).length ? cioVerdictCard(d.cio_verdicts, ctx.href) : null,
     rep ? card("Razonamiento por símbolo", "texto generado por el LLM, mostrado tal cual (escapado)", symBox) : null,
     card("Hipótesis emitidas en este ciclo", "", hypTable(d.hypotheses || [], ctx)),
   );

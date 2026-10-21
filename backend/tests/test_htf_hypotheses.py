@@ -17,7 +17,9 @@ from heatsignal.agents.market_context_analyst import (
     MarketContextAnalysisBatch,
     make_market_context_analyst_node,
 )
-from heatsignal.agents.synthesizer import StrategyProposal, SynthesisBatch, apply_proposals, make_synthesizer_node
+from heatsignal.agents.cio import CioBatch, CioSymbolVerdict, make_cio_node
+from heatsignal.agents.cro import make_cro_node
+from heatsignal.agents.synthesizer import StrategyProposal, apply_proposals, make_registrar_node
 from heatsignal.evaluation.hypothesis_log import HypothesisLog
 from heatsignal.evaluation.pending_store import PendingHypothesisStore, ResolutionMetrics
 from heatsignal.evaluation.price_source import BinanceHourlyClosePriceSource, StaticPriceSource
@@ -77,21 +79,26 @@ async def test_market_context_and_synthesizer_receive_context_and_journal() -> N
     model = ScriptedChatModel({
         MarketContextAnalysisBatch: [MarketContextAnalysisBatch(analyses=[MarketContextAnalysis(
             symbol=SYM, context_summary="x", regime_commentary="y", confidence=0.5)])],
-        SynthesisBatch: [SynthesisBatch(proposals=[_prop(strat)])],
+        CioBatch: [CioBatch(verdicts=[CioSymbolVerdict(
+            symbol=SYM, postura_ganadora="alcista", peso=0.6, decision="tomar", strategy_id=str(strat.strategy_id),
+            direction="LONG", razones=["en dias similares..."])])],
     })
     await make_market_context_analyst_node(model)({"features_by_symbol": {SYM: fs}})
     state = {"run_id": "r1", "features_by_symbol": {SYM: fs}, "allowed_strategies": [strat],
              "session": {"name": "europa", "label": "Europa (Londres)", "day": "2026-10-18"},
              "day_journal": "### Asia (Tokio) — codigo\nBTC-USDT Asia: vela de apertura verde"}
-    out = await make_synthesizer_node(model)(state)
+    clock = lambda: int(T.timestamp() * 1000)  # noqa: E731
+    state.update(await make_cio_node(model, clock_ms=clock)(state))
+    state.update(await make_cro_node(clock_ms=clock)(state))
+    out = await make_registrar_node()(state)
     ctx_prompt = prompt_text(model.calls_for(MarketContextAnalysisBatch)[0])
-    syn_prompt = prompt_text(model.calls_for(SynthesisBatch)[0])
+    syn_prompt = prompt_text(model.calls_for(CioBatch)[0])
     assert "daily_trend" in ctx_prompt or "tendencia diaria" in ctx_prompt
     assert "daily_trend=alcista" in syn_prompt and "pullback_ema20_1h_a_favor" in syn_prompt
     assert "Diario del dia" in syn_prompt and "vela de apertura verde" in syn_prompt
-    assert "velas de 1h CERRADAS" in syn_prompt  # instruccion del sistema
+    assert "Candidatos verificados por codigo" in syn_prompt  # el CIO solo puede tomar lo que el codigo verifico
     [h] = out["pending_hypotheses"]
-    assert h.session == "europa" and h.session_day == "2026-10-18"
+    assert h.session == "europa" and h.session_day == "2026-10-18" and h.graph_version == "graph-v2-cio"
     assert len(model.calls) == 2  # una llamada por nodo, como siempre
 
 

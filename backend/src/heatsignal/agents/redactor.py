@@ -38,7 +38,9 @@ _SYSTEM_PROMPT = (
     "'subira', 'garantiza', 'seguro que', 'will rise'). "
     "Si la corrida es de una sesion de mercado (Asia, Europa, EE.UU. o cierre del dia UTC) y hay diario del dia, el "
     "resumen es el analisis de ESA sesion: sumalo a lo que ya dijeron las sesiones previas de hoy (que se confirmo, "
-    "que cambio), con la vela de apertura y la tendencia del dia calculadas por codigo. " + HISTORICAL_LANGUAGE_RULE
+    "que cambio), con la vela de apertura y la tendencia del dia calculadas por codigo. "
+    "Menciona por simbolo el veredicto del CIO (postura que gano el debate, su peso y si tomo un candidato o no opero) "
+    "y, si los hubo, los rechazos por codigo y los vetos del CRO con su motivo. " + HISTORICAL_LANGUAGE_RULE
 )
 
 ReportStatus = Literal["ok", "ok_after_retry", "guardrail_failed"]
@@ -89,6 +91,25 @@ def _render_decisions(state: "GraphState") -> str:
     return "\n".join(lines)
 
 
+def _render_cio(state: "GraphState") -> str:
+    cio = state.get("cio_decisions") or []
+    if not cio:
+        return "(sin veredicto del CIO)"
+    reviews = {r.symbol: r for r in state.get("cro_reviews") or []}
+    lines = []
+    for d in cio:
+        peso = "sin peso" if d.peso is None else f"peso {d.peso:.2f}"
+        take = f"tomar {d.strategy_id} {d.direction}" if d.takes else "no operar"
+        line = f"- {d.symbol}: postura {d.postura} ({peso}); {take}. Razones: {' '.join(d.razones) or '-'}"
+        if d.rejection:
+            line += f" | rechazo por codigo: {d.rejection}"
+        r = reviews.get(d.symbol)
+        if r is not None and r.veto:
+            line += f" | VETO del CRO: {r.veto}"
+        lines.append(line)
+    return "\n".join(lines)
+
+
 def make_redactor_node(llm: BaseChatModel) -> Callable[["GraphState"], Any]:
     structured_llm = llm.with_structured_output(ReportDraft)
 
@@ -101,7 +122,8 @@ def make_redactor_node(llm: BaseChatModel) -> Callable[["GraphState"], Any]:
         prompt = (
             f"Corrida {run_id}.\n\n# Analistas\n{render_analyst_digest(state)}\n\n"
             f"# Debate\n{render_transcript(state.get('debate_transcript') or [])}\n\n"
-            f"# Decisiones del Sintetizador\n{_render_decisions(state)}"
+            f"# Veredicto del CIO y control del CRO\n{_render_cio(state)}\n\n"
+            f"# Decisiones registradas\n{_render_decisions(state)}"
         )
         messages: list = [SystemMessage(content=_SYSTEM_PROMPT), HumanMessage(content=prompt)]
         draft: ReportDraft = await structured_llm.ainvoke(messages)

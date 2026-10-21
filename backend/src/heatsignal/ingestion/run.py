@@ -384,7 +384,13 @@ async def start_analysis(
         log.info("LLM del grafo: %s", " -> ".join(llms.providers) + (" (fallback)" if len(llms.providers) > 1 else ""))
         Path(cfg.checkpoint_db).parent.mkdir(parents=True, exist_ok=True)
         checkpointer = await stack.enter_async_context(sqlite_checkpointer(cfg.checkpoint_db))
-        graph = build_graph(llms.cheap, llms.strong, checkpointer=checkpointer, hypothesis_store=store)
+        from ..evaluation.cio_verdicts import CioVerdictLog
+        from ..macro.calendar import load_calendar
+
+        verdict_log = CioVerdictLog(cfg.eval_db)
+        stack.callback(verdict_log.close)
+        graph = build_graph(llms.cheap, llms.strong, checkpointer=checkpointer, hypothesis_store=store,
+                            verdict_log=verdict_log, macro_calendar=load_calendar)
 
         async def runner(state: dict[str, Any], run_id: str) -> dict[str, Any]:
             return await graph.ainvoke(state, make_run_config(symbols, run_id))
