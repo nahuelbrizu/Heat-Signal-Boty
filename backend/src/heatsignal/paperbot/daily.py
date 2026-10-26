@@ -28,6 +28,7 @@ Historia minima por spec (`history_days`), en dias diarios CONTIGUOS que termina
   - regimen ADX:  max(20, 2 x adx_n) + EWM_WARMUP_D (suavizado exponencial) + CHAIN_MARGIN_D.
   - regimen ATR%: atrp_window + 1 + atr_n + EWM_WARMUP_D + CHAIN_MARGIN_D  (~590 d: la mas larga).
   - familia:      la mayor de sus componentes.
+  - -v2 (SL/TP):  la de su base (las velas 1m para los toques salen de la ventana del engine).
 El engine carga el MAXIMO de las estrategias activas y a cada una le exige su minimo: si no alcanza, esa estrategia
 queda "sin datos" en esa corrida (lo dice el detalle de la corrida y el panel) y las demas corren igual.
 
@@ -81,6 +82,8 @@ def history_days(spec: Any, rule: Any) -> int | None:
         else:
             need = max(p["lookback_days"], p["atrp_window_days"] + 1 + p["atr_n"] + EWM_WARMUP_D)
         return need + CHAIN_MARGIN_D
+    if rule is getattr(S, "sltp_v2", None):  # -v2 con SL/TP: la historia diaria de su base
+        return history_days(*S.CATALOG[p["base"]])
     if rule is getattr(S, "l6_familia", None):
         comps = [history_days(*S.CATALOG[c]) for c in p["components"]]
         return None if not comps or any(c is None for c in comps) else max(comps)

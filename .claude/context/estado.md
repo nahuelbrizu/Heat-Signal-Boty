@@ -38,6 +38,13 @@ techo 20 %); **fin de noviembre**: decidir plata mínima real tras 1–2 meses d
 **A vigilar:** el CRO veta por "hueco real" (p. ej. "trades: sin datos de bybit"): si veta seguido, revisar `features/gaps.py`.
 Primer ciclo con CIO: cierre 2026-10-22 00:01 UTC.
 
+## Novedades 2026-10-26 (sin desplegar)
+
+- **SL/TP obligatorio (-v2 en paralelo):** cada una de las 30 estrategias del bot de paper tiene su -v2 (rol `sltp`)
+  con las mismas entradas y salida SOLO por stop 3 ATR (8–20 %) u objetivo 2×, con guardia de liquidación y estado en
+  `sltp_trades`. Arrancan planas desde su primera corrida. Panel `#/paperbot`. Ver `decisions.md`. Falta: deploy del
+  código y reiniciar la ingesta. Freqtrade todavía sin -v2.
+
 ## Novedades 2026-10-17 (tarde)
 
 - **Panel = SPA** (`api/static/app/`, vanilla, sin build ni CDN; `panel.html` es solo el cascarón). Vistas:

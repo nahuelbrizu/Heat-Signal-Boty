@@ -1,5 +1,5 @@
 {
-  "_doc": "Parametros del bot de paper trading: lote 3 y max-ruptura-10d-v1 (rol paper_previo) y la prueba hacia adelante del lote 6 desde 2026-10-20 (rol principal: las familias de ruptura long, short y neta; rol seguimiento: 20 variantes exploratorias). 'rol' = principal | seguimiento | paper_previo. Las estrategias que corre el bot son las de este archivo; una nueva entra 'desde hoy' (su primera corrida) sin reescribir la historia de las otras. Versionado: cambiar un valor = commit con su origen. Solo se pueden elegir valores de la grilla congelada del spec (el bot lo valida y falla si no). Nada se optimiza en vivo. Para tomar el valor que eligio el walk-forward del laboratorio: python -m heatsignal.paperbot params-from-lab <strategy_id> [--write].",
+  "_doc": "Parametros del bot de paper trading: lote 3 y max-ruptura-10d-v1 (rol paper_previo) y la prueba hacia adelante del lote 6 desde 2026-10-20 (rol principal: las familias de ruptura long, short y neta; rol seguimiento: 20 variantes exploratorias). 'rol' = principal | seguimiento | paper_previo | sltp (2026-10-26: cada estrategia tiene su -v2 con SL/TP obligatorio, en paralelo, 'base_v1' = la v1). Las estrategias que corre el bot son las de este archivo; una nueva entra 'desde hoy' (su primera corrida) sin reescribir la historia de las otras. Versionado: cambiar un valor = commit con su origen. Solo se pueden elegir valores de la grilla congelada del spec (el bot lo valida y falla si no). Nada se optimiza en vivo. Para tomar el valor que eligio el walk-forward del laboratorio: python -m heatsignal.paperbot params-from-lab <strategy_id> [--write].",
   "strategies": {
     "tsmom-diario-v1": {
       "spec_hash": "7515d798e5d66a55",
@@ -475,6 +475,511 @@
       "origen": "spec congelada (sin grilla). Lote 6: paso backtest y robustez; seguimiento exploratorio de la prueba hacia adelante (NO decide; correccion Benjamini-Hochberg al evaluar).",
       "desde": "2026-10-20",
       "rol": "seguimiento"
+    },
+    "tsmom-diario-v2": {
+      "spec_hash": "a00ce40e6ddcc21d",
+      "universe": [
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "ETHUSDT",
+        "XLMUSDT",
+        "BNBUSDT",
+        "TRXUSDT"
+      ],
+      "params": {
+        "target_vol": 0.15
+      },
+      "origen": "SL/TP obligatorio (pedido del usuario 2026-10-26): tsmom-diario-v1 con stop 3 ATR (8-20 %) y objetivo 2x; mismos valores de la grilla que la v1 (walk-forward del lab 2026-10-18 (ultima ventana: test 2026-06-15 a 2026-07-15, corrida 20261017T230238))",
+      "desde": "2026-10-26",
+      "rol": "sltp",
+      "base_v1": "tsmom-diario-v1"
+    },
+    "low-vol-xs-v2": {
+      "spec_hash": "5c994f146f72569b",
+      "universe": [
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "ETHUSDT",
+        "XLMUSDT",
+        "BNBUSDT",
+        "TRXUSDT"
+      ],
+      "params": {},
+      "origen": "SL/TP obligatorio (pedido del usuario 2026-10-26): low-vol-xs-v1 con stop 3 ATR (8-20 %) y objetivo 2x; mismos valores de la grilla que la v1 (spec congelada (sin grilla))",
+      "desde": "2026-10-26",
+      "rol": "sltp",
+      "base_v1": "low-vol-xs-v1"
+    },
+    "pares-eth-btc-v2": {
+      "spec_hash": "801ed217aa871a83",
+      "universe": [
+        "ETHUSDT",
+        "BTCUSDT"
+      ],
+      "params": {
+        "entry_z": 2.5
+      },
+      "origen": "SL/TP obligatorio (pedido del usuario 2026-10-26): pares-eth-btc-v1 con stop 3 ATR (8-20 %) y objetivo 2x; mismos valores de la grilla que la v1 (walk-forward del lab 2026-10-18 (ultima ventana: test 2026-05-29 a 2026-06-28, corrida 20261017T230544))",
+      "desde": "2026-10-26",
+      "rol": "sltp",
+      "base_v1": "pares-eth-btc-v1"
+    },
+    "rango-reversion-v2": {
+      "spec_hash": "bff42617c1c9bddf",
+      "universe": [
+        "BNBUSDT",
+        "TRXUSDT",
+        "XLMUSDT"
+      ],
+      "params": {},
+      "origen": "SL/TP obligatorio (pedido del usuario 2026-10-26): rango-reversion-v1 con stop 3 ATR (8-20 %) y objetivo 2x; mismos valores de la grilla que la v1 (spec congelada (sin grilla))",
+      "desde": "2026-10-26",
+      "rol": "sltp",
+      "base_v1": "rango-reversion-v1"
+    },
+    "reversion-xs-1h-v2": {
+      "spec_hash": "e8d1025f57dc6524",
+      "universe": [
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "ETHUSDT",
+        "XLMUSDT",
+        "BNBUSDT",
+        "TRXUSDT"
+      ],
+      "params": {},
+      "origen": "SL/TP obligatorio (pedido del usuario 2026-10-26): reversion-xs-1h-v1 con stop 3 ATR (8-20 %) y objetivo 2x; mismos valores de la grilla que la v1 (spec congelada (sin grilla))",
+      "desde": "2026-10-26",
+      "rol": "sltp",
+      "base_v1": "reversion-xs-1h-v1"
+    },
+    "funding-prepago-v2": {
+      "spec_hash": "570e6ece75138096",
+      "universe": [
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "ETHUSDT",
+        "XLMUSDT",
+        "BNBUSDT",
+        "TRXUSDT"
+      ],
+      "params": {},
+      "origen": "SL/TP obligatorio (pedido del usuario 2026-10-26): funding-prepago-v1 con stop 3 ATR (8-20 %) y objetivo 2x; mismos valores de la grilla que la v1 (spec congelada (sin grilla))",
+      "desde": "2026-10-26",
+      "rol": "sltp",
+      "base_v1": "funding-prepago-v1"
+    },
+    "max-ruptura-10d-v2": {
+      "spec_hash": "4849fc0e92ef4dda",
+      "universe": [
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "ETHUSDT",
+        "XLMUSDT",
+        "BNBUSDT",
+        "TRXUSDT"
+      ],
+      "params": {},
+      "origen": "SL/TP obligatorio (pedido del usuario 2026-10-26): max-ruptura-10d-v1 con stop 3 ATR (8-20 %) y objetivo 2x; mismos valores de la grilla que la v1 (spec congelada (sin grilla). Lote 5: pasa el backtest del lab; el holdout 2026-07-17 a 10-17 NO confirmo (le gana a la canasta, no al azar: p 0,18). Paper para juntar evidencia en otro regimen, no aprobacion.)",
+      "desde": "2026-10-26",
+      "rol": "sltp",
+      "base_v1": "max-ruptura-10d-v1"
+    },
+    "l6-familia-ruptura-long-v2": {
+      "spec_hash": "e173aea6fa573e27",
+      "universe": [
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "ETHUSDT",
+        "XLMUSDT",
+        "BNBUSDT",
+        "TRXUSDT"
+      ],
+      "params": {},
+      "origen": "SL/TP obligatorio (pedido del usuario 2026-10-26): l6-familia-ruptura-long-v1 con stop 3 ATR (8-20 %) y objetivo 2x; mismos valores de la grilla que la v1 (spec congelada (sin grilla). Hipotesis principal pre-registrada de la prueba hacia adelante (decisions.md 2026-10-20): 3 meses Sharpe > 0 y > canasta; 6 meses p <= 0,05. No se corre en el laboratorio.)",
+      "desde": "2026-10-26",
+      "rol": "sltp",
+      "base_v1": "l6-familia-ruptura-long-v1"
+    },
+    "l6-familia-ruptura-short-v2": {
+      "spec_hash": "2a932b65ca4ace9f",
+      "universe": [
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "ETHUSDT",
+        "XLMUSDT",
+        "BNBUSDT",
+        "TRXUSDT"
+      ],
+      "params": {},
+      "origen": "SL/TP obligatorio (pedido del usuario 2026-10-26): l6-familia-ruptura-short-v1 con stop 3 ATR (8-20 %) y objetivo 2x; mismos valores de la grilla que la v1 (spec congelada (sin grilla). Enmienda familia espejo short (decisions.md 2026-10-20), criterio simetrico: 3 meses Sharpe > 0 y > -Sharpe de la canasta; 6 meses p <= 0,05. No se corre en el laboratorio.)",
+      "desde": "2026-10-26",
+      "rol": "sltp",
+      "base_v1": "l6-familia-ruptura-short-v1"
+    },
+    "l6-familia-ruptura-neta-v2": {
+      "spec_hash": "5d26e13ebbd4c5c0",
+      "universe": [
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "ETHUSDT",
+        "XLMUSDT",
+        "BNBUSDT",
+        "TRXUSDT"
+      ],
+      "params": {},
+      "origen": "SL/TP obligatorio (pedido del usuario 2026-10-26): l6-familia-ruptura-neta-v1 con stop 3 ATR (8-20 %) y objetivo 2x; mismos valores de la grilla que la v1 (spec congelada (sin grilla). Enmienda 2 (decisions.md 2026-10-20): balance de fuerzas = familia long + familia short; 3 meses Sharpe > 0 y > canasta; 6 meses p <= 0,05. No se corre en el laboratorio.)",
+      "desde": "2026-10-26",
+      "rol": "sltp",
+      "base_v1": "l6-familia-ruptura-neta-v1"
+    },
+    "l6-reg-adx25-long-v2": {
+      "spec_hash": "35695f39565363f6",
+      "universe": [
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "ETHUSDT",
+        "XLMUSDT",
+        "BNBUSDT",
+        "TRXUSDT"
+      ],
+      "params": {},
+      "origen": "SL/TP obligatorio (pedido del usuario 2026-10-26): l6-reg-adx25-long-v1 con stop 3 ATR (8-20 %) y objetivo 2x; mismos valores de la grilla que la v1 (spec congelada (sin grilla). Lote 6: paso backtest y robustez; seguimiento exploratorio de la prueba hacia adelante (NO decide; correccion Benjamini-Hochberg al evaluar).)",
+      "desde": "2026-10-26",
+      "rol": "sltp",
+      "base_v1": "l6-reg-adx25-long-v1"
+    },
+    "l6-reg-atrp50-ambos-v2": {
+      "spec_hash": "b69ac08fd602ff4e",
+      "universe": [
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "ETHUSDT",
+        "XLMUSDT",
+        "BNBUSDT",
+        "TRXUSDT"
+      ],
+      "params": {},
+      "origen": "SL/TP obligatorio (pedido del usuario 2026-10-26): l6-reg-atrp50-ambos-v1 con stop 3 ATR (8-20 %) y objetivo 2x; mismos valores de la grilla que la v1 (spec congelada (sin grilla). Lote 6: paso backtest y robustez; seguimiento exploratorio de la prueba hacia adelante (NO decide; correccion Benjamini-Hochberg al evaluar).)",
+      "desde": "2026-10-26",
+      "rol": "sltp",
+      "base_v1": "l6-reg-atrp50-ambos-v1"
+    },
+    "l6-ruptura-n10-h1-long-v2": {
+      "spec_hash": "c9f4845593a5aa22",
+      "universe": [
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "ETHUSDT",
+        "XLMUSDT",
+        "BNBUSDT",
+        "TRXUSDT"
+      ],
+      "params": {},
+      "origen": "SL/TP obligatorio (pedido del usuario 2026-10-26): l6-ruptura-n10-h1-long-v1 con stop 3 ATR (8-20 %) y objetivo 2x; mismos valores de la grilla que la v1 (spec congelada (sin grilla). Lote 6: paso backtest y robustez; seguimiento exploratorio de la prueba hacia adelante (NO decide; correccion Benjamini-Hochberg al evaluar).)",
+      "desde": "2026-10-26",
+      "rol": "sltp",
+      "base_v1": "l6-ruptura-n10-h1-long-v1"
+    },
+    "l6-ruptura-n10-h3-ambos-v2": {
+      "spec_hash": "96ae1737eb5cdd67",
+      "universe": [
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "ETHUSDT",
+        "XLMUSDT",
+        "BNBUSDT",
+        "TRXUSDT"
+      ],
+      "params": {},
+      "origen": "SL/TP obligatorio (pedido del usuario 2026-10-26): l6-ruptura-n10-h3-ambos-v1 con stop 3 ATR (8-20 %) y objetivo 2x; mismos valores de la grilla que la v1 (spec congelada (sin grilla). Lote 6: paso backtest y robustez; seguimiento exploratorio de la prueba hacia adelante (NO decide; correccion Benjamini-Hochberg al evaluar).)",
+      "desde": "2026-10-26",
+      "rol": "sltp",
+      "base_v1": "l6-ruptura-n10-h3-ambos-v1"
+    },
+    "l6-ruptura-n10-h3-long-v2": {
+      "spec_hash": "e59604753883bb8b",
+      "universe": [
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "ETHUSDT",
+        "XLMUSDT",
+        "BNBUSDT",
+        "TRXUSDT"
+      ],
+      "params": {},
+      "origen": "SL/TP obligatorio (pedido del usuario 2026-10-26): l6-ruptura-n10-h3-long-v1 con stop 3 ATR (8-20 %) y objetivo 2x; mismos valores de la grilla que la v1 (spec congelada (sin grilla). Lote 6: paso backtest y robustez; seguimiento exploratorio de la prueba hacia adelante (NO decide; correccion Benjamini-Hochberg al evaluar).)",
+      "desde": "2026-10-26",
+      "rol": "sltp",
+      "base_v1": "l6-ruptura-n10-h3-long-v1"
+    },
+    "l6-ruptura-n10-h5-long-v2": {
+      "spec_hash": "e9f56974cdeaee7e",
+      "universe": [
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "ETHUSDT",
+        "XLMUSDT",
+        "BNBUSDT",
+        "TRXUSDT"
+      ],
+      "params": {},
+      "origen": "SL/TP obligatorio (pedido del usuario 2026-10-26): l6-ruptura-n10-h5-long-v1 con stop 3 ATR (8-20 %) y objetivo 2x; mismos valores de la grilla que la v1 (spec congelada (sin grilla). Lote 6: paso backtest y robustez; seguimiento exploratorio de la prueba hacia adelante (NO decide; correccion Benjamini-Hochberg al evaluar).)",
+      "desde": "2026-10-26",
+      "rol": "sltp",
+      "base_v1": "l6-ruptura-n10-h5-long-v1"
+    },
+    "l6-ruptura-n20-h1-long-v2": {
+      "spec_hash": "4061f34257a0b3b2",
+      "universe": [
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "ETHUSDT",
+        "XLMUSDT",
+        "BNBUSDT",
+        "TRXUSDT"
+      ],
+      "params": {},
+      "origen": "SL/TP obligatorio (pedido del usuario 2026-10-26): l6-ruptura-n20-h1-long-v1 con stop 3 ATR (8-20 %) y objetivo 2x; mismos valores de la grilla que la v1 (spec congelada (sin grilla). Lote 6: paso backtest y robustez; seguimiento exploratorio de la prueba hacia adelante (NO decide; correccion Benjamini-Hochberg al evaluar).)",
+      "desde": "2026-10-26",
+      "rol": "sltp",
+      "base_v1": "l6-ruptura-n20-h1-long-v1"
+    },
+    "l6-ruptura-n20-h3-ambos-v2": {
+      "spec_hash": "1c993da24c8613b9",
+      "universe": [
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "ETHUSDT",
+        "XLMUSDT",
+        "BNBUSDT",
+        "TRXUSDT"
+      ],
+      "params": {},
+      "origen": "SL/TP obligatorio (pedido del usuario 2026-10-26): l6-ruptura-n20-h3-ambos-v1 con stop 3 ATR (8-20 %) y objetivo 2x; mismos valores de la grilla que la v1 (spec congelada (sin grilla). Lote 6: paso backtest y robustez; seguimiento exploratorio de la prueba hacia adelante (NO decide; correccion Benjamini-Hochberg al evaluar).)",
+      "desde": "2026-10-26",
+      "rol": "sltp",
+      "base_v1": "l6-ruptura-n20-h3-ambos-v1"
+    },
+    "l6-ruptura-n20-h3-long-v2": {
+      "spec_hash": "2696188bb613a803",
+      "universe": [
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "ETHUSDT",
+        "XLMUSDT",
+        "BNBUSDT",
+        "TRXUSDT"
+      ],
+      "params": {},
+      "origen": "SL/TP obligatorio (pedido del usuario 2026-10-26): l6-ruptura-n20-h3-long-v1 con stop 3 ATR (8-20 %) y objetivo 2x; mismos valores de la grilla que la v1 (spec congelada (sin grilla). Lote 6: paso backtest y robustez; seguimiento exploratorio de la prueba hacia adelante (NO decide; correccion Benjamini-Hochberg al evaluar).)",
+      "desde": "2026-10-26",
+      "rol": "sltp",
+      "base_v1": "l6-ruptura-n20-h3-long-v1"
+    },
+    "l6-ruptura-n20-h5-long-v2": {
+      "spec_hash": "81c178a55c55e1e5",
+      "universe": [
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "ETHUSDT",
+        "XLMUSDT",
+        "BNBUSDT",
+        "TRXUSDT"
+      ],
+      "params": {},
+      "origen": "SL/TP obligatorio (pedido del usuario 2026-10-26): l6-ruptura-n20-h5-long-v1 con stop 3 ATR (8-20 %) y objetivo 2x; mismos valores de la grilla que la v1 (spec congelada (sin grilla). Lote 6: paso backtest y robustez; seguimiento exploratorio de la prueba hacia adelante (NO decide; correccion Benjamini-Hochberg al evaluar).)",
+      "desde": "2026-10-26",
+      "rol": "sltp",
+      "base_v1": "l6-ruptura-n20-h5-long-v1"
+    },
+    "l6-ruptura-n55-h1-long-v2": {
+      "spec_hash": "eff26d17ce4a32ab",
+      "universe": [
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "ETHUSDT",
+        "XLMUSDT",
+        "BNBUSDT",
+        "TRXUSDT"
+      ],
+      "params": {},
+      "origen": "SL/TP obligatorio (pedido del usuario 2026-10-26): l6-ruptura-n55-h1-long-v1 con stop 3 ATR (8-20 %) y objetivo 2x; mismos valores de la grilla que la v1 (spec congelada (sin grilla). Lote 6: paso backtest y robustez; seguimiento exploratorio de la prueba hacia adelante (NO decide; correccion Benjamini-Hochberg al evaluar).)",
+      "desde": "2026-10-26",
+      "rol": "sltp",
+      "base_v1": "l6-ruptura-n55-h1-long-v1"
+    },
+    "l6-ruptura-n55-h3-long-v2": {
+      "spec_hash": "dbf95e6931e75e51",
+      "universe": [
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "ETHUSDT",
+        "XLMUSDT",
+        "BNBUSDT",
+        "TRXUSDT"
+      ],
+      "params": {},
+      "origen": "SL/TP obligatorio (pedido del usuario 2026-10-26): l6-ruptura-n55-h3-long-v1 con stop 3 ATR (8-20 %) y objetivo 2x; mismos valores de la grilla que la v1 (spec congelada (sin grilla). Lote 6: paso backtest y robustez; seguimiento exploratorio de la prueba hacia adelante (NO decide; correccion Benjamini-Hochberg al evaluar).)",
+      "desde": "2026-10-26",
+      "rol": "sltp",
+      "base_v1": "l6-ruptura-n55-h3-long-v1"
+    },
+    "l6-ruptura-n55-h5-ambos-v2": {
+      "spec_hash": "9f4cf7da6b87c2df",
+      "universe": [
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "ETHUSDT",
+        "XLMUSDT",
+        "BNBUSDT",
+        "TRXUSDT"
+      ],
+      "params": {},
+      "origen": "SL/TP obligatorio (pedido del usuario 2026-10-26): l6-ruptura-n55-h5-ambos-v1 con stop 3 ATR (8-20 %) y objetivo 2x; mismos valores de la grilla que la v1 (spec congelada (sin grilla). Lote 6: paso backtest y robustez; seguimiento exploratorio de la prueba hacia adelante (NO decide; correccion Benjamini-Hochberg al evaluar).)",
+      "desde": "2026-10-26",
+      "rol": "sltp",
+      "base_v1": "l6-ruptura-n55-h5-ambos-v1"
+    },
+    "l6-ruptura-n55-h5-long-v2": {
+      "spec_hash": "47a91b80a40c49e2",
+      "universe": [
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "ETHUSDT",
+        "XLMUSDT",
+        "BNBUSDT",
+        "TRXUSDT"
+      ],
+      "params": {},
+      "origen": "SL/TP obligatorio (pedido del usuario 2026-10-26): l6-ruptura-n55-h5-long-v1 con stop 3 ATR (8-20 %) y objetivo 2x; mismos valores de la grilla que la v1 (spec congelada (sin grilla). Lote 6: paso backtest y robustez; seguimiento exploratorio de la prueba hacia adelante (NO decide; correccion Benjamini-Hochberg al evaluar).)",
+      "desde": "2026-10-26",
+      "rol": "sltp",
+      "base_v1": "l6-ruptura-n55-h5-long-v1"
+    },
+    "l6-tsmom-l28-fijo-ambos-v2": {
+      "spec_hash": "b8d7cb926ef5b91c",
+      "universe": [
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "ETHUSDT",
+        "XLMUSDT",
+        "BNBUSDT",
+        "TRXUSDT"
+      ],
+      "params": {},
+      "origen": "SL/TP obligatorio (pedido del usuario 2026-10-26): l6-tsmom-l28-fijo-ambos-v1 con stop 3 ATR (8-20 %) y objetivo 2x; mismos valores de la grilla que la v1 (spec congelada (sin grilla). Lote 6: paso backtest y robustez; seguimiento exploratorio de la prueba hacia adelante (NO decide; correccion Benjamini-Hochberg al evaluar).)",
+      "desde": "2026-10-26",
+      "rol": "sltp",
+      "base_v1": "l6-tsmom-l28-fijo-ambos-v1"
+    },
+    "l6-tsmom-l28-fijo-long-v2": {
+      "spec_hash": "e0df0e2c2a7da1a1",
+      "universe": [
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "ETHUSDT",
+        "XLMUSDT",
+        "BNBUSDT",
+        "TRXUSDT"
+      ],
+      "params": {},
+      "origen": "SL/TP obligatorio (pedido del usuario 2026-10-26): l6-tsmom-l28-fijo-long-v1 con stop 3 ATR (8-20 %) y objetivo 2x; mismos valores de la grilla que la v1 (spec congelada (sin grilla). Lote 6: paso backtest y robustez; seguimiento exploratorio de la prueba hacia adelante (NO decide; correccion Benjamini-Hochberg al evaluar).)",
+      "desde": "2026-10-26",
+      "rol": "sltp",
+      "base_v1": "l6-tsmom-l28-fijo-long-v1"
+    },
+    "l6-tsmom-l28-vol-ambos-v2": {
+      "spec_hash": "7447399b790d52d7",
+      "universe": [
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "ETHUSDT",
+        "XLMUSDT",
+        "BNBUSDT",
+        "TRXUSDT"
+      ],
+      "params": {},
+      "origen": "SL/TP obligatorio (pedido del usuario 2026-10-26): l6-tsmom-l28-vol-ambos-v1 con stop 3 ATR (8-20 %) y objetivo 2x; mismos valores de la grilla que la v1 (spec congelada (sin grilla). Lote 6: paso backtest y robustez; seguimiento exploratorio de la prueba hacia adelante (NO decide; correccion Benjamini-Hochberg al evaluar).)",
+      "desde": "2026-10-26",
+      "rol": "sltp",
+      "base_v1": "l6-tsmom-l28-vol-ambos-v1"
+    },
+    "l6-tsmom-l28-vol-long-v2": {
+      "spec_hash": "4117f162a1752dbf",
+      "universe": [
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "ETHUSDT",
+        "XLMUSDT",
+        "BNBUSDT",
+        "TRXUSDT"
+      ],
+      "params": {},
+      "origen": "SL/TP obligatorio (pedido del usuario 2026-10-26): l6-tsmom-l28-vol-long-v1 con stop 3 ATR (8-20 %) y objetivo 2x; mismos valores de la grilla que la v1 (spec congelada (sin grilla). Lote 6: paso backtest y robustez; seguimiento exploratorio de la prueba hacia adelante (NO decide; correccion Benjamini-Hochberg al evaluar).)",
+      "desde": "2026-10-26",
+      "rol": "sltp",
+      "base_v1": "l6-tsmom-l28-vol-long-v1"
+    },
+    "l6-tsmom-l7-fijo-long-v2": {
+      "spec_hash": "43a8662d74fa2afc",
+      "universe": [
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "ETHUSDT",
+        "XLMUSDT",
+        "BNBUSDT",
+        "TRXUSDT"
+      ],
+      "params": {},
+      "origen": "SL/TP obligatorio (pedido del usuario 2026-10-26): l6-tsmom-l7-fijo-long-v1 con stop 3 ATR (8-20 %) y objetivo 2x; mismos valores de la grilla que la v1 (spec congelada (sin grilla). Lote 6: paso backtest y robustez; seguimiento exploratorio de la prueba hacia adelante (NO decide; correccion Benjamini-Hochberg al evaluar).)",
+      "desde": "2026-10-26",
+      "rol": "sltp",
+      "base_v1": "l6-tsmom-l7-fijo-long-v1"
+    },
+    "l6-tsmom-l7-vol-long-v2": {
+      "spec_hash": "c07d0119cbdcaeeb",
+      "universe": [
+        "BTCUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "ETHUSDT",
+        "XLMUSDT",
+        "BNBUSDT",
+        "TRXUSDT"
+      ],
+      "params": {},
+      "origen": "SL/TP obligatorio (pedido del usuario 2026-10-26): l6-tsmom-l7-vol-long-v1 con stop 3 ATR (8-20 %) y objetivo 2x; mismos valores de la grilla que la v1 (spec congelada (sin grilla). Lote 6: paso backtest y robustez; seguimiento exploratorio de la prueba hacia adelante (NO decide; correccion Benjamini-Hochberg al evaluar).)",
+      "desde": "2026-10-26",
+      "rol": "sltp",
+      "base_v1": "l6-tsmom-l7-vol-long-v1"
     }
   }
 }

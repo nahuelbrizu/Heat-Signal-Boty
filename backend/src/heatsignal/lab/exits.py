@@ -288,6 +288,49 @@ EXITS["l6-familia-ruptura-neta-v1"] = {
 }
 
 
+# SL/TP obligatorio (2026-10-26, lab/sltp.py): -v2 en paralelo de cada estrategia del bot de paper. Mismas entradas
+# que la v1; salen SOLO por stop u objetivo. Esta lista la usa tambien el catalogo (lab/strategies.py).
+SLTP_BASES = (
+    "tsmom-diario-v1", "low-vol-xs-v1", "pares-eth-btc-v1", "rango-reversion-v1", "reversion-xs-1h-v1",
+    "funding-prepago-v1", "max-ruptura-10d-v1",
+    "l6-familia-ruptura-long-v1", "l6-familia-ruptura-short-v1", "l6-familia-ruptura-neta-v1",
+    "l6-reg-adx25-long-v1", "l6-reg-atrp50-ambos-v1",
+    "l6-ruptura-n10-h1-long-v1", "l6-ruptura-n10-h3-ambos-v1", "l6-ruptura-n10-h3-long-v1", "l6-ruptura-n10-h5-long-v1",
+    "l6-ruptura-n20-h1-long-v1", "l6-ruptura-n20-h3-ambos-v1", "l6-ruptura-n20-h3-long-v1", "l6-ruptura-n20-h5-long-v1",
+    "l6-ruptura-n55-h1-long-v1", "l6-ruptura-n55-h3-long-v1", "l6-ruptura-n55-h5-ambos-v1", "l6-ruptura-n55-h5-long-v1",
+    "l6-tsmom-l28-fijo-ambos-v1", "l6-tsmom-l28-fijo-long-v1", "l6-tsmom-l28-vol-ambos-v1", "l6-tsmom-l28-vol-long-v1",
+    "l6-tsmom-l7-fijo-long-v1", "l6-tsmom-l7-vol-long-v1",
+)
+SLTP_LIQUIDACION = ("el stop queda siempre a ≤ 50 % de la distancia entre la entrada y la liquidación (margen aislado, "
+                    "mmr supuesto 2 %); si el tamaño no lo permite se achica, y si igual no cumple no se opera")
+for _b in SLTP_BASES:
+    EXITS[_b[:-3] + "-v2"] = {
+        "stop": {"tipo": "atr", "valor": 3.0, "param": "sl_atr",
+                 "base": "precio de entrada − 3 ATR(14) de la temporalidad de la base, con piso 8 % y techo 20 % del precio",
+                 **_ATR_1M},
+        "take_profit": {"tipo": "atr", "valor": 6.0, "param": "sl_atr*rr",
+                        "base": "precio de entrada + 2 × la distancia del stop (R:R 1:2)", **_ATR_1M},
+        "tiempo": None, "otra": None, "sltp": True, "base_v1": _b, "liquidacion": SLTP_LIQUIDACION,
+        "nota": "Entradas de la v1; queda abierta hasta que salta el stop o el objetivo (sin tiempo, señal ni rebalanceo)."
+                + (" Una operación por componente." if "familia" in _b else ""),
+        "cierre": "stop", "giro": "stop",
+    }
+
+
+# Lote 7 (2026-10-26): grilla long con stop por compra. Cada compra (1/5 del capital del simbolo) sale por su objetivo
+# (+1 escalon) o por su stop; la posicion del simbolo es la suma de las compras abiertas.
+for _g in ("grilla-long-v1", "grilla-long-lateral-v1"):
+    EXITS[_g] = {
+        "stop": {"tipo": "atr", "valor": 3.0, "param": "sl_atr",
+                 "base": "precio del escalón − 3 ATR(14) 1h, con piso 8 % y techo 20 %; uno por compra", **_ATR_1M},
+        "take_profit": {"tipo": "escalon", "valor": None, "param": "interval",
+                        "base": "escalón de arriba: precio de compra × (1 + interval), 2 % o 4 % según la grilla", **_ATR_1M},
+        "tiempo": None, "otra": None, "liquidacion": SLTP_LIQUIDACION,
+        "nota": "Cada compra con su objetivo (+1 escalón) y su stop; sin tiempo ni señal. Cierres parciales = ajustes.",
+        "cierre": "objetivo", "giro": "stop",
+    }
+
+
 # Freqtrade (paper): lo configurado en cada estrategia (freqtrade/**/strategies). Un test lo compara con los archivos.
 FREQTRADE_EXITS: dict[str, dict[str, Any]] = {
     "DonchianEnsembleV1": {
@@ -347,6 +390,8 @@ def tp_text(s: dict[str, Any] | None) -> str | None:
     k, v = s["tipo"], s.get("valor")
     if k == "retroceso":
         return f"objetivo {_n(round(v * 100))} % de retroceso"
+    if k == "escalon":
+        return "objetivo +1 escalón"
     return {"atr": f"objetivo {_n(v)} ATR", "z": f"objetivo |z| < {_n(v)}", "ema": f"objetivo EMA{_n(v)}",
             "vwap": "objetivo VWAP", "pct": f"objetivo {_n(v)} %"}.get(k, f"objetivo {k}")
 

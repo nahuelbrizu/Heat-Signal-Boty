@@ -1543,3 +1543,84 @@ CATALOG.update({
                "el bot de paper. Criterio: a los 3 meses Sharpe > 0 y > canasta; a los 6 meses ademas p <= 0,05."),
         l6_familia),
 })
+
+
+# =====================================================================================================
+# SL/TP obligatorio (2026-10-26, decisions.md "SL/TP obligatorio: versiones -v2"): cada estrategia del bot de paper
+# tiene una -v2 EN PARALELO con las MISMAS entradas que la v1 y una sola salida: stop 3 ATR(14) (piso 8 %, techo
+# 20 %) u objetivo 2x esa distancia, lo que salte primero, con guardia de liquidacion. Las v1 no cambian (ningun
+# spec_hash cambia). Solo hacia adelante en el bot de paper (backtestable=False: no suma intentos). Logica en
+# `lab/sltp.py`; el bot de paper la corre con estado (`sltp_trades`), no con esta regla.
+# =====================================================================================================
+
+from . import sltp as _sltp  # noqa: E402
+
+from .exits import SLTP_BASES  # noqa: E402  (una sola lista: la ficha de salidas y el catalogo)
+
+
+def sltp_id(base_id: str) -> str:
+    if not base_id.endswith("-v1"):
+        raise ValueError(f"{base_id}: la -v2 con SL/TP se arma desde una -v1")
+    return base_id[:-3] + "-v2"
+
+
+def sltp_v2(data: dict[str, MarketData], p: dict[str, Any]) -> Signals:
+    """Mismas entradas que la base `p['base']`; sale SOLO por stop (sl_atr*ATR, entre sl_min y sl_max del precio) u
+    objetivo (rr x la distancia del stop), evaluados en velas 1m (empate -> stop). Ver `lab/sltp.py`."""
+    return _sltp.run_chain(data, p)
+
+
+def _sltp_specs() -> dict[str, tuple[Spec, Rule]]:
+    out: dict[str, tuple[Spec, Rule]] = {}
+    for base in SLTP_BASES:
+        b = CATALOG[base][0]
+        sid = sltp_id(base)
+        params = {"base": base, "base_hash": b.spec_hash(), **_sltp.PARAMS, **{k: b.params[k] for k in b.grid}}
+        out[sid] = (Spec(
+            sid, b.family,
+            f"{base} con SL/TP obligatorio: mismas entradas (la base pasa de plana a un lado o da vuelta); sale SOLO "
+            "por stop a 3 ATR(14) de la temporalidad (piso 8 %, techo 20 % del precio de entrada) o por objetivo al "
+            "doble de esa distancia (1:2), lo que toque primero una vela 1m (empate -> stop). Sin salida por tiempo, "
+            "senal ni rebalanceo; una operacion por vez por simbolo"
+            + (" y por componente (cada una con su stop y objetivo)" if "components" in b.params else "")
+            + ". El stop siempre queda a <= 50 % de la distancia a la liquidacion (aislado).",
+            b.timeframe, b.direction, "hasta stop/objetivo", params, grid=dict(b.grid), needs=b.needs,
+            backtestable=False,
+            source="pedido del usuario 2026-10-26 (SL y TP en todas las operaciones nuevas, nunca tocar la liquidacion); "
+                   "parametros elegidos por el usuario antes de ver resultados. Solo hacia adelante en el bot de paper, "
+                   "en paralelo con la v1."), sltp_v2)
+    return out
+
+
+CATALOG.update(_sltp_specs())
+SLTP_V2 = tuple(sltp_id(b) for b in SLTP_BASES)
+
+
+# =====================================================================================================
+# Lote 7 (2026-10-26, decisions.md "Lote 7: grilla"; research/infinity-grid.md): grilla long con stop por compra
+# (como las -v2). Pre-registrada por el usuario antes de cualquier resultado. Regla en `lab/grilla.py`.
+# =====================================================================================================
+
+from .grilla import grilla  # noqa: E402
+
+_GRILLA_BASE = {"symbols": list(SEVEN), "n_lots": 5, "interval": 0.04, "sl_atr": _sltp.SL_ATR, "atr_n": _sltp.ATR_N,
+                "sl_min": _sltp.SL_MIN, "sl_max": _sltp.SL_MAX, "mmr": _sltp.MMR, "liq_buffer": _sltp.LIQ_BUFFER}
+_GRILLA_SRC = ("idea de infinity-grid (github.com/btschwertfeger/infinity-grid, GridSell; reimplementada), aprobada por "
+               "el usuario 2026-10-26 con stop por compra (opcion a); sin paper academico")
+CATALOG.update({
+    "grilla-long-v1": (Spec(
+        "grilla-long-v1", "grilla",
+        "Velas 1m, los 7, futuros 1x. Escalera de 5 compras cada `interval` (2 % o 4 %) debajo del ancla, 1/5 del "
+        "capital del simbolo por compra; una compra se llena cuando el minimo cruza el escalon y se vende al escalon de "
+        "arriba (+interval). Stop por compra a 3 ATR(14) 1h (piso 8 %, techo 20 %), empate -> stop. Sin lotes "
+        "abiertos, si el precio sube un escalon por encima del ancla, la escalera se corre arriba.",
+        "1m", "long", "hasta objetivo/stop", {**_GRILLA_BASE, "lateral": False},
+        grid={"interval": [0.02, 0.04]}, source=_GRILLA_SRC), grilla),
+    "grilla-long-lateral-v1": (Spec(
+        "grilla-long-lateral-v1", "grilla",
+        "Igual que grilla-long-v1, pero solo compra cuando la tendencia del dia (htf-trend-v1, ultimo cierre de 1h) es "
+        "'lateral'; los lotes abiertos siguen con su objetivo y su stop.",
+        "1m", "long", "hasta objetivo/stop", {**_GRILLA_BASE, "lateral": True},
+        grid={"interval": [0.02, 0.04]}, source=_GRILLA_SRC), grilla),
+})
+LOTE7 = ("grilla-long-v1", "grilla-long-lateral-v1")

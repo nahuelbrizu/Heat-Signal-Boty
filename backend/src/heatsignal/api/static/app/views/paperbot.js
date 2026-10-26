@@ -23,12 +23,14 @@ const NAMES = {
   "l6-familia-ruptura-short-v1": "Familia ruptura SHORT (12 rupturas, 1/12 c/u)",
   "l6-familia-ruptura-neta-v1": "Familia ruptura NETA (balance long − short)",
 };
-const ROLE_ORDER = ["principal", "seguimiento", "paper_previo"];
-const ROLE_LABEL = { principal: "Hipótesis principal (decide)", seguimiento: "Seguimiento (exploratorio, no decide)", paper_previo: "Paper previo" };
+const ROLE_ORDER = ["principal", "seguimiento", "paper_previo", "sltp"];
+const ROLE_LABEL = { principal: "Hipótesis principal (decide)", seguimiento: "Seguimiento (exploratorio, no decide)", paper_previo: "Paper previo",
+  sltp: "Con SL/TP obligatorio (-v2, en paralelo)" };
 const ROLE_SUB = {
   principal: "pre-registradas antes del primer dato (decisions.md, 2026-10-20); solo estas deciden, con su criterio a 3 y 6 meses",
   seguimiento: "20 variantes del lote 6 que pasaron backtest y robustez; NO deciden nada: al evaluarlas se corrige por comparaciones múltiples (Benjamini–Hochberg)",
   paper_previo: "estrategias que ya corrían antes de la prueba hacia adelante (lote 3 y max-ruptura-10d-v1)",
+  sltp: "desde el 2026-10-26: cada estrategia con su -v2 que usa las mismas entradas pero sale SOLO por stop (3 ATR, entre 8 % y 20 %) u objetivo (2× el stop), con el stop siempre antes de la liquidación. No decide la prueba hacia adelante",
 };
 const STATUS = { ok: ["ok", "ok"], error: ["bad", "error"], skipped: ["", "omitida"] };
 const REASON = { senal: "señal", resincronizacion: "re-sincronización", inicio: "inicio", hueco: "después de hueco" };
@@ -41,7 +43,7 @@ function money(v, signed = false) {
 const sMoney = (v) => isNum(v) ? el("span", { class: Math.abs(v) < 0.005 ? "" : v > 0 ? "pos" : "neg" }, money(v, true)) : DASH;
 const sFrac = (v, d = 2) => isNum(v) ? el("span", { class: Math.abs(v) < 5e-5 ? "" : v > 0 ? "pos" : "neg" }, signedFrac(v, d)) : DASH;
 const statusChip = (s) => { const [k, t] = STATUS[s] || ["", s || DASH]; return chip(t, k); };
-const name = (sid) => NAMES[sid] || sid;
+const name = (sid) => NAMES[sid] || (/-v2$/.test(sid) && NAMES[sid.replace(/-v2$/, "-v1")] ? NAMES[sid.replace(/-v2$/, "-v1")] + " · con SL/TP" : sid);
 const countsLine = (c) => c && Object.keys(c).length ? el("div", { class: "small muted" },
   Object.entries(c).map(([m, n]) => (MOTIVO[m] || m) + " " + int(n)).join(" · ")) : null;
 
@@ -163,7 +165,8 @@ export function renderOverview(ov, href, sel) {
   const sections = ROLE_ORDER.map((r) => {
     const list = byRole[r] || [];
     const missing = sinDatos.filter((x) => x.rol === r && x.nunca_corrio);
-    const body = r === "principal" ? principalBlock(list, href, sel, ov) : stratTable(list, href, sel, r === "seguimiento");
+    const body = r === "principal" ? principalBlock(list, href, sel, ov) : r === "sltp" ? sltpTable(list, strategies, href, sel)
+      : stratTable(list, href, sel, r === "seguimiento");
     return el("section", { class: "stack", "aria-label": ROLE_LABEL[r], "data-rol": r },
       card(ROLE_LABEL[r], ROLE_SUB[r], body,
         missing.length ? el("div", { class: "note warn" }, el("b", {}, "Sin datos todavía: "),
@@ -221,6 +224,62 @@ function stratTable(list, href, sel, seguimiento) {
       el("span", { class: "chips" }, ...(s.positions || []).map((p) => weightChip(p.symbol, p.weight)).filter(Boolean),
         (s.positions || []).some((p) => Math.abs(p.weight) > 1e-9) ? null : el("span", { class: "muted" }, "plana")), labCell(s.lab)];
   }), { empty: "Ninguna estrategia con corrida ok en este grupo.", label: "Estrategias", scroll: true });
+}
+
+const pct = (v, d = 1) => isNum(v) ? num(v * 100, d) + " %" : DASH;
+
+/** -v2 con SL/TP: su retorno al lado del de la v1 (mismas entradas) y sus operaciones abiertas / cerradas. */
+function sltpTable(list, all, href, sel) {
+  const byId = Object.fromEntries((all || []).map((s) => [s.strategy_id, s]));
+  const cols = [{ label: "Estrategia" }, { label: "Retorno v2", cls: "n" },
+    { label: "Retorno v1", cls: "n", title: "la misma estrategia sin SL/TP obligatorio, desde su propio inicio (no es el mismo período)" },
+    { label: "Canasta", cls: "n" }, { label: "Equity", cls: "n" },
+    { label: "Abiertas", cls: "n", title: "operaciones abiertas, cada una con su stop y objetivo" },
+    { label: "Cerradas", title: "por stop / por objetivo" }, { label: "Más cerca del stop", title: "operación abierta con menos margen hasta su stop (desde la marca)" },
+    { label: "Posición actual" }];
+  return el("div", { class: "stack" }, table(cols, list.map((s) => {
+    const x = s.sltp || {}, m = x.por_motivo || {}, v1 = byId[(s.exits || {}).base_v1];
+    const near = (x.abiertas || []).filter((t) => isNum(t.a_stop)).sort((a, b) => a.a_stop - b.a_stop)[0];
+    return [
+      el("a", { href: href("paperbot", [s.strategy_id]), "aria-current": s.strategy_id === sel ? "true" : null }, el("b", {}, name(s.strategy_id)),
+        el("div", { class: "small muted mono" }, s.strategy_id), s.started_ms ? el("div", { class: "small muted" }, "desde ", when(s.started_ms)) : null),
+      sFrac(s.return), v1 ? el("span", {}, sFrac(v1.return), el("div", { class: "small muted" }, "desde ", when(v1.started_ms))) : DASH,
+      sFrac(s.basket_return), money(s.equity), int(x.n_abiertas || 0),
+      el("span", {}, chip("stop " + int(m.stop || 0), m.stop ? "bad" : ""), " ", chip("objetivo " + int(m.objetivo || 0), m.objetivo ? "ok" : "")),
+      near ? el("span", {}, el("b", {}, toSym(near.symbol).split("-")[0]), " a " + pct(near.a_stop) + " del stop") : DASH,
+      el("span", { class: "chips" }, ...(s.positions || []).map((p) => weightChip(p.symbol, p.weight)).filter(Boolean),
+        (s.positions || []).some((p) => Math.abs(p.weight) > 1e-9) ? null : el("span", { class: "muted" }, "plana"))];
+  }), { empty: "Ninguna -v2 con corrida ok todavía.", label: "Estrategias con SL/TP", scroll: true }),
+  el("p", { class: "small muted" }, "Arrancan sin posiciones el 2026-10-26 y solo toman entradas nuevas de la v1 (no copian las posiciones que la v1 ya tenía). ",
+    "Los stops y objetivos se chequean en velas 1m también durante un hueco del bot (como una orden puesta en el exchange); las entradas no."));
+}
+
+/** Operaciones abiertas y cerradas de una -v2 (detalle). */
+export function sltpBlock(x) {
+  if (!x) return null;
+  const sideEl = (t) => el("span", { class: t.side > 0 ? "buy" : "sell" }, t.side > 0 ? "▲ long" : "▼ short");
+    const open = table([{ label: "Símbolo" }, { label: "Componente" }, { label: "Lado" }, { label: "Entrada" }, { label: "Precio entrada", cls: "n" },
+    { label: "Stop", cls: "n" }, { label: "Objetivo", cls: "n" }, { label: "Liquidación", cls: "n", title: "margen aislado, mmr supuesto 2 %; el stop queda siempre a ≤ 50 % de esta distancia" },
+    { label: "Tamaño", cls: "n", title: "fracción del capital del símbolo (= apalancamiento)" }, { label: "Marca", cls: "n" }, { label: "Va", cls: "n" },
+    { label: "Falta al stop", cls: "n" }, { label: "Falta al objetivo", cls: "n" }],
+  (x.abiertas || []).map((t) => [el("b", {}, toSym(t.symbol)), el("span", { class: "small mono" }, t.slot), sideEl(t), when(t.entry_ms), price(t.ref_price),
+    el("span", {}, price(t.sl), el("div", { class: "small muted" }, "−" + pct(t.sl_frac) + " · ATR " + t.atr_tf)),
+    el("span", {}, price(t.tp), el("div", { class: "small muted" }, "+" + pct(t.tp_frac))),
+    t.liq_price ? el("span", {}, price(t.liq_price), el("div", { class: "small muted" }, pct(t.liq_frac, 0) + " de la entrada")) : el("span", { class: "muted", title: "long a ≤ 1x: no se liquida" }, "no aplica"),
+    num(t.leverage, 2) + "×" + (t.weight < 1 ? " · " + num(t.weight, 3) : ""), price(t.mark), sFrac(t.ret_marca), pct(t.a_stop), pct(t.a_objetivo)]),
+  { empty: "Ninguna operación abierta.", label: "Operaciones abiertas con SL/TP", scroll: true });
+  const closed = table([{ label: "Símbolo" }, { label: "Componente" }, { label: "Lado" }, { label: "Entrada" }, { label: "Salida" }, { label: "Precio entrada", cls: "n" },
+    { label: "Nivel tocado", cls: "n" }, { label: "Motivo" }, { label: "En el nivel", cls: "n", title: "retorno de precio hasta el nivel, antes de costos; el fill real es el open de la vela siguiente" }],
+  (x.cerradas || []).map((t) => [el("b", {}, toSym(t.symbol)), el("span", { class: "small mono" }, t.slot), sideEl(t), when(t.entry_ms), when(t.exit_ms), price(t.ref_price),
+    price(t.nivel_tocado), chip(t.motivo === "stop" ? "stop" : "objetivo", t.motivo === "stop" ? "bad" : "ok"), sFrac(t.ret_nivel)]),
+  { empty: "Ninguna cerrada todavía.", label: "Operaciones cerradas con SL/TP", scroll: true });
+  const m = x.por_motivo || {}, n = (m.stop || 0) + (m.objetivo || 0);
+  return el("div", { class: "stack" },
+    el("div", { class: "note info" }, el("b", {}, "SL/TP obligatorio. "), x.nota || ""),
+    el("div", { class: "chips" }, chip(int(x.n_abiertas) + " abiertas", "info"), chip("stop " + int(m.stop || 0), m.stop ? "bad" : ""), chip("objetivo " + int(m.objetivo || 0), m.objetivo ? "ok" : ""),
+      n ? el("span", { class: "small" }, rateText(m.objetivo || 0, n, x.objetivo_ci95) + " llegaron al objetivo (el mínimo para no perder con 1:2 es 33 %)") : null),
+    n && n < 30 ? el("div", { class: "note" }, el("b", {}, "Muestra chica: "), int(n) + " operaciones cerradas no alcanzan para sacar conclusiones.") : null,
+    el("div", {}, el("h3", {}, "Abiertas"), open), el("div", {}, el("h3", {}, "Cerradas"), closed));
 }
 
 const VERDICT_CHECKS = { sharpe_positivo: "Sharpe > 0", le_gana_a_la_canasta: "Sharpe > referencia", p_menor_igual_005: "p ≤ 0,05" };
@@ -377,6 +436,7 @@ export function renderDetail(d) {
         el("div", {}, el("h3", {}, "Cierres por motivo"), reasonBars(d.exit_counts),
           el("p", { class: "small muted" }, "El motivo se registra desde el 2026-10-19 (tabla aditiva exit_reasons); los trades anteriores figuran como «sin registro». ",
             "Re-sincronización / inicio / hueco = la orden la pidió el bot para volver al objetivo de la regla, no una salida de la regla."))),
+      d.sltp ? el("div", {}, el("h3", {}, "Operaciones con stop y objetivo"), sltpBlock(d.sltp)) : null,
       el("div", {}, el("h3", {}, "Trades cerrados"), trTable),
       el("div", {}, el("h3", {}, "Órdenes simuladas"), orTable,
         el("p", { class: "small muted" }, "Fill al open de la vela 1m siguiente a la decisión (convención del laboratorio). ",

@@ -1134,6 +1134,11 @@ regla) y `sin_dato` (cierres anteriores al registro).
 - `GET /api/lab/{id}`: `exits` + `diagnostics.salidas` con `por_simbolo` y `componentes` (cartera).
 - `GET /api/paperbot`: cada estrategia trae `exits` y `exit_counts` (`{motivo: n}` de sus trades cerrados).
   `GET /api/paperbot/{id}`: lo mismo y cada trade con `motivo` (`null` = anterior a la tabla `exit_reasons`).
+- `GET /api/paperbot` (2026-10-26): las -v2 con SL/TP obligatorio (`rol: "sltp"`, `exits.base_v1` = su v1) traen `sltp`:
+  `abiertas` (hasta 20; `slot`, `symbol`, `side`, `size`, `weight`, `entry_ms`, `ref_price`, `atr`, `atr_tf`, `sl`, `tp`,
+  `sl_frac`, `tp_frac`, `leverage`, `liq_price`, `liq_frac`, `mark`, `a_stop`, `a_objetivo`, `ret_marca`), `n_abiertas`,
+  `cerradas` (con `motivo` stop|objetivo, `exit_ms`, `nivel_tocado`, `ret_nivel`), `n_cerradas`, `por_motivo`,
+  `objetivo_ci95` (Wilson), `nota`. `null` en las que no son -v2. `GET /api/paperbot/{id}`: lo mismo hasta 500 filas.
 - `GET /api/paper`: `exits` (`stoploss`, `minimal_roi`, `stop_text`, `roi_text`, `source`: `api` si respondió
   `show_config`, si no `estrategia`) y `exit_reasons` (`{exit_reason de Freqtrade: n}` de las cerradas).
 - `GET /api/paper/hypotheses`: `exits` (Freqtrade de hipótesis: stop de seguridad −20 %, ROI desactivado),

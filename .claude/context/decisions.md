@@ -658,6 +658,48 @@
   las de antes y después se evalúan por separado. A vigilar: `gaps.py` clasifica como hueco real cosas como "trades: sin
   datos de bybit"; si el CRO veta seguido por eso, revisar la clasificación.
 
+- **SL/TP obligatorio: versiones -v2 (2026-10-26, pedido del usuario: "cuando hace operaciones siempre tiene que poner
+  un take profit y un stop loss ... dejarlas corriendo hasta que uno salte" + "que nunca toquemos la liquidación").**
+  Decidido por el usuario ANTES de cualquier resultado: (1) **-v2 en paralelo** de las 30 estrategias del bot de paper
+  (`lab/strategies.py`, `SLTP_V2`; las v1 y la prueba hacia adelante pre-registrada no cambian, ningún spec_hash
+  cambia); (2) la operación cierra **solo** por stop u objetivo (sin tiempo, señal ni rebalanceo); (3) stop a
+  **3 ATR(14)** de la temporalidad de la base (1D o 1h), **piso 8 %, techo 20 %** del precio de entrada; objetivo al
+  **doble** (1:2). Entradas = las de la v1 (pasa de plana a un lado o da vuelta), tamaño = el de la v1 en ese instante;
+  una operación por vez por símbolo y por componente (las familias: una operación por componente). Toques en velas 1m,
+  empate → stop, fill al open siguiente. **Guardia de liquidación** (`lab/sltp.py`): margen aislado, fórmula de
+  Binance, mmr supuesto 2 % (conservador; antes de plata real, reemplazar por los leverage brackets reales de cada
+  símbolo verificados contra la doc); el stop queda a ≤ 50 % de la distancia a la liquidación; si el tamaño no lo
+  permite se achica, y si igual no cumple la corrida falla (nunca se opera con el stop detrás de la liquidación). Hoy
+  todo es ≤ 1x: no se achica nada. **Ejecución con estado** en el bot (`sltp_trades`, append-only): los niveles se
+  fijan al entrar y cada corrida solo mira las velas nuevas (recalcular la cadena con la ventana de 64 d cerraría
+  posiciones viejas sin tocar ningún nivel); los toques corren también durante un hueco (como una orden en el
+  exchange), las entradas no. Rol `sltp` en `params.json`: no decide la prueba hacia adelante; se compara contra su v1.
+  `backtestable=False`: no se backtestea ni suma intentos (correrlas en el laboratorio sería otra decisión). Pendiente:
+  Freqtrade (Donchian sin stop; hipótesis con stop de seguridad −20 % y salida por tiempo) no tiene -v2 todavía.
+
+- **Lote 7: grilla long con stop por compra (2026-10-26, aprobado por el usuario: "opción a, stop por compra como las
+  v2"; idea de infinity-grid, `research/infinity-grid.md`).** Dos estrategias del laboratorio (`lab/grilla.py`,
+  `LOTE7`): `grilla-long-v1` y `grilla-long-lateral-v1` (solo compra si `htf-trend-v1` da lateral; vectorizado en
+  `lab/regime.py`, verificado contra `build_htf_context`). Los 7 símbolos, futuros 1x, 5 escalones de 1/5 del capital del
+  símbolo cada `interval` (grilla {2 %, 4 %}: 2 intentos por estrategia); compra cuando el mínimo de una vela 1m cruza
+  ESTRICTAMENTE el escalón y la vela anterior cerró por encima; objetivo = escalón de arriba; stop por compra 3 ATR(14)
+  1h, piso 8 %, techo 20 % (como las -v2), empate → stop; corrimiento hacia arriba solo sin lotes abiertos. Ejecución con
+  la convención del simulador (fill al open siguiente, costo taker 5 + 2 bps), no límite al nivel; el sesgo de esa
+  diferencia se mide lote por lote (`grilla.fill_bias`). **Declaración:** la condición "la vela anterior cerró por
+  encima" se agregó DESPUÉS de correr el diagnóstico de sesgo y ver conteos de lotes/stops/objetivos en BTC (sin ver
+  retornos ni Sharpe): sin ella el simulador "compraba en el escalón" con el precio ya muy por debajo (una límite así se
+  llena a mercado), con un sesgo a favor de +33 % del capital en la variante lateral. Con la corrección el sesgo queda
+  en contra (−1 a −5 %: conservador). Se publica con el listón del programa como cualquier otra.
+
+- **Lote 7, resultado (2026-10-26): ninguna de las dos grillas pasa.** Walk-forward OOS, los 7, costos 5 + 2 bps:
+  `grilla-long-v1` Sharpe −0,03 (IC 95 % −0,94 a 0,87), retorno −0,8 %, máx. DD 13,7 %, 699 trades, acierto 76 %
+  (IC 73–79 %) contra 76 % necesario para no perder (payoff 0,31: ganancia media 0,15 %, pérdida media 0,49 %), DSR
+  0,34, break-even 6,2 bps por lado (< 2× costo). `grilla-long-lateral-v1` Sharpe −0,29 (IC −1,10 a 0,53), retorno
+  −7,4 %, DD 15,5 %, 569 trades, acierto 71 % contra 74 % necesario, DSR 0,16, break-even negativo. Lectura: la grilla
+  gana seguido y poco y los stops se comen todo; filtrar por día lateral la empeora. Rachas no aleatorias (z ≈ −8: las
+  pérdidas vienen juntas, en las caídas). 4 intentos más en el registro (2 por estrategia). No pasa a paper. Resultados
+  en `~/heatsignal-lab/results/grilla-*`.
+
 ## Abiertas
 - ~~Plan de CoinGlass a contratar.~~ **Ya no aplica al core** — la fuente primaria pasó a WS nativos.
   Solo se retomaría si se implementa la fuente BYOK opcional (y ahí el plan lo elige el usuario).

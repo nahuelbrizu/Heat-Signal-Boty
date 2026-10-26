@@ -281,7 +281,7 @@ def test_view_roles_sharpe_and_criterion(tmp_path):
     _synthetic_db(tmp_path / "pb.sqlite", 100)
     ov = V.overview(tmp_path / "pb.sqlite", now_ms=T0 + 100 * DAY)
     by = {s["strategy_id"]: s for s in ov["strategies"]}
-    assert [r["rol"] for r in ov["roles"]] == ["principal", "seguimiento", "paper_previo"]
+    assert [r["rol"] for r in ov["roles"]] == ["principal", "seguimiento", "paper_previo", "sltp"]
     assert by[FAM]["rol"] == "principal" and by[FAM]["rol_label"] == "Hipótesis principal (decide)"
     assert by[TS]["rol"] == "seguimiento" and by[TS]["sharpe"]["marca"] == "exploratorio; corrección BH al evaluar"
     assert by["tsmom-diario-v1"]["rol"] == "paper_previo" and by["tsmom-diario-v1"]["criterio"] is None

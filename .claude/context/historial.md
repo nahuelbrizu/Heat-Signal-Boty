@@ -11,6 +11,29 @@
 
 ## Entradas
 
+### 2026-10-26 (noche)
+- Lote 7 (grilla long con stop por compra, opción a del usuario): `lab/grilla.py`, `lab/regime.py` (htf-trend-v1
+  vectorizado, verificado contra el vivo), tests `test_lab_grilla.py` y `test_lab_regime.py`. Se corrigió el modelo de
+  llenado antes de ver retornos (declarado en decisions.md). Resultado: no pasa ninguna (Sharpe −0,03 y −0,29).
+  Falta republicar el laboratorio para verlo en el panel (`python -m heatsignal.lab.publish --upload`).
+
+### 2026-10-26 (tarde)
+- Revisión de infinity-grid (bot de grilla para Kraken spot): `research/infinity-grid.md`. Sirve como idea de familia
+  nueva (grilla, activable en días laterales) y como patrones de robustez para la etapa de plata real (intención escrita
+  antes de la orden, órdenes pendientes, kill switch por precio viejo, tope de inversión). No tiene stop ni backtest;
+  licencia no comercial (tomar ideas, no copiar código). Propuesta de pre-registro del lote 7 a la espera del usuario.
+
+### 2026-10-26
+- SL/TP obligatorio en todas las operaciones nuevas (pedido del usuario) como **-v2 en paralelo** de las 30 del bot de
+  paper: mismas entradas que la v1, salida solo por stop 3 ATR (8–20 %) u objetivo 2× (decisions.md, "SL/TP
+  obligatorio"). Código: `lab/sltp.py` (niveles, guardia de liquidación, `advance`), specs en `lab/strategies.py`,
+  fichas en `lab/exits.py`, ejecución con estado en `paperbot/engine.py` (`_sltp_run`, tabla `sltp_trades`), rol `sltp`
+  en `params.json`, panel `#/paperbot` (sección "Con SL/TP obligatorio" con la v1 al lado; en el detalle, operaciones
+  abiertas con stop, objetivo, liquidación y distancia desde la marca, y cerradas con su motivo). Tests: `test_sltp.py`.
+  Simulación local de 60 corridas: ~5,5 s y 206 MB pico por corrida (antes ~3 s / 147 MB en la VM; MemoryMax 400M).
+- Falta: deploy del código a la VM, reiniciar la ingesta (panel) — el timer del paperbot toma el código nuevo solo.
+  Freqtrade sin -v2 (decidir si se suma una instancia o alcanza con el paperbot).
+
 ### 2026-10-19 (noche)
 - Investigación de matemática del trading (MQL5, dos hilos de X, Rankia): `research/mql5-matematica-trading.md`,
   partes 1 y 2, con lo que ya teníamos, lo nuevo útil y lo descartado.

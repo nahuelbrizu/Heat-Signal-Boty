@@ -333,7 +333,13 @@ def test_targets_match_lab_rules_with_longer_history(lote3_env):
     assert set(est) == set(entries) and set(BOT) <= set(est)
     # las diarias del lote 6 con historia suficiente en 1m (70 d) corren con velas diarias agregadas en SQL y dan el
     # MISMO objetivo que la regla sobre 1m; las que piden mas (sin REST: download=False) quedan sin datos y lo dicen
-    ran_daily = [sid for sid in entries if sid not in BOT and est[sid]["estado"] == "ok"]
+    ran_daily = [sid for sid in entries if sid not in BOT and not sid.endswith("-v2") and est[sid]["estado"] == "ok"]
+    # las -v2 con SL/TP (estado propio, sin operaciones previas: test_sltp.py) corren sobre los mismos datos que su v1
+    for sid in (x for x in entries if x.endswith("-v2")):
+        b = entries[sid]["base_v1"]
+        assert est[sid]["estado"] == est[b]["estado"], sid
+        if est[sid]["estado"] == "ok":
+            assert est[sid]["sltp"]["abiertas"] == 0 and all(v == 0 for v in est[sid]["targets"].values())
     assert "l6-tsmom-l28-vol-long-v1" in ran_daily and "l6-familia-ruptura-long-v1" not in ran_daily
     assert est["l6-familia-ruptura-long-v1"]["estado"] == "sin_datos" and "dias contiguos" in est["l6-familia-ruptura-long-v1"]["motivo"]
     assert "SIN DATOS" in r["reason"]
@@ -383,7 +389,10 @@ PRINCIPAL = ("l6-familia-ruptura-long-v1", "l6-familia-ruptura-short-v1", "l6-fa
 
 def test_params_json_roles_and_from_today():
     entries = P.load()
-    assert set(entries) == {*BOT, *SEGUIMIENTO, *PRINCIPAL} and len(entries) == 30
+    v2 = {s for s in entries if s.endswith("-v2")}  # SL/TP obligatorio (2026-10-26): una -v2 por cada v1 (test_sltp.py)
+    assert set(entries) - v2 == {*BOT, *SEGUIMIENTO, *PRINCIPAL} and len(entries) == 60 and len(v2) == 30
+    assert {P.role(entries[s]) for s in v2} == {"sltp"}
+    entries = {s: e for s, e in entries.items() if s not in v2}
     roles = {sid: P.role(e) for sid, e in entries.items()}
     assert {s for s, r in roles.items() if r == "paper_previo"} == set(BOT)
     assert {s for s, r in roles.items() if r == "principal"} == set(PRINCIPAL)

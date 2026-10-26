@@ -120,6 +120,50 @@ def exit_counts(conn: sqlite3.Connection, sid: str, since_ms: int | None = None,
     return out
 
 
+def _has_sltp(conn: sqlite3.Connection) -> bool:
+    return conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='sltp_trades'").fetchone() is not None
+
+
+def _sltp_trade(o: sqlite3.Row, c: sqlite3.Row | None, mark: float | None) -> dict[str, Any]:
+    side, ref = o["side"], o["ref_price"]
+    out = {"slot": o["slot"], "symbol": o["symbol"], "side": side, "direction": "long" if side > 0 else "short",
+           "size": o["size"], "weight": o["weight"], "entry_ms": o["entry_ms"], "entry_at": _iso(o["entry_ms"]),
+           "ref_price": ref, "atr": o["atr"], "atr_tf": o["atr_tf"], "sl": o["sl"], "tp": o["tp"],
+           "sl_frac": o["sl_frac"], "tp_frac": abs(o["tp"] / ref - 1), "leverage": o["leverage"], "liq_price": o["liq_price"],
+           "liq_frac": None if not o["liq_price"] else abs(o["liq_price"] / ref - 1)}
+    if c is not None:
+        exit_px = c["sl"] if c["motivo"] == "stop" else c["tp"]
+        out.update({"abierta": False, "motivo": c["motivo"], "exit_ms": c["decision_ms"], "exit_at": _iso(c["decision_ms"]),
+                    "exit_bar_ms": c["exit_bar_ms"], "nivel_tocado": exit_px, "ret_nivel": side * (exit_px / ref - 1)})
+    else:
+        out.update({"abierta": True, "mark": mark,
+                    "a_stop": None if not mark else side * (mark - o["sl"]) / mark,
+                    "a_objetivo": None if not mark else side * (o["tp"] - mark) / mark,
+                    "ret_marca": None if not mark else side * (mark / ref - 1)})
+    return out
+
+
+def sltp_block(conn: sqlite3.Connection, sid: str, marks: dict[str, float], limit: int | None = None) -> dict[str, Any] | None:
+    """Operaciones de una -v2 con SL/TP obligatorio (`sltp_trades`): las abiertas con su stop, objetivo, liquidacion y
+    distancia desde la marca; las cerradas con el motivo. None si la estrategia no tiene ninguna (no es -v2)."""
+    if not _has_sltp(conn):
+        return None
+    rows = conn.execute("SELECT * FROM sltp_trades WHERE strategy_id=? ORDER BY id", (sid,)).fetchall()
+    if not rows:
+        return None
+    closes = {(r["slot"], r["symbol"], r["entry_ms"]): r for r in rows if r["event"] == "close"}
+    trades = [_sltp_trade(o, closes.get((o["slot"], o["symbol"], o["entry_ms"])), marks.get(o["symbol"]))
+              for o in rows if o["event"] == "open"]
+    abiertas = [t for t in trades if t["abierta"]]
+    cerradas = sorted((t for t in trades if not t["abierta"]), key=lambda t: t["exit_ms"], reverse=True)
+    n = {"stop": sum(t["motivo"] == "stop" for t in cerradas), "objetivo": sum(t["motivo"] == "objetivo" for t in cerradas)}
+    return {"abiertas": abiertas[:limit] if limit else abiertas, "n_abiertas": len(abiertas),
+            "cerradas": cerradas[:limit] if limit else cerradas, "n_cerradas": len(cerradas), "por_motivo": n,
+            "objetivo_ci95": wilson(n["objetivo"], n["stop"] + n["objetivo"]),
+            "nota": "Stop a 3 ATR(14) de la temporalidad (piso 8 %, techo 20 %), objetivo al doble; niveles fijos desde la "
+                    "entrada, sin otra salida. Con R:R 1:2 hace falta acertar más de 1 de cada 3 para no perder (antes de costos)."}
+
+
 def _ficha(sid: str) -> dict[str, Any] | None:
     from ..lab.exits import ficha_json  # sin pandas
 
@@ -292,6 +336,7 @@ def _summary(conn: sqlite3.Connection, sid: str, last_ok_detail: dict[str, Any],
         "n_trades": tr[0], "wins": tr[1], "trades_pnl": tr[2], "win_ci95": wilson(tr[1], tr[0]),
         "spark": [[r["hour_ms"], r["equity"], r["basket_equity"]] for r in spark],
         "exits": _ficha(sid), "exit_counts": exit_counts(conn, sid),
+        "sltp": sltp_block(conn, sid, {p["symbol"]: p["mark_price"] for p in pos}, limit=20),
     }
 
 
@@ -362,6 +407,7 @@ def strategy_detail(db_path: str | Path, strategy_id: str, *, now_ms: int | None
         funding = conn.execute("SELECT * FROM funding_events WHERE strategy_id=? ORDER BY funding_ms DESC LIMIT ?",
                                (strategy_id, MAX_ROWS)).fetchall()
         basket = conn.execute("SELECT * FROM basket WHERE strategy_id=? ORDER BY symbol", (strategy_id,)).fetchall()
+        sltp = sltp_block(conn, strategy_id, {p["symbol"]: p["mark_price"] for p in pos}, limit=MAX_ROWS)
     finally:
         conn.close()
     by_symbol = []
@@ -382,6 +428,7 @@ def strategy_detail(db_path: str | Path, strategy_id: str, *, now_ms: int | None
         "trades": [{**_row(t), "entry_at": _iso(t["entry_ms"]), "exit_at": _iso(t["exit_ms"])} for t in trades],
         "funding_events": [{**_row(f), "funding_at": _iso(f["funding_ms"])} for f in funding],
         "basket": [_row(b) for b in basket],
+        "sltp": sltp,
         "max_drawdown": _max_dd([r["equity"] for r in eq]),
     })
     return s

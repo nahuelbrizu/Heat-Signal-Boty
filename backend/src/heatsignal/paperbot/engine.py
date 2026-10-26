@@ -50,6 +50,7 @@ import pandas as pd
 from ..evaluation.price_source import HttpGet
 from ..history import klines as hk
 from ..history.store import HistoryStore
+from ..lab import sltp as SL
 from ..lab.exits import capture_exits, reason_map
 from . import params as P
 from .daily import build_daily, daily_source, history_days, update_daily_cache
@@ -331,7 +332,8 @@ def _run(cfg: EngineConfig, store: PaperbotStore, base: dict, H: int, now: int, 
     prev = store.last_ok_run(before_ms=H)
     consecutive = prev is not None and prev["hour_ms"] == H - HOUR_MS
     mode = "consecutiva" if consecutive else ("inicio" if prev is None else "hueco")
-    rows: dict[str, list] = {k: [] for k in ("orders", "funding", "equity", "positions", "trades", "basket", "gaps", "exits")}
+    rows: dict[str, list] = {k: [] for k in ("orders", "funding", "equity", "positions", "trades", "basket", "gaps", "exits",
+                                             "sltp")}
     if prev is not None and not consecutive:
         hours = (H - prev["hour_ms"]) // HOUR_MS - 1
         rows["gaps"].append({"run_id": base["run_id"], "from_ms": prev["hour_ms"] + HOUR_MS, "to_ms": H - HOUR_MS,
@@ -359,26 +361,14 @@ def _run(cfg: EngineConfig, store: PaperbotStore, base: dict, H: int, now: int, 
         last_eq = store.last_equity_hour(sid)
         s_consecutive = consecutive and last_eq == prev["hour_ms"]
         s_mode = "consecutiva" if s_consecutive else ("inicio" if last_eq is None else "hueco")
-        if need is not None:
+        v2 = SL.is_v2(spec)
+        if need is not None and not v2:
             data = {s: MarketData(daily_bars[s], funding[s]) for s in universe}
             source = daily_source({id(md): daily_bars[s] for s, md in data.items()})
         else:
+            # -v2: velas 1m para los toques; si la base es diaria, sus velas diarias via daily_source
             data = {s: MarketData(closed[s], funding[s]) for s in universe}
-            source = nullcontext()
-        votes = None
-        with source:
-            with capture_exits() as rec:  # misma regla y mismo resultado; registra el motivo de cada salida
-                signals = rule(data, params)
-            if need is not None and isinstance(params.get("components"), dict):
-                votes = _votes(params["components"], data, H)
-        sigs = {s: _clean(signals.get(s)) for s in universe}
-        try:
-            reasons = {(s, int(pd.Timestamp(t).value // 1_000_000)): m
-                       for (s, t), m in reason_map(sid, data, signals, rec, params).items() if s is not None}
-        except Exception:  # noqa: BLE001 - el motivo es informativo: si falla, la orden queda sin motivo (no se inventa)
-            log.exception("%s: no se pudo reconstruir el motivo de las salidas", sid)
-            reasons = {}
-        targets = {s: target_at(sigs[s], H) for s in universe}
+            source = daily_source({id(md): daily_bars[s] for s, md in data.items()}) if need is not None else nullcontext()
         stored_orders = store.orders(sid)
         book = Book.replay(universe, stored_orders, store.funding_events(sid))
         new_orders: list[dict[str, Any]] = []
@@ -387,21 +377,51 @@ def _run(cfg: EngineConfig, store: PaperbotStore, base: dict, H: int, now: int, 
             price, fill_ms, src = prices[s].fill(t_ms)
             new_orders.append(book.order(s, t_ms, fill_ms, price, w, reason, src))
 
+        votes = None
+        sltp_info = None
         n_events = 0
-        if s_consecutive:
-            for s in universe:
-                sig = sigs[s]
-                if not len(sig):
-                    continue
-                ms = _ms_index(sig.index)
-                sel = np.flatnonzero((ms > H - HOUR_MS) & (ms <= H))
-                ev = [(int(ms[i]), float(sig.iloc[i])) for i in sel]
-                n_events += len(ev)
-                for k, (t, w) in enumerate(ev):
-                    if k + 1 < len(ev) and prices[s].exec_index(ev[k + 1][0]) == prices[s].exec_index(t):
-                        continue  # varias decisiones antes de la misma vela de ejecucion: vale la ultima
-                    if abs(w - book.pos[s].weight) > TARGET_TOL:
-                        place(s, t, w, "senal")
+        if v2:
+            try:
+                with source:
+                    targets, reasons, sltp_rows, sltp_info = _sltp_run(sid, params, data, universe, store, H, last_eq,
+                                                                       prices, book, place, base["run_id"])
+            except SltpGapError as exc:
+                sin_datos[sid] = str(exc)
+                per_strategy[sid] = {"estado": "sin_datos", "motivo": sin_datos[sid], "spec_hash": spec.spec_hash(),
+                                     "rol": entry.get("rol"), "universe": universe, "desde": entry.get("desde"),
+                                     "historia_dias": need, "origen": entry.get("origen")}
+                continue
+            rows["sltp"] += sltp_rows
+            n_events = sltp_info["aperturas"] + sum(sltp_info["cierres"].values())
+        else:
+            with source:
+                with capture_exits() as rec:  # misma regla y mismo resultado; registra el motivo de cada salida
+                    signals = rule(data, params)
+                if need is not None and isinstance(params.get("components"), dict):
+                    votes = _votes(params["components"], data, H)
+            sigs = {s: _clean(signals.get(s)) for s in universe}
+            try:
+                reasons = {(s, int(pd.Timestamp(t).value // 1_000_000)): m
+                           for (s, t), m in reason_map(sid, data, signals, rec, params).items() if s is not None}
+            except Exception:  # noqa: BLE001 - el motivo es informativo: si falla, la orden queda sin motivo (no se inventa)
+                log.exception("%s: no se pudo reconstruir el motivo de las salidas", sid)
+                reasons = {}
+            targets = {s: target_at(sigs[s], H) for s in universe}
+
+            if s_consecutive:
+                for s in universe:
+                    sig = sigs[s]
+                    if not len(sig):
+                        continue
+                    ms = _ms_index(sig.index)
+                    sel = np.flatnonzero((ms > H - HOUR_MS) & (ms <= H))
+                    ev = [(int(ms[i]), float(sig.iloc[i])) for i in sel]
+                    n_events += len(ev)
+                    for k, (t, w) in enumerate(ev):
+                        if k + 1 < len(ev) and prices[s].exec_index(ev[k + 1][0]) == prices[s].exec_index(t):
+                            continue  # varias decisiones antes de la misma vela de ejecucion: vale la ultima
+                        if abs(w - book.pos[s].weight) > TARGET_TOL:
+                            place(s, t, w, "senal")
         for s in universe:
             if abs(targets[s] - book.pos[s].weight) > TARGET_TOL:
                 place(s, H, targets[s], "resincronizacion" if s_consecutive else s_mode)
@@ -474,6 +494,7 @@ def _run(cfg: EngineConfig, store: PaperbotStore, base: dict, H: int, now: int, 
                              "eventos": n_events, "ordenes": len(new_orders), "funding": len(new_funding),
                              "equity": tot["equity"], "modo": s_mode, "desde": entry.get("desde"),
                              "estado": "ok", "rol": entry.get("rol"), "historia_dias": need, "votos": votes,
+                             "sltp": sltp_info,
                              "inicio_ms": H if last_eq is None else store.first_equity_hour(sid)}
 
     detail.update({"modo": mode, "estrategias": per_strategy, "marcas": marks, "sin_datos": sin_datos,
@@ -484,7 +505,103 @@ def _run(cfg: EngineConfig, store: PaperbotStore, base: dict, H: int, now: int, 
         note += f"; SIN DATOS en esta corrida (no operaron): {', '.join(sorted(sin_datos))}"
     return _finish(store, base, "ok", note, detail, t0, orders=rows["orders"], funding=rows["funding"],
                    equity=rows["equity"], positions=rows["positions"], trades=rows["trades"], basket=rows["basket"],
-                   gaps=rows["gaps"], exits=rows["exits"])
+                   gaps=rows["gaps"], exits=rows["exits"], sltp=rows["sltp"])
+
+
+class SltpGapError(Exception):
+    """-v2 con una operacion abierta y velas 1m que no cubren desde la ultima corrida: no se puede saber si toco un
+    nivel. La estrategia queda 'sin datos' (no se inventa un cierre ni se la deja correr a ciegas)."""
+
+
+def _position(r: Any) -> SL.Position:
+    return SL.Position(r["slot"], r["symbol"], r["side"], r["size"], r["weight"], r["entry_ms"], r["ref_price"], r["atr"],
+                       r["atr_tf"], r["sl_frac"], r["sl"], r["tp"], r["leverage"], r["liq_price"])
+
+
+def _sltp_row(run_id: str, sid: str, event: str, p: SL.Position, decision_ms: int, exit_bar_ms: int | None = None,
+              motivo: str | None = None) -> dict[str, Any]:
+    return {"run_id": run_id, "strategy_id": sid, "event": event, "decision_ms": decision_ms, **p.as_row(),
+            "exit_bar_ms": exit_bar_ms, "motivo": motivo}
+
+
+def _sltp_run(sid: str, params: dict[str, Any], data: dict[str, Any], universe: list[str], store: PaperbotStore, H: int,
+              last_eq: int | None, prices: dict[str, Prices], book: Book, place: Callable[[str, int, float, str], None],
+              run_id: str) -> tuple[dict[str, float], dict[tuple[str, int], str], list[dict[str, Any]], dict[str, Any]]:
+    """Una corrida de una -v2 con SL/TP obligatorio (lab/sltp.py), CON ESTADO: las operaciones abiertas vienen de
+    `sltp_trades` con sus niveles fijos desde la entrada.
+
+    - Toques: velas 1m desde la ultima corrida de la estrategia (`last_eq`) hasta H, tambien a traves de un hueco
+      (un stop/objetivo puesto en el exchange salta aunque el bot este apagado).
+    - Entradas: solo las de la base con decision en (H - 1h, H] (el bot no opera horas que no corrio, como la v1).
+    - Orden por cada instante en que cambia la suma de las operaciones abiertas del simbolo; la que cierra lleva su
+      motivo (stop / objetivo). Antes de cada orden se verifica que el stop de cada operacion del lado de la
+      posicion quede antes de la liquidacion de la posicion agregada (si no, StopBeyondLiquidation: la corrida falla).
+    Devuelve (objetivos en H, motivos por (simbolo, decision_ms), filas de sltp_trades, resumen)."""
+    sp = {k: params[k] for k in SL.PARAMS}
+    atrs = SL.AtrCache(data, int(sp["atr_n"]))
+    open_pos = {(r["slot"], r["symbol"]): _position(r) for r in store.sltp_open(sid)}
+    start = _ts(last_eq if last_eq is not None else H - HOUR_MS)
+    end, entry_after = _ts(H), _ts(H - HOUR_MS)
+    for (slot, s), pos in open_pos.items():
+        k = data[s].klines
+        need_from = max(start, _ts(pos.entry_ms))
+        if not len(k) or k.index[0] > need_from:
+            raise SltpGapError(f"{s} ({slot}): operacion abierta desde {_ts(pos.entry_ms).isoformat()} y las velas 1m "
+                               f"empiezan en {k.index[0].isoformat() if len(k) else 'ninguna'} (se necesitan desde "
+                               f"{need_from.isoformat()}): no se puede saber si toco el stop o el objetivo")
+    events: dict[str, list[dict[str, Any]]] = {s: [] for s in universe}
+    for slot, w, spec, rule, bp in SL.slots(params):
+        tf = SL.atr_timeframe(spec.timeframe, bp)
+        base_sig = rule(data, bp)
+        for s in universe:
+            def make(t, side, size, s=s, slot=slot, w=w, tf=tf):  # noqa: ANN001, ANN202
+                price, _, _ = prices[s].fill(SL._ms(t))
+                return SL.open_position(slot, s, side, size, w, SL._ms(t), price, atrs.at(s, tf, t), tf, sp)
+
+            evs, _ = SL.advance(open_pos.get((slot, s)), SL.new_entries(base_sig.get(s)), data[s].klines,
+                                start=start, end=end, entry_after=entry_after, make=make)
+            events[s] += evs
+
+    info: dict[str, Any] = {"aperturas": 0, "cierres": {"stop": 0, "objetivo": 0}, "omitidas": 0,
+                            "toques_desde_ms": SL._ms(start)}
+    targets: dict[str, float] = {}
+    reasons: dict[tuple[str, int], str] = {}
+    rows: list[dict[str, Any]] = []
+    n_open = 0
+    for s in universe:
+        cur = {slot: p for (slot, sym), p in open_pos.items() if sym == s}
+        evs = sorted(events[s], key=lambda e: (e["t"], 0 if e["kind"] == "close" else 1))
+        i = 0
+        while i < len(evs):
+            t, motivo = evs[i]["t"], None
+            while i < len(evs) and evs[i]["t"] == t:
+                e = evs[i]
+                i += 1
+                p = e["pos"]
+                if e["kind"] == "skip":
+                    info["omitidas"] += 1
+                elif e["kind"] == "open":
+                    cur[p.slot] = p
+                    info["aperturas"] += 1
+                    rows.append(_sltp_row(run_id, sid, "open", p, p.entry_ms))
+                else:
+                    cur.pop(p.slot, None)
+                    info["cierres"][e["motivo"]] += 1
+                    motivo = motivo or e["motivo"]
+                    rows.append(_sltp_row(run_id, sid, "close", p, SL._ms(t), SL._ms(e["bar"]), e["motivo"]))
+            w = sum(p.signed() for p in cur.values())
+            for p in cur.values():
+                if abs(w) > TARGET_TOL and np.sign(p.side) == np.sign(w):
+                    SL.check_stop(p.side, p.ref_price, p.sl, abs(w), sp)
+            t_ms = SL._ms(t)
+            if abs(w - book.pos[s].weight) > TARGET_TOL:
+                place(s, t_ms, w, "senal")
+                if motivo:
+                    reasons[(s, t_ms)] = motivo
+        targets[s] = sum(p.signed() for p in cur.values())
+        n_open += len(cur)
+    info["abiertas"] = n_open
+    return targets, reasons, rows, info
 
 
 def _votes(components: dict[str, float], data: dict[str, Any], H: int) -> dict[str, dict[str, Any]]:

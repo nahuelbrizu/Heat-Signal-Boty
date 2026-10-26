@@ -21,7 +21,7 @@ DEFAULT_DB = "data/paperbot.sqlite"
 HOUR_MS = 3_600_000
 
 TABLES = ("runs", "orders", "funding_events", "equity", "positions", "trades", "basket", "gaps", "funding_rates",
-          "exit_reasons", "daily_klines")
+          "exit_reasons", "daily_klines", "sltp_trades")
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS runs (
@@ -180,6 +180,35 @@ CREATE TABLE IF NOT EXISTS daily_klines (
     fetched_ms   INTEGER NOT NULL,
     PRIMARY KEY (symbol, open_ms)
 );
+
+-- Operaciones de las -v2 con SL/TP obligatorio (2026-10-26, lab/sltp.py). Una fila 'open' al entrar (con el stop, el
+-- objetivo y la liquidacion fijados en ese momento) y una 'close' cuando una vela 1m toca uno de los dos. La operacion
+-- abierta = 'open' sin su 'close' (misma estrategia, slot, simbolo y entry_ms). slot = componente (o la base).
+CREATE TABLE IF NOT EXISTS sltp_trades (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id       TEXT    NOT NULL,
+    strategy_id  TEXT    NOT NULL,
+    slot         TEXT    NOT NULL,
+    symbol       TEXT    NOT NULL,
+    event        TEXT    NOT NULL CHECK (event IN ('open', 'close')),
+    decision_ms  INTEGER NOT NULL,          -- open: = entry_ms; close: cierre de la vela que toco el nivel
+    entry_ms     INTEGER NOT NULL,
+    side         REAL    NOT NULL,
+    size         REAL    NOT NULL,
+    weight       REAL    NOT NULL,
+    ref_price    REAL    NOT NULL,          -- precio de entrada (fill)
+    atr          REAL    NOT NULL,
+    atr_tf       TEXT    NOT NULL,
+    sl_frac      REAL    NOT NULL,
+    sl           REAL    NOT NULL,
+    tp           REAL    NOT NULL,
+    leverage     REAL    NOT NULL,
+    liq_price    REAL,
+    exit_bar_ms  INTEGER,                   -- close: apertura de la vela 1m que toco
+    motivo       TEXT    CHECK (motivo IS NULL OR motivo IN ('stop', 'objetivo')),
+    UNIQUE (strategy_id, slot, symbol, entry_ms, event)
+);
+CREATE INDEX IF NOT EXISTS sltp_trades_strategy ON sltp_trades (strategy_id, decision_ms);
 """ + "".join(
     f"CREATE TRIGGER IF NOT EXISTS {t}_no_update BEFORE UPDATE ON {t} BEGIN SELECT RAISE(ABORT, 'paperbot: {t} es append-only'); END;\n"
     f"CREATE TRIGGER IF NOT EXISTS {t}_no_delete BEFORE DELETE ON {t} BEGIN SELECT RAISE(ABORT, 'paperbot: {t} es append-only'); END;\n"
@@ -260,6 +289,13 @@ class PaperbotStore:
             "SELECT open_ms, open, high, low, close FROM daily_klines WHERE symbol=? AND open_ms >= ? AND open_ms < ? "
             "ORDER BY open_ms", (symbol, since_ms, until_ms))]
 
+    def sltp_open(self, strategy_id: str) -> list[sqlite3.Row]:
+        """Operaciones -v2 abiertas: 'open' sin su 'close'."""
+        return self.conn.execute(
+            "SELECT o.* FROM sltp_trades o WHERE o.strategy_id=? AND o.event='open' AND NOT EXISTS (SELECT 1 FROM "
+            "sltp_trades c WHERE c.strategy_id=o.strategy_id AND c.slot=o.slot AND c.symbol=o.symbol AND "
+            "c.entry_ms=o.entry_ms AND c.event='close') ORDER BY o.entry_ms, o.id", (strategy_id,)).fetchall()
+
     # ---- escrituras -----------------------------------------------------------------------------
 
     def add_funding_rates(self, rows: Sequence[tuple]) -> int:
@@ -284,7 +320,8 @@ class PaperbotStore:
 
     def record_run(self, run: dict[str, Any], *, orders: Iterable[dict] = (), funding: Iterable[dict] = (),
                    equity: Iterable[dict] = (), positions: Iterable[dict] = (), trades: Iterable[dict] = (),
-                   basket: Iterable[dict] = (), gaps: Iterable[dict] = (), exits: Iterable[dict] = ()) -> None:
+                   basket: Iterable[dict] = (), gaps: Iterable[dict] = (), exits: Iterable[dict] = (),
+                   sltp: Iterable[dict] = ()) -> None:
         """Todo en UNA transaccion. Si falla (p.ej. otra corrida ok de la misma hora), no queda nada escrito."""
         run = {**run, "detail": json.dumps(run.get("detail"), ensure_ascii=False, default=str)
                if not isinstance(run.get("detail"), str) else run["detail"]}
@@ -298,6 +335,7 @@ class PaperbotStore:
             _insert(self.conn, "basket", basket)
             _insert(self.conn, "gaps", gaps)
             _insert(self.conn, "exit_reasons", exits, ignore=True)
+            _insert(self.conn, "sltp_trades", sltp)
 
 
 def _insert(conn: sqlite3.Connection, table: str, rows: Iterable[dict], ignore: bool = False) -> None:

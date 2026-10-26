@@ -25,9 +25,10 @@ class ParamsError(Exception):
 
 
 # Rol de cada estrategia en la prueba hacia adelante (decisions.md, 2026-10-20). Solo 'principal' decide algo.
-ROLES = ("principal", "seguimiento", "paper_previo")
+# 'sltp' (2026-10-26): las -v2 con SL/TP obligatorio, en paralelo con su v1 (lab/sltp.py); no deciden la prueba.
+ROLES = ("principal", "seguimiento", "paper_previo", "sltp")
 ROLE_LABEL = {"principal": "Hipótesis principal (decide)", "seguimiento": "Seguimiento (exploratorio, no decide)",
-              "paper_previo": "Paper previo"}
+              "paper_previo": "Paper previo", "sltp": "Con SL/TP obligatorio (-v2, en paralelo)"}
 
 
 def role(entry: dict[str, Any] | None) -> str:
