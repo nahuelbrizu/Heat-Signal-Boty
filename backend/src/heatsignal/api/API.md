@@ -351,16 +351,25 @@ Un ciclo con el razonamiento completo del grafo.
 }
 ```
 
+## `GET /api/news/world`
+
+Lo que recibe el Analista de Contexto como bloque "Mundo" en este momento (`world-news-v1`): `block` (el texto
+exacto), `items` (los titulares elegidos, con `kind` y `topics`), `feeds_sin_respuesta`, `topics` (etiquetas) y
+`read_at`. 503 si las noticias están apagadas en el proceso.
+
 ## `GET /api/news`
 
 Noticias guardadas (`heatsignal_history.sqlite`, tabla `news`) más las de la ventana en memoria (48 h) que
-no llegaron a la base (`stored: false`).
+no llegaron a la base (`stored: false`). Cada item trae además `kind` (clase del feed) y `topics` (temas
+`newstopics-v1`).
 
 | Parámetro | Tipo | Default | Notas |
 |---|---|---|---|
 | `symbol` | str | — | activo base: `XRP`, `XRPUSDT`, `XRP-USDT` |
 | `source` | str | — | nombre del feed (`coindesk`, `sec`, ...) |
 | `primary` | bool | — | fuente primaria (emisor/regulador) |
+| `kind` | `cripto` \| `mundo` \| `economia` \| `tecnologia` | — | clase del feed (2026-10-27) |
+| `topic` | `geopolitica` \| `politica` \| `economia` \| `tecnologia` | — | tema `newstopics-v1`; se calcula sobre título + resumen, así que filtra en Python las últimas 5.000 filas que cumplen el resto (`scanned`, `scan_limit` en la respuesta) |
 | `q` | str 2–100 | — | texto en título o resumen (sin distinguir mayúsculas) |
 | `since`, `until` | tiempo | — | sobre `published_ms` |
 | `limit` | 1–200 | 50 | |

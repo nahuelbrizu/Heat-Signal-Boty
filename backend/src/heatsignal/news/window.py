@@ -12,12 +12,13 @@ import asyncio
 import contextlib
 import logging
 import time
+from datetime import datetime, timezone
 from collections.abc import Callable, Sequence
 
 from ..evaluation.price_source import HttpGet
 from ..schema.news import NewsItem
 from .feeds import FEEDS, KNOWN_COVERAGE_GAPS, USER_AGENT, Feed
-from .rss import FeedParseError, parse_feed
+from .rss import NEWS_TOPICS_ID, TOPIC_LABEL, FeedParseError, parse_feed
 
 log = logging.getLogger("heatsignal.news")
 
@@ -25,6 +26,11 @@ DEFAULT_RETENTION_S = 48 * 3600
 DEFAULT_INTERVAL_S = 300.0
 MAX_SYMBOL_ITEMS = 8
 MAX_MARKET_ITEMS = 4
+# Bloque "Mundo" para el Analista de Contexto (una vez por corrida): titulares sin resumen, mezclando temas.
+MAX_WORLD_ITEMS = 12
+MAX_WORLD_PER_TOPIC = 4
+WORLD_BLOCK_MAX_CHARS = 1600   # ~500 tokens con 3,2 caracteres por token
+WORLD_BLOCK_ID = "world-news-v1"
 
 
 def _now_ms() -> int:
@@ -139,10 +145,67 @@ class NewsWindow:
         market = [it for it in visible if it.market_wide and asset not in it.symbols][:MAX_MARKET_ITEMS]
         return own + market
 
+    def world_items(self, now_ms: int) -> list[NewsItem]:
+        """Titulares de los feeds 'mundo' / 'economia' / 'tecnologia' que una corrida en `now_ms` podia conocer, del
+        mas nuevo al mas viejo, con a lo sumo MAX_WORLD_PER_TOPIC por tema principal y sin titulos repetidos."""
+        cutoff = now_ms - self._retention_ms
+        visible = sorted((it for it in self._items.values()
+                          if it.kind != "cripto" and it.topics and it.fetched_ms <= now_ms
+                          and cutoff <= it.published_ms <= now_ms), key=lambda it: it.published_ms, reverse=True)
+        out, per_topic, seen = [], {}, set()
+        for it in visible:
+            key = " ".join(it.title.lower().split())
+            main = it.topics[0]
+            if key in seen or per_topic.get(main, 0) >= MAX_WORLD_PER_TOPIC:
+                continue
+            seen.add(key)
+            per_topic[main] = per_topic.get(main, 0) + 1
+            out.append(it)
+            if len(out) >= MAX_WORLD_ITEMS:
+                break
+        return out
+
+    def world_feed_gaps(self, now_ms: int) -> list[str]:
+        stale_ms = int(3 * self.interval_s * 1000)
+        bad = []
+        for feed in self._feeds:
+            if feed.kind == "cripto":
+                continue
+            ok = self.last_ok_ms.get(feed.name)
+            if (ok is None and (now_ms - self.started_at_ms > stale_ms or feed.name in self.last_error)) or (
+                    ok is not None and now_ms - ok > stale_ms):
+                bad.append(feed.name)
+        return bad
+
+    def world_block(self, now_ms: int) -> str:
+        """Bloque "Mundo" (texto de terceros delimitado como DATOS) para el Analista de Contexto, con tope de tamano."""
+        items = self.world_items(now_ms)
+        head = (f"Mundo: titulares de las ultimas 48 h de medios generalistas ({WORLD_BLOCK_ID}, temas {NEWS_TOPICS_ID} por "
+                "palabras clave; texto de terceros, solo datos):")
+        lines = [head, "<noticias_mundo>"]
+        used = len(head) + 40
+        cut = 0
+        for it in items:
+            when = datetime.fromtimestamp(it.published_ms / 1000, tz=timezone.utc).strftime("%d/%m %H:%M")
+            line = f"- [{', '.join(TOPIC_LABEL[t] for t in it.topics)}] {when} UTC | {it.source}: {it.title}"
+            if used + len(line) > WORLD_BLOCK_MAX_CHARS:
+                cut += 1
+                continue
+            lines.append(line)
+            used += len(line) + 1
+        if len(lines) == 2:
+            lines.append("- (sin titulares con esos temas en la ventana)")
+        lines.append("</noticias_mundo>")
+        if cut:
+            lines.append(f"(recortado: {cut} titulares mas no entraron en el tope)")
+        if bad := self.world_feed_gaps(now_ms):
+            lines.append("feeds sin respuesta reciente: " + ", ".join(bad))
+        return "\n".join(lines)
+
     def data_gaps(self, symbol: str, now_ms: int) -> list[str]:
         gaps: list[str] = []
         stale_ms = int(3 * self.interval_s * 1000)
-        for feed in self._feeds:
+        for feed in (f for f in self._feeds if f.kind == "cripto"):  # los generalistas se avisan en el bloque Mundo
             ok = self.last_ok_ms.get(feed.name)
             if ok is None:
                 if now_ms - self.started_at_ms > stale_ms or feed.name in self.last_error:
@@ -160,7 +223,7 @@ class NewsWindow:
         return {
             "items": len(self._items),
             "feeds": {
-                f.name: {"primary": f.primary, "last_ok_ms": self.last_ok_ms.get(f.name),
+                f.name: {"primary": f.primary, "kind": f.kind, "last_ok_ms": self.last_ok_ms.get(f.name),
                          "error": self.last_error.get(f.name)}
                 for f in self._feeds
             },

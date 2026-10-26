@@ -700,6 +700,18 @@
   pérdidas vienen juntas, en las caídas). 4 intentos más en el registro (2 por estrategia). No pasa a paper. Resultados
   en `~/heatsignal-lab/results/grilla-*`.
 
+- **Noticias del mundo (2026-10-27, pedido del usuario: "faltan cambios de presidentes, guerras, nuevas tecnologías").**
+  12 feeds RSS nuevos verificados (BBC World/Business/Tech, Al Jazeera, Guardian World, NYT World/Politics/Tech, Fed,
+  Ars Technica, TechCrunch, MIT Tech Review; whitehouse.gov da 404). Temas por palabras clave, regla fija
+  `newstopics-v1` (`news/rss.py`): geopolítica, política, economía, tecnología. De los feeds generalistas solo se
+  guardan los items con algún tema; no marcan `market_wide` ni agregan huecos por símbolo (el CRO veta por huecos). Van
+  al Analista de Contexto como bloque común "Mundo" (`world-news-v1`, una vez por corrida, a lo sumo 12 titulares y 4 por
+  tema, tope 1.600 caracteres ≈ 500 tokens, delimitado como datos de terceros). Es contexto: no cambia ninguna
+  estrategia, regla del CIO ni veto del CRO. Sin cambio de esquema: el tema de lo ya guardado se calcula al leer.
+  Panel `#/noticias`: tarjeta "Mundo: lo que recibe el grafo", filtros por clase y tema. API: `GET /api/news/world`,
+  `kind` y `topic` en `GET /api/news`. Limitaciones: economía con pocos titulares (la Fed publica poco), política con
+  ruido local; revisar con una semana de datos antes de tocar la regla (sería `newstopics-v2`).
+
 ## Abiertas
 - ~~Plan de CoinGlass a contratar.~~ **Ya no aplica al core** — la fuente primaria pasó a WS nativos.
   Solo se retomaría si se implementa la fuente BYOK opcional (y ahí el plan lo elige el usuario).

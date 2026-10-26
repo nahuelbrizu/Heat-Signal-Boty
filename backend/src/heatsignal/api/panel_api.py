@@ -44,6 +44,8 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from ..ingestion.loop_monitor import run_heavy
 from ..features.gaps import gap_classes
+from ..news.feeds import FEED_KIND
+from ..news.rss import TOPIC_LABEL, classify_topics
 from ..schema.hypotheses import HypothesisStatus
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -52,6 +54,7 @@ if TYPE_CHECKING:  # pragma: no cover
 # ---- limites (acotan memoria y tiempo de cada consulta) ----------------------------------------------
 MAX_PAGE = 500  # filas por pagina en hipotesis / ciclos
 MAX_NEWS_PAGE = 200
+NEWS_TOPIC_SCAN = 5000  # filas recientes que se revisan al filtrar por tema (el tema se calcula, no esta en la base)
 MAX_LIQ_PAGE = 1000
 MAX_OFFSET = 100_000
 MAX_BARS = 5000  # barras por exchange en /api/history/bars
@@ -352,13 +355,16 @@ def news_json(it: Any, stored: bool) -> dict[str, Any]:
         "published_ms": it["published_ms"], "published_at": iso(it["published_ms"]),
         "fetched_ms": it["fetched_ms"], "fetched_at": iso(it["fetched_ms"]),
         "symbols": list(it["symbols"]), "market_wide": bool(it["market_wide"]), "stored": stored,
+        "kind": it.get("kind") or FEED_KIND.get(it["source"], "cripto"),
+        # temas newstopics-v1: los del item en memoria o, para lo guardado, la misma regla sobre titulo + resumen
+        "topics": list(it["topics"]) if it.get("topics") is not None else classify_topics(f"{it['title']} {it['summary']}"),
     }
 
 
 def _news_from_model(it: Any) -> dict[str, Any]:
     return {"item_id": it.item_id, "source": it.source, "primary": it.primary, "title": it.title,
             "summary": it.summary, "url": it.url, "published_ms": it.published_ms, "fetched_ms": it.fetched_ms,
-            "symbols": it.symbols, "market_wide": it.market_wide}
+            "symbols": it.symbols, "market_wide": it.market_wide, "kind": it.kind, "topics": it.topics}
 
 
 def _news_from_row(r: tuple) -> dict[str, Any]:
@@ -924,11 +930,25 @@ def register_api(app: FastAPI, ctx: PanelContext, build_id: str) -> None:  # noq
 
     # ---------------------------------------------------------------- noticias
 
+    @app.get("/api/news/world")
+    async def news_world() -> dict[str, Any]:
+        """Lo que recibe el grafo como bloque "Mundo" ahora (news/window.py): titulares seleccionados y el texto."""
+        if ctx.news is None:
+            raise HTTPException(status_code=503, detail="noticias apagadas (sin ventana en memoria)")
+        now = int(time.time() * 1000)
+        items = ctx.news.world_items(now)
+        return {"block": ctx.news.world_block(now), "items": [news_json(_news_from_model(it), False) for it in items],
+                "feeds_sin_respuesta": ctx.news.world_feed_gaps(now), "topics": dict(TOPIC_LABEL),
+                "read_at": iso(now)}
+
     @app.get("/api/news")
     async def news(
         symbol: str | None = Query(None, max_length=30, description="activo base: XRP, XRPUSDT o XRP-USDT"),
         source: str | None = Query(None, max_length=60),
         primary: bool | None = None,
+        kind: str | None = Query(None, pattern="^(cripto|mundo|economia|tecnologia)$", description="clase del feed"),
+        topic: str | None = Query(None, pattern="^(geopolitica|politica|economia|tecnologia)$",
+                                  description="tema newstopics-v1"),
         q: str | None = Query(None, min_length=2, max_length=100, description="texto en titulo o resumen"),
         since: str | None = Query(None, description="published >= since"),
         until: str | None = Query(None, description="published < until"),
@@ -946,6 +966,11 @@ def register_api(app: FastAPI, ctx: PanelContext, build_id: str) -> None:  # noq
             if source is not None and it["source"] != source:
                 return False
             if primary is not None and bool(it["primary"]) != primary:
+                return False
+            if kind is not None and (it.get("kind") or FEED_KIND.get(it["source"], "cripto")) != kind:
+                return False
+            if topic is not None and topic not in (it["topics"] if it.get("topics") is not None
+                                                   else classify_topics(f"{it['title']} {it['summary']}")):
                 return False
             if q is not None and q.lower() not in f"{it['title']} {it['summary']}".lower():
                 return False
@@ -970,6 +995,15 @@ def register_api(app: FastAPI, ctx: PanelContext, build_id: str) -> None:  # noq
         if primary is not None:
             where.append("is_primary = ?")
             params.append(int(primary))
+        if kind is not None:
+            other = sorted(n for n, k in FEED_KIND.items() if k != "cripto")
+            if kind == "cripto":
+                where.append(f"source NOT IN ({','.join('?' * len(other))})")
+                params += other
+            else:
+                names = sorted(n for n, k in FEED_KIND.items() if k == kind)
+                where.append(f"source IN ({','.join('?' * len(names))})")
+                params += names
         if q is not None:
             where.append("(title LIKE ? ESCAPE '\\' OR summary LIKE ? ESCAPE '\\')")
             params += [f"%{_escape_like(q)}%"] * 2
@@ -996,6 +1030,23 @@ def register_api(app: FastAPI, ctx: PanelContext, build_id: str) -> None:  # noq
             rows = conn.execute(f"SELECT {cols} FROM news {clause} ORDER BY published_ms DESC, item_id LIMIT ? OFFSET ?",
                                 [*params, lim, off]).fetchall()
             return total, rows, stored, extras
+
+        if topic is not None:
+            # el tema no esta en la base (se calcula sobre titulo + resumen): se filtran en Python las ultimas
+            # NEWS_TOPIC_SCAN filas que cumplen el resto de los filtros, mezcladas con las de la ventana en memoria
+            def work_topic(conn: Any) -> list[tuple]:
+                return conn.execute(f"SELECT {cols} FROM news {clause} ORDER BY published_ms DESC, item_id LIMIT ?",
+                                    [*params, NEWS_TOPIC_SCAN]).fetchall()
+
+            rows = await asyncio.to_thread(ro_query, _require_history(), work_topic)
+            db_items = [d for d in (_news_from_row(r) for r in rows) if match(d)]
+            have = {d["item_id"] for d in db_items}
+            mem = [d for d in window if d["item_id"] not in have]
+            merged = [news_json(d, True) for d in db_items] + [news_json(d, False) for d in mem]
+            merged.sort(key=lambda d: (-d["published_ms"], d["item_id"]))
+            return page(len(merged), limit, offset, merged[offset:offset + limit],
+                        sources={"db": len(db_items), "window_only": len(mem)}, scanned=len(rows),
+                        scan_limit=NEWS_TOPIC_SCAN)
 
         total, rows, stored, extras = await asyncio.to_thread(ro_query, _require_history(), work)
         items = [news_json(_news_from_row(r), True) for r in rows]

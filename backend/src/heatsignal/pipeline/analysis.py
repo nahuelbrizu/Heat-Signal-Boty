@@ -423,6 +423,11 @@ class AnalysisLoop:
                 macro_text = "Macro y eventos: no disponible en este ciclo (error al leer la base macro)."
             if macro_text:
                 state["macro_context"] = macro_text
+        if self._news is not None:
+            try:
+                state["world_news"] = self._news.world_block(now_ms)
+            except Exception:  # noqa: BLE001 - el bloque Mundo nunca frena el ciclo (queda en el log)
+                log.exception("%s: no se pudo armar el bloque Mundo", run_id)
         try:
             async with self._graph_lock:  # un ciclo manual y uno agendado no corren el grafo a la vez
                 final = await self._runner(state, run_id)

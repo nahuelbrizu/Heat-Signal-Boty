@@ -24,3 +24,6 @@ class NewsItem(BaseModel):
     fetched_ms: int = Field(description="Cuando lo vimos por primera vez: el grafo solo ve items con fetched_ms <= ts")
     symbols: list[str] = Field(default_factory=list, description="Activos base mencionados, p.ej. ['XRP']")
     market_wide: bool = Field(default=False, description="Noticia de todo el mercado cripto (regulacion, ETF, macro)")
+    kind: str = Field(default="cripto", description="Clase del feed: cripto | mundo | economia | tecnologia")
+    topics: list[str] = Field(default_factory=list,
+                              description="Temas newstopics-v1: geopolitica, politica, economia, tecnologia")

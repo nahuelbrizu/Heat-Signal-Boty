@@ -11,6 +11,11 @@
 
 ## Entradas
 
+### 2026-10-27
+- Deploy de SL/TP (commit fa2bbdd, 2026-10-26 20:03 UTC). Túnel: puertos 18001/18081 y WSL mirrored (conexion.md).
+- Noticias del mundo: 12 feeds generalistas + temas `newstopics-v1` + bloque "Mundo" para el Analista de Contexto
+  (decisions.md). Tests `test_news_world.py`.
+
 ### 2026-10-26 (noche)
 - Lote 7 (grilla long con stop por compra, opción a del usuario): `lab/grilla.py`, `lab/regime.py` (htf-trend-v1
   vectorizado, verificado contra el vivo), tests `test_lab_grilla.py` y `test_lab_regime.py`. Se corrigió el modelo de

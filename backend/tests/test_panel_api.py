@@ -523,3 +523,23 @@ def test_gap_list_render_shows_class_chip_for_every_gap() -> None:
     assert [(i["chip"], i["chipCls"]) for i in d["items"]] == [
         ("hueco real", "chip bad"), ("estructural", "chip "), ("respaldo REST", "chip info")]
     assert all(it["text"] in i["text"] for it, i in zip(items, d["items"]))  # no se pierde ningun aviso
+
+
+async def test_news_world_feeds_topics_and_filters(tmp_path) -> None:
+    ctx, _ = await _full_ctx(tmp_path)
+    now = int(time.time() * 1000)
+    ctx.news.ingest([NewsItem(item_id="guerra", source="bbc-world", primary=False, title="Missile strikes hit the capital",
+                              summary="", url="https://w.test/g", published_ms=now - 5000, fetched_ms=now - 5000,
+                              kind="mundo", topics=["geopolitica"])])
+    c = _client(ctx)
+    w = (await c.get("/api/news/world")).json()
+    assert [n["item_id"] for n in w["items"]] == ["guerra"] and "<noticias_mundo>" in w["block"]
+    assert w["items"][0]["topics"] == ["geopolitica"] and w["items"][0]["kind"] == "mundo"
+    geo = (await c.get("/api/news", params={"topic": "geopolitica"})).json()
+    assert [n["item_id"] for n in geo["items"]] == ["guerra"] and geo["scan_limit"] > 0
+    mundo = (await c.get("/api/news", params={"kind": "mundo"})).json()
+    assert [n["item_id"] for n in mundo["items"]] == ["guerra"]
+    cripto = (await c.get("/api/news", params={"kind": "cripto"})).json()
+    assert "guerra" not in [n["item_id"] for n in cripto["items"]] and cripto["total"] == 4
+    assert all(n["kind"] == "cripto" and isinstance(n["topics"], list) for n in cripto["items"])
+    assert (await c.get("/api/news", params={"topic": "deportes"})).status_code == 422
