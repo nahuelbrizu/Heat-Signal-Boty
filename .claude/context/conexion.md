@@ -17,7 +17,7 @@ desde la PC:
 
 - Servicio de usuario en la PC: `~/.config/systemd/user/heatsignal-tunnel.service` (copia versionada en
   `deploy/pc/heatsignal-tunnel.service`).
-  - Reenvía `localhost:8000` → panel y `localhost:8081` → FreqUI.
+  - Reenvía `localhost:18001` → panel (:8000 de la VM) y `localhost:18081` → FreqUI (:8081 de la VM). Desde 2026-10-27: Windows reserva el rango 7992–8991 (Hyper-V/WSL, cambia en cada arranque; ver `netsh int ipv4 show excludedportrange protocol=tcp`) y con WSL en modo mirrored (`C:\Users\nahue\.wslconfig`) el túnel no podía abrir 8000/8001/8081 ("Address already in use").
   - `ServerAliveInterval=30`: detecta un corte en ~90 s. `Restart=always` cada 10 s: se reconecta solo.
   - `ExitOnForwardFailure=yes`: si un puerto está ocupado, falla a la vista en vez de quedar a medias.
   - Habilitado (`default.target`) y con *linger* activo: arranca solo cuando arranca WSL, sin abrir sesión.
@@ -37,16 +37,31 @@ Requisito: `gcloud` instalado y logueado (`gcloud auth login`) con acceso al pro
 ## Alias (`~/.bashrc` de la PC)
 | Alias | Qué hace |
 |---|---|
-| `hs-open` | abre el panel → http://localhost:8000 |
-| `hs-ft-open` | abre FreqUI → http://localhost:8081 |
+| `hs-open` | abre el panel → http://127.0.0.1:18001 |
+| `hs-ft-open` | abre FreqUI → http://127.0.0.1:18081 |
 | `hs-tunel` | estado del túnel + si responden el panel y FreqUI (código 200 = ok) |
 | `hs-panel` / `hs-ft` | **reinician** el túnel permanente (ya no hace falta dejarlos abiertos en una terminal) |
 | `hs-ft-pass` | muestra el usuario y la clave de FreqUI, leídos de la VM (`freqtrade/config.secrets.json`). **No pegarlos en el chat** |
 | `hs-key` | carga la `ANTHROPIC_API_KEY` en la VM sin mostrarla |
 
+## Puertos que "se cuelgan" (pasó el 22/10 y el 27/10: leer antes de tocar nada)
+- Síntoma: el túnel reinicia en loop (`status=255`) o el navegador da `ERR_CONNECTION_REFUSED`. Error real (correr el
+  `ExecStart` a mano): `bind [127.0.0.1]:8001: Address already in use` sin ningún proceso escuchando.
+- Causa: Windows reserva rangos de puertos para Hyper-V/WSL en cada arranque (el 27/10: **7992–8991**, también
+  4448–5854, 9081–9180, 13798–13897, 50000–50059). En modo mirrored WSL no puede usar esos puertos. Ver:
+  `netsh.exe int ipv4 show excludedportrange protocol=tcp`. Por eso los puertos locales son 18001/18081 (fuera de todo).
+- Si algún día 18001/18081 caen en un rango: elegir otros libres fuera de la lista y cambiarlos en
+  `~/.config/systemd/user/heatsignal-tunnel.service`, `deploy/pc/heatsignal-tunnel.service`, los alias de `~/.bashrc` y
+  este archivo; después `systemctl --user daemon-reload && hs-panel`.
+- Usar **http://127.0.0.1:18001**, no `localhost`: `localhost` prueba primero IPv6 (`::1`), que en mirrored no llega a
+  WSL, y tarda ~20 s en caer a IPv4 (parece colgado).
+- WSL tiene que estar en mirrored: `C:\Users\nahue\.wslconfig` (`[wsl2]` / `networkingMode=mirrored`). El archivo viejo
+  en `C:\Users\camtu\` no se lee (otro usuario de Windows). Verificar: `ip -4 addr` en WSL muestra la IP de la red de
+  casa (192.168.x), no 172.x. Si muestra 172.x, `wsl --shutdown` en PowerShell y volver a abrir WSL.
+
 ## Si algo no anda
 1. `hs-tunel`. Si dice `inactive` o los códigos no son 200, seguí con `hs-panel` (reinicia el túnel).
-2. ¿Puerto ocupado? `ss -ltnp | grep -E ':8000|:8081'`. Si hay otro `ssh` viejo (un `gcloud compute ssh -L`
+2. ¿Puerto ocupado? `ss -ltnp | grep -E ':18001|:18081'` y que no caigan en un rango reservado de Windows (`netsh.exe int ipv4 show excludedportrange protocol=tcp`). Si hay otro `ssh` viejo (un `gcloud compute ssh -L`
    abierto a mano), cerralo: el túnel permanente necesita los dos puertos libres.
 3. Log del túnel: `journalctl --user -u heatsignal-tunnel -n 30 --no-pager`.
 4. ¿La VM está prendida? `gcloud compute instances describe instance-20261016-191100 --zone asia-northeast1-a
