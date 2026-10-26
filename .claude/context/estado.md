@@ -38,6 +38,13 @@ techo 20 %); **fin de noviembre**: decidir plata mínima real tras 1–2 meses d
 **A vigilar:** el CRO veta por "hueco real" (p. ej. "trades: sin datos de bybit"): si veta seguido, revisar `features/gaps.py`.
 Primer ciclo con CIO: cierre 2026-10-22 00:01 UTC.
 
+## Novedades 2026-10-27 (desplegado 2026-10-26 20:18 UTC, commit 0400836)
+
+- **Noticias del mundo:** 16 feeds (4 cripto + 12 generalistas: guerras, gobiernos, economía, tecnología) con temas
+  `newstopics-v1`; bloque "Mundo" para el Analista de Contexto desde el próximo ciclo (Asia 01:01 UTC). Panel
+  `#/noticias` con "Mundo: lo que recibe el grafo". Verificado en la VM: 16 feeds sin error, 12 titulares en el bloque.
+  Revisar en una semana: economía con pocos titulares y política con ruido local (ver decisions.md).
+
 ## Novedades 2026-10-26 (desplegado 2026-10-26 20:03 UTC, commit fa2bbdd)
 
 - **SL/TP obligatorio (-v2 en paralelo):** cada una de las 30 estrategias del bot de paper tiene su -v2 (rol `sltp`)
