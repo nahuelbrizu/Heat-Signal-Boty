@@ -31,7 +31,7 @@
   en `params.json`, panel `#/paperbot` (sección "Con SL/TP obligatorio" con la v1 al lado; en el detalle, operaciones
   abiertas con stop, objetivo, liquidación y distancia desde la marca, y cerradas con su motivo). Tests: `test_sltp.py`.
   Simulación local de 60 corridas: ~5,5 s y 206 MB pico por corrida (antes ~3 s / 147 MB en la VM; MemoryMax 400M).
-- Falta: deploy del código a la VM, reiniciar la ingesta (panel) — el timer del paperbot toma el código nuevo solo.
+- Desplegado el mismo día a las 20:03 UTC (commit fa2bbdd; ver estado.md).
   Freqtrade sin -v2 (decidir si se suma una instancia o alcanza con el paperbot).
 
 ### 2026-10-19 (noche)
