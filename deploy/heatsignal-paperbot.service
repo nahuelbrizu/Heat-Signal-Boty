@@ -3,7 +3,7 @@
 # data/paperbot.sqlite (append-only). Ver backend/src/heatsignal/paperbot/. Lo dispara heatsignal-paperbot.timer.
 # Necesita pandas en el venv (requirements-paperbot.txt); el panel y la ingesta NO lo importan.
 [Unit]
-Description=HeatSignal paperbot: paper trading simulado (30 estrategias: prueba hacia adelante + seguimiento + previas; una corrida)
+Description=HeatSignal paperbot: paper trading simulado (60 estrategias: prueba hacia adelante + seguimiento + previas + -v2 con SL/TP; una corrida)
 After=network-online.target
 Wants=network-online.target
 
@@ -16,8 +16,10 @@ Environment=HEATSIGNAL_HISTORY_DB=/home/nahue/heatsignal/data/heatsignal_history
 Environment=HEATSIGNAL_PAPERBOT_DB=/home/nahue/heatsignal/data/paperbot.sqlite
 ExecStart=/home/nahue/heatsignal/backend/.venv/bin/python -m heatsignal.paperbot run
 # Pico medido 2026-10-18 en la VM (corrida en seco, 64 dias de velas 1m x 7 simbolos + 100 dias de funding):
-# 143 MB de RSS, ~5 s. El tope deja margen ~2.8x; sin swap para que un desborde falle explicito.
-MemoryMax=400M
+# 143 MB de RSS, ~5 s; 2026-10-26 con 30 estrategias: ~150 MB de RSS (el pico del cgroup llega a 400M con cache).
+# 2026-10-27: 60 estrategias (+ las -v2 con SL/TP; simulacion local ~210 MB) -> tope 700M. Sin swap para que un
+# desborde falle explicito.
+MemoryMax=700M
 MemorySwapMax=0
 Nice=10
 IOSchedulingClass=idle
