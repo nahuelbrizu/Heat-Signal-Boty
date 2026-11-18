@@ -1,6 +1,20 @@
 # Contexto: Decisiones (ADR liviano)
 
 > Registro de decisiones. Al cerrar una, actualizar aquí en el mismo commit.
+>
+> **Archivo grande (~75 KB): no leerlo entero.** Buscar el tema con grep (cada decisión empieza con `- **`)
+> y leer solo ese tramo con offset/limit. Índice por tema (texto a buscar):
+> - Arquitectura y datos: "Fuente de datos", "Orquestación", "Ingesta = servicios", "Backend", "Datos de mercado",
+>   "Hyperliquid", "XRPL", "Siete criptos", "Avisos de datos", "Ingesta trabándose".
+> - Objetivo y LLM: "Objetivo del proyecto", "LLM del grafo", "Gemini por Vertex", "graph-v2-cio", "Diario de lecciones",
+>   "Contexto macro".
+> - Laboratorio: "Lote 1" … "Lote 6", "Resultados del lote", "holdout", "Diagnósticos", "Listón del programa",
+>   "Backtest de las 12 rupturas short".
+> - Meta-modelo: "Meta-modelo, etapa", "Meta-modelo 3".
+> - Paper y prueba hacia adelante: "Paper trading", "max-ruptura-10d-v1 al bot", "Revisión semanal",
+>   "Prueba hacia adelante", "Enmienda a los criterios de parada", "Stop loss", "Consulta a un trader".
+> - Grafo 1h: "Hipótesis de 1h", "5 estrategias del grafo", "Lateralidad", "días laterales".
+> - Decisiones pendientes: sección `## Abiertas` (cerca del final).
 
 ## Cerradas
 - **Fuente de datos → WS nativos de exchanges (Binance + Bybit + OKX).** Sobre CoinGlass pago. Razón:
