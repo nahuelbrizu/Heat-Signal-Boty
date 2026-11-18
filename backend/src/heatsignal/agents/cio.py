@@ -36,7 +36,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 
 from ..evaluation.strategy_registry import StrategyHypothesis
-from ..evaluation.timeframes import check_htf_entry, hourly_horizon, is_hourly
+from ..evaluation.timeframes import check_htf_entry, hourly_horizon, htf_for, is_hourly
 from ..schema.features import FeatureSet
 from ._common import HISTORICAL_LANGUAGE_RULE
 from .debate import render_analyst_digest, render_transcript
@@ -99,6 +99,7 @@ class CioDecision(BaseModel):
     razones: list[str] = Field(default_factory=list)
     candidates: list[CioCandidate] = Field(default_factory=list)
     rejection: str | None = None  # motivo si el codigo rechazo la decision del CIO
+    no_entry: list[str] = Field(default_factory=list)  # por que cada estrategia NO dio entrada (codigo)
 
     @property
     def takes(self) -> bool:
@@ -108,9 +109,18 @@ class CioDecision(BaseModel):
 # ---------------------------------------------------------------- candidatos (codigo)
 
 
+def strategy_name(s: StrategyHypothesis) -> str:
+    """Nombre corto (lo que va antes de ':' en la descripcion, p.ej. '2h-retroceso-ema-a-favor-v1')."""
+    head = (s.description or "").split(":", 1)[0].strip()
+    return head if head and len(head) <= 60 else str(s.strategy_id)[:8]
+
+
 def code_candidates(fs: FeatureSet, strategies: list[StrategyHypothesis], *, session: dict | None = None,
-                    now: datetime | None = None) -> list[CioCandidate]:
-    """(estrategia, direccion) cuya entrada pre-registrada se cumple en la vela actual, segun `timeframes.py`."""
+                    now: datetime | None = None, misses: list[str] | None = None) -> list[CioCandidate]:
+    """(estrategia, direccion) cuya entrada pre-registrada se cumple en la vela actual, segun `timeframes.py`.
+
+    `misses` (opcional) recibe, por estrategia sin entrada, "<nombre>: <motivo>" (sin fallos silenciosos: cada
+    ciclo dice por que no entro cada estrategia)."""
     created = (now or datetime.now(timezone.utc)).replace(microsecond=0)
     now_ms = int(created.timestamp() * 1000)
     run_session = (session or {}).get("name")
@@ -120,16 +130,41 @@ def code_candidates(fs: FeatureSet, strategies: list[StrategyHypothesis], *, ses
         setup = entry.get("htf_setup")
         hourly = is_hourly(s.exit_conditions)
         if setup is not None and not hourly:
-            continue  # un setup de 1h sin horizonte de 1h no es verificable: no se ofrece
-        if hourly and isinstance(hourly_horizon(s.exit_conditions, created), str):
-            continue
+            if misses is not None:
+                misses.append(f"{strategy_name(s)}: setup de velas sin horizonte de velas (no verificable)")
+            continue  # un setup de velas sin horizonte de velas no es verificable: no se ofrece
+        if hourly:
+            hz = hourly_horizon(s.exit_conditions, created)
+            if isinstance(hz, str):
+                if misses is not None:
+                    misses.append(f"{strategy_name(s)}: {hz}")
+                continue
+        why: dict[str, str] = {}
         for direction in ("LONG", "SHORT"):
-            if setup is not None and check_htf_entry(entry, fs.htf, direction, fs.session, now_ms, run_session):
+            problem = None
+            if setup is not None:
+                problem = check_htf_entry(entry, htf_for(fs, s.exit_conditions), direction, fs.session, now_ms,
+                                          run_session)
+            if problem:
+                why[direction] = problem
                 continue
             out.append(CioCandidate(strategy_id=str(s.strategy_id).lower(), direction=direction,
                                     setup=str(setup or "sin_setup"), family=entry.get("family"),
                                     description=s.description))
+        if misses is not None and len(why) == 2:
+            a, b = why["LONG"], why["SHORT"]
+            misses.append(f"{strategy_name(s)}: {a}" if a == b else f"{strategy_name(s)}: LONG: {a}; SHORT: {b}")
     return out
+
+
+def group_misses(misses: list[str], limit: int = 900) -> str:
+    """'nombre: motivo' -> motivos agrupados ("motivo [a, b]"), recortado a `limit` caracteres."""
+    by_reason: dict[str, list[str]] = {}
+    for m in misses:
+        name, _, why = m.partition(": ")
+        by_reason.setdefault(why or name, []).append(name)
+    text = " | ".join(f"{why} [{', '.join(names)}]" for why, names in by_reason.items())
+    return text if len(text) <= limit else text[: limit - 1] + "…"
 
 
 def render_candidates(by_symbol: dict[str, list[CioCandidate]]) -> str:
@@ -221,10 +256,16 @@ def make_cio_node(llm: BaseChatModel, *, hypothesis_store: Any = None,
                                                   razones=["sin estrategias pre-registradas habilitadas"])
                                       for s in features]}
         now = datetime.fromtimestamp(clock() / 1000, tz=timezone.utc)
-        cands = {s: code_candidates(fs, allowed, session=state.get("session"), now=now) for s, fs in features.items()}
+        misses: dict[str, list[str]] = {s: [] for s in features}
+        cands = {s: code_candidates(fs, allowed, session=state.get("session"), now=now, misses=misses[s])
+                 for s, fs in features.items()}
         open_fn = getattr(hypothesis_store, "open_positions", None)
         if callable(open_fn):  # una hipotesis abierta por (estrategia, simbolo): no se ofrece lo que se rechazaria
             busy = open_fn()
+            names = {str(x.strategy_id).lower(): strategy_name(x) for x in allowed}
+            for s, cs in cands.items():
+                for sid in sorted({c.strategy_id for c in cs if (c.strategy_id, s) in busy}):
+                    misses[s].append(f"{names.get(sid, sid[:8])}: ya hay una hipotesis abierta de esta estrategia")
             cands = {s: [c for c in cs if (c.strategy_id, s) not in busy] for s, cs in cands.items()}
         prompt = (
             f"# Candidatos verificados por codigo (unicos que se pueden tomar)\n{render_candidates(cands)}\n\n"
@@ -233,6 +274,8 @@ def make_cio_node(llm: BaseChatModel, *, hypothesis_store: Any = None,
         )
         result: CioBatch = await structured_llm.ainvoke(
             [SystemMessage(content=_SYSTEM_PROMPT), HumanMessage(content=prompt)])
-        return {"cio_decisions": validate_verdicts(result.verdicts, cands), "cio_ts_ms": int(now.timestamp() * 1000)}
+        decisions = [d.model_copy(update={"no_entry": misses.get(d.symbol, [])})
+                     for d in validate_verdicts(result.verdicts, cands)]
+        return {"cio_decisions": decisions, "cio_ts_ms": int(now.timestamp() * 1000)}
 
     return _node

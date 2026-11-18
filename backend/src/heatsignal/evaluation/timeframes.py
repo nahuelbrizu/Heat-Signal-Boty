@@ -24,10 +24,17 @@ Familia de dias laterales (`features/htf.py`, `htf-levels-v1`; decisions.md 2026
     "daily_trend_in":  ["lateral"]              y "alignment": "lateral"
     "levels_model_id": "htf-levels-v1"          version de los niveles (debe coincidir)
     "sessions":        ["europa", "eeuu"]       (solo falsa ruptura) sesion de la CORRIDA en la que aplica
-    La bandera la calcula el codigo sobre la ULTIMA vela 1h cerrada: el contexto tiene que ser de la vela que acaba de
+    La bandera la calcula el codigo sobre la ULTIMA vela cerrada: el contexto tiene que ser de la vela que acaba de
     cerrar (open = hora actual - 1h; un contexto atrasado se rechaza) y la direccion propuesta tiene que coincidir con
     la de la bandera. El tope "una por moneda y por sesion" (`max_per_symbol_session`) lo aplica el Sintetizador
     contra la base (`agents/synthesizer.py`).
+
+Otras temporalidades (2026-11-19): `timeframe` puede ser "1h", "2h" o "4h" (`TIMEFRAME_HOURS`). Con "2h"/"4h" las
+velas son de N h alineadas a UTC (`features/htf.py`, `FeatureSet.htf_tf`), `horizon_bars` cuenta velas de N h
+(due_at = ceil a N h de la emision + N h x barras; fin de dia igual que en 1h) y la entrada se verifica sobre la vela
+de N h que ACABA de cerrar: si la ultima vela cerrada del contexto no es la de [piso(N h) - N h, piso(N h)), no hay
+entrada (una corrida a mitad de una vela de N h no reusa la señal vieja). Los setups de apertura de sesion son de 1h
+por definicion (la vela de apertura) y no se aceptan en 2h/4h.
 """
 
 from __future__ import annotations
@@ -35,7 +42,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from ..features.htf import trend_alignment
+from ..features.htf import TIMEFRAME_HOURS, trend_alignment
 from ..schema.features import HtfContext
 
 HOUR = timedelta(hours=1)
@@ -47,30 +54,49 @@ SETUPS = ("pullback_ema20_1h_a_favor", "continuacion_a_favor", "extremo_rango_di
 
 
 def is_hourly(exit_conditions: dict[str, Any]) -> bool:
-    return exit_conditions.get("timeframe") == "1h"
+    """True si la estrategia es de velas (1h, 2h o 4h) con horizonte alineado al cierre de vela."""
+    return exit_conditions.get("timeframe") in TIMEFRAME_HOURS
 
 
-def ceil_hour(ts: datetime) -> datetime:
+def bar_hours(exit_conditions: dict[str, Any]) -> int:
+    return TIMEFRAME_HOURS.get(str(exit_conditions.get("timeframe")), 1)
+
+
+def htf_for(fs: Any, exit_conditions: dict[str, Any]) -> HtfContext | None:
+    """Contexto de la temporalidad de la estrategia: `fs.htf` (1h) o `fs.htf_tf["2h"/"4h"]`."""
+    tf = exit_conditions.get("timeframe")
+    if tf in (None, "1h"):
+        return getattr(fs, "htf", None)
+    return (getattr(fs, "htf_tf", None) or {}).get(tf)
+
+
+def ceil_hour(ts: datetime, hours: int = 1) -> datetime:
+    """Techo de `ts` a un multiplo de `hours` h desde las 00:00 UTC."""
+    ts = ts.astimezone(timezone.utc)
     floor = ts.replace(minute=0, second=0, microsecond=0)
-    return floor if floor == ts else floor + HOUR
+    floor -= timedelta(hours=floor.hour % hours)
+    return floor if floor == ts else floor + hours * HOUR
 
 
 def hourly_horizon(exit_conditions: dict[str, Any], created_at: datetime) -> tuple[int, int] | str:
     """(horizon_s, velas) o el motivo de rechazo. `created_at` timezone-aware, sin microsegundos."""
     created = created_at.astimezone(timezone.utc)
-    start = ceil_hour(created)
+    n = bar_hours(exit_conditions)
+    bar = n * HOUR
+    tf = f"{n}h"
+    start = ceil_hour(created, n)
     if exit_conditions.get("horizon") == "end_of_day_utc":
         due = created.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
-        bars = int((due - start) / HOUR)
+        bars = int((due - start) / bar)
         min_bars = int(exit_conditions.get("min_bars", 1))
         if bars < max(1, min_bars):
-            return f"quedan {bars} velas de 1h completas hasta el fin del dia UTC (< {max(1, min_bars)} pre-registradas)"
+            return f"quedan {bars} velas de {tf} completas hasta el fin del dia UTC (< {max(1, min_bars)} pre-registradas)"
     else:
         raw = exit_conditions.get("horizon_bars")
         if not isinstance(raw, int) or isinstance(raw, bool) or raw < 1:
-            return f"estrategia 1h sin horizon_bars entero >= 1 ni horizon=end_of_day_utc: {raw!r}"
+            return f"estrategia {tf} sin horizon_bars entero >= 1 ni horizon=end_of_day_utc: {raw!r}"
         bars = raw
-        due = start + bars * HOUR
+        due = start + bars * bar
     return int((due - created).total_seconds()), bars
 
 
@@ -82,8 +108,17 @@ def check_htf_entry(entry_conditions: dict[str, Any], htf: HtfContext | None, di
         return None  # la estrategia no exige setup de 1h
     if setup not in SETUPS:
         return f"htf_setup desconocido en la estrategia: {setup!r}"
+    tf = getattr(htf, "timeframe", "1h") if htf is not None else str(entry_conditions.get("timeframe") or "1h")
     if htf is None or htf.status == "missing":
-        return "sin contexto de 1h (velas cerradas) para verificar la entrada"
+        return f"sin contexto de {tf} (velas cerradas) para verificar la entrada"
+    n = TIMEFRAME_HOURS.get(tf, 1)
+    if n > 1:
+        if setup in SESSION_SETUPS:
+            return f"el setup {setup} es de la vela de apertura de 1h: no aplica en {tf}"
+        if now_ms is not None:
+            bar_ms = n * HOUR_MS
+            if now_ms % bar_ms >= HOUR_MS or htf.last_closed_open_ms != now_ms - now_ms % bar_ms - bar_ms:
+                return f"no cerro una vela de {tf} en esta hora: la entrada solo se verifica al cierre de la vela de {tf}"
     want_model = entry_conditions.get("htf_model_id")
     if want_model and want_model != htf.htf_model_id:
         return f"la estrategia se pre-registro con {want_model} y el contexto es {htf.htf_model_id}"
@@ -103,7 +138,7 @@ def check_htf_entry(entry_conditions: dict[str, Any], htf: HtfContext | None, di
         if htf.setups.extremo_rango_diario != want:
             return f"el cierre no esta en el extremo {want} del rango diario (codigo: {htf.setups.extremo_rango_diario})"
     elif not getattr(htf.setups, setup):
-        return f"el setup {setup} no se cumple en el contexto de 1h (calculado por codigo)"
+        return f"el setup {setup} no se cumple en el contexto de {tf} (calculado por codigo)"
     return None
 
 
@@ -137,9 +172,10 @@ def _check_lateral(entry_conditions: dict[str, Any], setup: str, htf: HtfContext
     if allowed and run_session not in allowed:
         return f"la sesion de la corrida es {run_session or 'ninguna'}; la estrategia aplica a {allowed}"
     if now_ms is not None:
-        expected = now_ms - now_ms % HOUR_MS - HOUR_MS
+        bar_ms = TIMEFRAME_HOURS.get(getattr(htf, "timeframe", "1h"), 1) * HOUR_MS
+        expected = now_ms - now_ms % bar_ms - bar_ms
         if htf.last_closed_open_ms != expected:
-            return "el contexto de 1h no es de la ultima vela cerrada (atrasado o adelantado): no se verifica la entrada"
+            return "el contexto no es de la ultima vela cerrada (atrasado o adelantado): no se verifica la entrada"
     flag = getattr(lv, setup)
     if flag is None:
         why = "; ".join(lv.sin_datos)

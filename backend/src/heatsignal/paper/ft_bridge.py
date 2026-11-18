@@ -3,7 +3,7 @@ Puente hipotesis de 1h -> Freqtrade DRY-RUN de hipotesis (`heatsignal-freqtrade-
 
 Que hace cada corrida (`heatsignal-ft-bridge.timer`, cada 5 min):
   1. Lee de `heatsignal_eval.sqlite` (SOLO LECTURA) las hipotesis NUEVAS de las estrategias de 1h
-     (`exit_conditions.timeframe = "1h"` y `hypothesis_context.timeframe = '1h'`), sin resolucion y con `due_at`
+     (`exit_conditions.timeframe` y `hypothesis_context.timeframe` iguales, '1h', '2h' o '4h' desde 2026-11-19), sin resolucion y con `due_at`
      futuro. "Nueva" = emitida desde el primer arranque del puente (menos un margen de una corrida): al desplegarlo
      no se mandan hipotesis viejas.
   2. Por cada una hace `POST /api/v1/forceenter` con la direccion de la hipotesis, `stakeamount` fijo, leverage 1 y
@@ -241,7 +241,7 @@ def hourly_hypotheses(eval_db: str | Path, *, since_ts: float, min_due_ts: float
             "FROM pending_hypotheses p "
             "JOIN hypothesis_context c ON c.hypothesis_id = p.hypothesis_id "
             "JOIN strategy_hypotheses s ON s.strategy_id = p.strategy_id "
-            "WHERE c.timeframe = '1h' AND json_extract(s.exit_conditions, '$.timeframe') = '1h' "
+            "WHERE c.timeframe IN ('1h', '2h', '4h') AND json_extract(s.exit_conditions, '$.timeframe') = c.timeframe "
             "AND p.created_ts >= ? AND p.due_ts > ? "
             "ORDER BY p.created_ts ASC, p.hypothesis_id ASC",
             (since_ts, min_due_ts),

@@ -34,19 +34,24 @@ from pathlib import Path
 from .job import DEFAULT_DB_PATH
 from .strategy_registry import StrategyHypothesis, StrategyRegistry
 from ..schema.features import LEVELS_MODEL_ID
-from .timeframes import LATERAL_SETUPS, SETUPS, hourly_horizon, is_hourly
+from .timeframes import LATERAL_SETUPS, SESSION_SETUPS, SETUPS, hourly_horizon, is_hourly
 
 
 def validate_hourly(strategy: StrategyHypothesis) -> str | None:
     """Motivo si una estrategia de 1h esta mal pre-registrada (None si esta bien o no es de 1h)."""
     if not is_hourly(strategy.exit_conditions):
         return None
+    tf = strategy.exit_conditions.get("timeframe")
     probe = hourly_horizon(strategy.exit_conditions, datetime(2026, 1, 1, 0, 30, tzinfo=timezone.utc))
     if isinstance(probe, str):
-        return f"horizonte de 1h invalido: {probe}"
+        return f"horizonte de {tf} invalido: {probe}"
     setup = strategy.entry_conditions.get("htf_setup")
     if setup is not None and setup not in SETUPS:
         return f"htf_setup desconocido: {setup!r} (validos: {', '.join(SETUPS)})"
+    if strategy.entry_conditions.get("timeframe", tf) != tf:
+        return f"entry_conditions.timeframe ({strategy.entry_conditions.get('timeframe')}) distinto de exit ({tf})"
+    if tf != "1h" and (setup in SESSION_SETUPS or setup == "falsa_ruptura_asia"):
+        return f"el setup {setup} esta atado a la vela de 1h de una sesion: no se registra en {tf}"
     if setup in LATERAL_SETUPS:
         ec = strategy.entry_conditions
         if ec.get("daily_trend_in") != ["lateral"] or ec.get("alignment") != "lateral":

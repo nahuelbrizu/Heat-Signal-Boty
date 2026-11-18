@@ -29,7 +29,7 @@ from uuid import UUID
 from pydantic import BaseModel, Field
 
 from ..evaluation.strategy_registry import StrategyHypothesis
-from ..evaluation.timeframes import check_htf_entry, hourly_horizon, is_hourly
+from ..evaluation.timeframes import check_htf_entry, hourly_horizon, htf_for, is_hourly
 from ..features.htf import trend_alignment
 from ..schema.features import FeatureSet
 from ..schema.hypotheses import PendingHypothesis
@@ -113,18 +113,19 @@ def _validate(
     created = (now or datetime.now(timezone.utc)).replace(microsecond=0)
     timeframe = strategy.exit_conditions.get("timeframe")
     bars = None
+    htf = fs.htf
     if is_hourly(strategy.exit_conditions):
-        entry_problem = check_htf_entry(strategy.entry_conditions, fs.htf, p.direction, fs.session,
+        htf = htf_for(fs, strategy.exit_conditions)
+        entry_problem = check_htf_entry(strategy.entry_conditions, htf, p.direction, fs.session,
                                         int(created.timestamp() * 1000), (session or {}).get("name"))
         if entry_problem:
-            return f"no cumple la entrada pre-registrada de 1h: {entry_problem}"
+            return f"no cumple la entrada pre-registrada de {timeframe}: {entry_problem}"
         hz = hourly_horizon(strategy.exit_conditions, created)
         if isinstance(hz, str):
             return hz
         horizon_s, bars = hz
     else:
         horizon_s = _horizon_for(strategy, default_horizon_s)
-    htf = fs.htf
     return PendingHypothesis(
         strategy_id=strategy.strategy_id,
         symbol=fs.symbol,
@@ -257,8 +258,12 @@ def _proposals_from_cio(decisions: list["CioDecision"], reviews: dict[str, "CroR
             closed[d.symbol] = SymbolDecision(symbol=d.symbol, outcome="rejected", strategy_id=d.strategy_id,
                                               reason=f"decision del CIO rechazada por codigo: {d.rejection}")
         elif not d.takes:
+            from .cio import group_misses
+
+            no_entry = getattr(d, "no_entry", None) or []
+            code = f" | Por que no entro (codigo): {group_misses(no_entry)}" if no_entry else ""
             closed[d.symbol] = SymbolDecision(symbol=d.symbol, outcome="no_hypothesis",
-                                              reason=f"CIO: no operar ({d.postura}). {why}")
+                                              reason=f"CIO: no operar ({d.postura}). {why}{code}")
         elif r is None or not r.approved:
             closed[d.symbol] = SymbolDecision(symbol=d.symbol, outcome="no_hypothesis", strategy_id=d.strategy_id,
                                               reason=f"veto del CRO: {r.veto if r else 'sin revision'}")

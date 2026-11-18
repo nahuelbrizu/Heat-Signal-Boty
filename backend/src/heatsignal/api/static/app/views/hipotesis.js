@@ -50,7 +50,7 @@ async function list(root, ctx) {
     const iUntil = el("input", { type: "datetime-local", name: "until", value: toLocalInput(+f.until || null) });
     const sOrd = select("order", [["desc", "más nuevas primero"], ["asc", "más viejas primero"]], f.order);
     const sLim = select("limit", [["25", "25"], ["50", "50"], ["100", "100"], ["200", "200"]], String(f.limit));
-    const sTf = select("timeframe", [["", "todas"], ["1h", "velas de 1h"], ["none", "sin temporalidad (viejas)"]], f.timeframe);
+    const sTf = select("timeframe", [["", "todas"], ["1h", "velas de 1h"], ["2h", "velas de 2h"], ["4h", "velas de 4h"], ["none", "sin temporalidad (viejas)"]], f.timeframe);
     const sTr = select("daily_trend", [["", "todas"], ["alcista", "alcista"], ["bajista", "bajista"], ["lateral", "lateral"], ["sin_datos", "sin datos"], ["none", "sin registro (viejas)"]], f.daily_trend);
     const sSe = select("session", [["", "todas"], ["asia", "Asia"], ["europa", "Europa"], ["eeuu", "EE.UU."], ["cierre", "Cierre UTC"], ["none", "sin registro (viejas)"]], f.session);
     const sAl = select("trend_alignment", [["", "todas"], ["a_favor", "a favor"], ["en_contra", "en contra"], ["lateral", "tendencia lateral"], ["sin_datos", "sin datos"], ["none", "sin registro (viejas)"]], f.trend_alignment);

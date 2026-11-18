@@ -280,8 +280,8 @@ def exit_rule(h: Any) -> dict[str, Any]:
     from ..lab.exits import HYPOTHESIS_EXIT
 
     hs = int(h.horizon_s)
-    if h.timeframe == "1h" and h.horizon_bars:
-        txt = f"por tiempo: {h.horizon_bars} vela{'s' if h.horizon_bars != 1 else ''} de 1h"
+    if h.timeframe in ("1h", "2h", "4h") and h.horizon_bars:
+        txt = f"por tiempo: {h.horizon_bars} vela{'s' if h.horizon_bars != 1 else ''} de {h.timeframe}"
     elif hs % 3600 == 0:
         txt = f"por tiempo: {hs // 3600} h"
     else:
@@ -715,7 +715,7 @@ def register_api(app: FastAPI, ctx: PanelContext, build_id: str) -> None:  # noq
         win: bool | None = None,
         since: str | None = Query(None, description="created_at >= since (epoch ms o ISO)"),
         until: str | None = Query(None, description="created_at < until (epoch ms o ISO)"),
-        timeframe: Literal["1h", "none"] | None = Query(None, description="'none' = sin temporalidad (viejas)"),
+        timeframe: Literal["1h", "2h", "4h", "none"] | None = Query(None, description="'none' = sin temporalidad (viejas)"),
         daily_trend: Literal["alcista", "bajista", "lateral", "sin_datos", "none"] | None = None,
         trend_alignment: Literal["a_favor", "en_contra", "lateral", "sin_datos", "none"] | None = None,
         session: str | None = Query(None, pattern=r"^[a-z0-9_]{1,20}$", description="'none' = sin sesion"),
@@ -748,7 +748,7 @@ def register_api(app: FastAPI, ctx: PanelContext, build_id: str) -> None:  # noq
     async def hypotheses_by_trend(
         strategy_id: UUID | None = None,
         symbol: str | None = Query(None, max_length=30),
-        timeframe: Literal["1h", "none"] | None = None,
+        timeframe: Literal["1h", "2h", "4h", "none"] | None = None,
     ) -> dict[str, Any]:
         """Tasa de acierto cortada por tendencia del dia y por a favor / en contra (n, IC de Wilson, alfa)."""
         from ..evaluation.segments import trend_segments

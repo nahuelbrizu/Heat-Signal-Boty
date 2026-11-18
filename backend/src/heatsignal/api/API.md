@@ -169,7 +169,7 @@ Todas las hipótesis, filtradas y paginadas (más nuevas primero por defecto).
 ## `GET /api/hypotheses/by-trend`
 
 Tasa de acierto cortada por la tendencia del día UTC al emitir (`daily_trend`) y por la dirección respecto de ella
-(`trend_alignment`). Filtros: `strategy_id`, `symbol`, `timeframe` (`1h` | `none`). Cada segmento trae `total`,
+(`trend_alignment`). Filtros: `strategy_id`, `symbol`, `timeframe` (`1h` | `2h` | `4h` | `none`). Cada segmento trae `total`,
 `pending`, `expired_no_data`, `n` (resueltas), `wins`, `rate`, `ci95` (Wilson 95 %, `null` con n = 0),
 `mean_pnl_pct`, `mean_benchmark_pnl_pct` (buy & hold en la misma ventana) y `mean_alpha_pct`. Las hipótesis
 anteriores al contexto 1h caen en `sin_registro`.
@@ -181,6 +181,11 @@ anteriores al contexto 1h caen en `sin_registro`.
  "by_alignment": [{"trend_alignment": "a_favor", "...": "..."}],
  "by_trend_and_alignment": [{"daily_trend": "alcista", "trend_alignment": "a_favor", "...": "..."}]}
 ```
+
+Desde 2026-11-19 hay estrategias de velas de 2h y 4h (`timeframe` = `2h`/`4h`, `horizon_bars` en velas de esa
+temporalidad). En `/api/cycles/{run_id}`, `report.symbols[sym].htf_tf` trae el resumen de los contextos de 2h y 4h
+(mismo formato que `htf`, con `timeframe`), y el `reason` de cada decisión `no_hypothesis` termina con
+"Por que no entro (codigo): <motivo> [estrategias] | ..." (por qué cada estrategia no dio entrada en ese ciclo).
 
 `GET /api/hypotheses` acepta además `timeframe`, `daily_trend` y `trend_alignment` (`none` = hipótesis sin el
 dato) y cada hipótesis trae `timeframe`, `horizon_bars`, `daily_trend`, `trend_alignment`, `htf_model_id` y

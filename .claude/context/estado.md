@@ -9,8 +9,7 @@
 
 Tareas chicas directo, sin subagentes; agentes solo para trabajo grande y, si es rutina, con modelo liviano (Sonnet);
 nada de polling; revisar una vez por semana (lunes, con la revisión semanal). No leer `decisions.md` ni `historial.md`
-enteros: buscar con grep y leer el tramo. El grafo de la VM usa Gemini por Vertex (se paga en Google Cloud, no en el
-plan de Claude); Anthropic API sin crédito (se saltea solo).
+enteros: buscar con grep y leer el tramo. El grafo usa la API de Anthropic (se paga aparte del plan de Claude, con tope de US$5 por semana).
 
 ## Dónde corre: en la PC desde 2026-11-18 (la VM está caída)
 
@@ -32,6 +31,10 @@ Ahora todo corre en la PC (WSL) como **servicios de usuario** (`systemctl --user
   `compare_<fecha>.json` + `paper_summary.json` a `~/heatsignal/data/`.
 - Apagado porque depende de la VM: `heatsignal-tunnel`.
 - LLM del grafo: Anthropic (`ANTHROPIC_API_KEY` en `~/heatsignal/.env`, cobra por uso, aparte del plan de Claude).
+- **Grafo cada hora (2026-11-19)**: `HEATSIGNAL_ANALYSIS_MODE=hourly`, todo en Haiku 5.5 (~US$0,01 por ciclo,
+  ~US$1,3 por semana), cierre de cada vela 1h + sesiones; 18 estrategias activas: 8 de 1h + 10 nuevas de 2h/4h
+  (`backend/strategies/*-2h`, `*-4h`; decisions.md "Grafo cada hora"). Cada ciclo deja, por cripto, la decisión
+  y por qué no entró cada estrategia.
 - **Tope de LLM (2026-11-18, pedido del usuario):** US$5 por semana para todo lo que se analiza (grafo + lecciones +
   investigación), y LLM solo lunes a viernes UTC (`HEATSIGNAL_LLM_WEEKLY_USD=5`, `HEATSIGNAL_LLM_DAYS=0-4`).
   `agents/spend.py`: cada llamada anota tokens y costo de lista en `~/heatsignal/data/llm_spend.sqlite`; al llegar
@@ -58,7 +61,7 @@ VM e2-medium 4 GB / 20 GB, todo systemd; acceso por túnel permanente (`conexion
 `ingestion-binance-bybit`; deploy = `git archive` + `scp` (manual).
 - Ingesta 4 exchanges (Binance, Bybit, OKX, Hyperliquid; 7 criptos) + panel :8000 (SPA en `api/static/app/`,
   API en `api/API.md`; MemoryMax 1200M).
-- Grafo `graph-v2-cio`, 4 sesiones/día (00:01, 01:01, 08:01, 14:31 UTC): 4 analistas → debate → CIO → CRO (vetos por
+- Grafo `graph-v2-cio`, 4 sesiones/día (en la PC además cada hora, ver arriba): 4 analistas → debate → CIO → CRO (vetos por
   código) → registro → redactor. 8 estrategias de 1h (5 tendencia + 3 lateralidad). Veredictos en `cio_verdicts`.
   El Analista de Contexto recibe macro (~320 tokens) y "Mundo" (16 feeds, `newstopics-v1`).
 - Puente hipótesis → Freqtrade de hipótesis (:8082) y Freqtrade Donchian (:8081, FreqUI); ambos dry-run, sin -v2.

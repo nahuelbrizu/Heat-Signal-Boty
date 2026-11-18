@@ -224,8 +224,8 @@ def _anthropic_chat_class() -> type:
 
 def make_llms(
     provider: str = "anthropic",
-    cheap_model: str = DEFAULT_CHEAP_MODEL,
-    strong_model: str = DEFAULT_STRONG_MODEL,
+    cheap_model: str | None = None,
+    strong_model: str | None = None,
     *,
     api_key: str | None = None,
     max_tokens: int = DEFAULT_MAX_TOKENS,
@@ -239,6 +239,10 @@ def make_llms(
     Cada modelo anota sus tokens y su costo de lista en el registro de gasto (`agents/spend.py`, `source`), que es
     lo que usa el tope semanal.
     """
+    # Modelos de Anthropic: argumento > HEATSIGNAL_ANTHROPIC_{CHEAP,STRONG}_MODEL > default (2026-11-19: en la PC el
+    # grafo corre cada hora con Haiku tambien en debate/CIO/redactor para entrar en el tope semanal).
+    cheap_model = cheap_model or os.environ.get("HEATSIGNAL_ANTHROPIC_CHEAP_MODEL") or DEFAULT_CHEAP_MODEL
+    strong_model = strong_model or os.environ.get("HEATSIGNAL_ANTHROPIC_STRONG_MODEL") or DEFAULT_STRONG_MODEL
     if provider not in ("anthropic", "gemini"):
         raise UnsupportedProviderError(f"proveedor {provider!r} no soportado ('anthropic' o 'gemini')")
     a_key = api_key or os.environ.get("ANTHROPIC_API_KEY")

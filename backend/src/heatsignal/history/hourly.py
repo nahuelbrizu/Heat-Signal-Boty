@@ -238,3 +238,22 @@ class HourlyCandleProvider:
         except Exception as exc:  # noqa: BLE001 - un fallo del contexto no tumba el ciclo, pero se declara
             log.exception("htf: fallo el contexto de %s", symbol)
             return missing_context(symbol, now_ms, f"error armando el contexto de 1h: {exc!r}")
+
+    def contexts(self, symbol: str, now_ms: int, bar_hours: tuple[int, ...] = (2, 4)
+                 ) -> tuple[HtfContext, dict[str, HtfContext]]:
+        """Contexto de 1h + los de `bar_hours` (2h, 4h) con las MISMAS velas de 1h (una sola lectura)."""
+        try:
+            cs, gaps = self.candles(symbol, now_ms)
+            base = build_htf_context(symbol, cs, now_ms, gaps)
+        except Exception as exc:  # noqa: BLE001
+            log.exception("htf: fallo el contexto de %s", symbol)
+            return missing_context(symbol, now_ms, f"error armando el contexto de 1h: {exc!r}"), {}
+        out: dict[str, HtfContext] = {}
+        for n in bar_hours:
+            try:
+                out[f"{n}h"] = build_htf_context(symbol, cs, now_ms, [], bar_hours=n, trend_from=base)
+            except Exception as exc:  # noqa: BLE001 - se declara en el contexto, no se omite
+                log.exception("htf: fallo el contexto de %sh de %s", n, symbol)
+                out[f"{n}h"] = missing_context(symbol, now_ms, f"error armando el contexto de {n}h: {exc!r}"
+                                               ).model_copy(update={"timeframe": f"{n}h"})
+        return base, out

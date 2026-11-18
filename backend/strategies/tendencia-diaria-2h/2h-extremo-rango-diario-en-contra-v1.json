@@ -1,0 +1,26 @@
+{
+  "description": "2h-extremo-rango-diario-en-contra-v1: en contra de la tendencia diaria (htf-trend-v1) cuando la ultima vela de 2h cerrada (la que acaba de cerrar) cierra en el 15% extremo del rango del dia (rango >= 2 ATR14 2h); salida al cierre de la 4a vela de 2h completa",
+  "entry_conditions": {
+    "family": "2h-tendencia-diaria",
+    "scope": "rotation",
+    "timeframe": "2h",
+    "htf_model_id": "htf-trend-v1",
+    "htf_setup": "extremo_rango_diario_en_contra",
+    "daily_trend_in": [
+      "alcista",
+      "bajista"
+    ],
+    "alignment": "en_contra",
+    "direction_rule": "SHORT si daily_trend=alcista y el cierre esta en el 15% superior del rango diario; LONG si daily_trend=bajista y esta en el 15% inferior",
+    "setup_rule": "rango del dia UTC (velas de 2h cerradas) >= 2 ATR14 2h y posicion del ultimo cierre >= 0.85 (maximo) o <= 0.15 (minimo)",
+    "entry_price": "mark price al emitir (lo fija el codigo)",
+    "origen": "copia de 1h-extremo-rango-diario-en-contra-v1 con las mismas reglas sobre velas de 2h alineadas a UTC (2026-11-19, pedido del usuario); la tendencia del dia es htf-trend-v1 calculada en 1h; la entrada solo se verifica en la corrida de la hora en que cierra la vela de 2h"
+  },
+  "exit_conditions": {
+    "timeframe": "2h",
+    "horizon_bars": 4,
+    "exit_rule": "cierre (mark) de la 4a vela de 2h completa posterior a la emision; due_at = ceil_2h(emision) + 4 x 2 h",
+    "costs": "10 bps ida y vuelta (resolver por defecto)"
+  },
+  "author": "nahue"
+}

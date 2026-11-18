@@ -13,8 +13,26 @@
 > - Meta-modelo: "Meta-modelo, etapa", "Meta-modelo 3".
 > - Paper y prueba hacia adelante: "Paper trading", "max-ruptura-10d-v1 al bot", "Revisión semanal",
 >   "Prueba hacia adelante", "Enmienda a los criterios de parada", "Stop loss", "Consulta a un trader".
-> - Grafo 1h: "Hipótesis de 1h", "5 estrategias del grafo", "Lateralidad", "días laterales".
-> - Decisiones pendientes: sección `## Abiertas` (cerca del final).
+> - Grafo 1h: "Hipótesis de 1h", "5 estrategias del grafo", "Lateralidad", "días laterales", "Grafo cada hora".
+> - Decisiones pendientes: sección `- **Grafo cada hora con velas de 1h, 2h y 4h (2026-11-19).** Pedido del usuario: "el grafo debe correr las 24hs,
+  analizando velas de 1h, 2h, 3h, 4h, etc." y "siempre tiene que dar una hipotesis, en cada ciclo, aunque no entre,
+  diga porque no entro". Elegido (preguntado): todo el grafo en Haiku 5.5 (`HEATSIGNAL_ANTHROPIC_STRONG_MODEL`), LLM
+  solo lunes a viernes (tope US$5/semana sin cambios) y copiar las reglas a 2h y 4h (no 3h ni 6–12h: menos intentos).
+  Sobre "LLM solo si el codigo ve una entrada": el usuario quiere un veredicto por cripto en cada ciclo.
+  `HEATSIGNAL_ANALYSIS_MODE=hourly`: el grafo corre al cierre de cada vela de 1h (+90 s) con las 7 criptos
+  batcheadas, y además en las sesiones como antes. Una hora a ±5 min de un disparo de sesión la cubre la sesión. En
+  las corridas horarias no se ofrecen los setups de apertura de sesión. Estimado ~US$0,01 por ciclo (~US$1,3 por
+  semana). Nuevas: **10 estrategias pre-registradas** (`backend/strategies/*-2h/`, `*-4h/`): retroceso EMA,
+  continuación fin de día, extremo de rango en contra, rechazo del día anterior y extremo VWAP, cada una en 2h y 4h,
+  mismas reglas sobre velas de N h alineadas a UTC (`features/htf.py`, `aggregate_bars`). La tendencia del día sigue
+  siendo `htf-trend-v1` en 1h. `horizon_bars` cuenta velas de N h. La entrada solo se verifica en la hora en que
+  cierra la vela de N h. No se copian a 2h/4h las 2 de apertura de sesión ni la falsa ruptura de Asia: dependen de
+  la vela de 1h de la sesión (`register_strategy` las rechaza). Cada intento nuevo cuenta para la corrección por
+  multiplicidad. Por qué no entró: cada decisión `no_hypothesis` del CIO termina con los motivos por código de cada
+  estrategia (`cio.code_candidates(misses=)`, `group_misses`), que quedan en el historial de ciclos y en
+  `cio_verdicts.outcome_reason`. El puente a Freqtrade de hipótesis, el resolver y el panel aceptan 2h y 4h.
+
+## Abiertas` (cerca del final).
 
 ## Cerradas
 - **Fuente de datos → WS nativos de exchanges (Binance + Bybit + OKX).** Sobre CoinGlass pago. Razón:

@@ -125,7 +125,7 @@ class Resolver:
 
     def source_for(self, h: PendingHypothesis) -> PriceSource:
         """Hipotesis de 1h con vencimiento en cierre de vela -> vela de 1h; el resto, la fuente general."""
-        if h.timeframe == "1h" and self._hourly is not None:
+        if h.timeframe in ("1h", "2h", "4h") and self._hourly is not None:  # due_at = cierre de vela de 1h
             due = due_at(h)
             if due.minute == 0 and due.second == 0 and due.microsecond == 0:
                 return self._hourly

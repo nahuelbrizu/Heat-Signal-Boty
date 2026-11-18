@@ -75,7 +75,7 @@ def _eval_rows(eval_db: Path, ids: list[str]) -> tuple[list[dict[str, Any]], dic
     try:
         strategies = [dict(r) for r in conn.execute(
             "SELECT strategy_id, description, registered_at FROM strategy_hypotheses "
-            "WHERE json_extract(exit_conditions, '$.timeframe') = '1h' ORDER BY registered_at, strategy_id")]
+            "WHERE json_extract(exit_conditions, '$.timeframe') IN ('1h', '2h', '4h') ORDER BY registered_at, strategy_id")]
         hyps: dict[str, dict[str, Any]] = {}
         for i in range(0, len(ids), 400):
             chunk = ids[i:i + 400]

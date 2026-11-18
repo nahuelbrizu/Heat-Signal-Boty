@@ -33,6 +33,13 @@ Niveles para dias laterales (`htf-levels-v1`, `HtfContext.levels`; aprobados 202
       extremo_vwap:         |close - VWAP| >= 2 ATR y ADX14 1h < 20 -> hacia el VWAP (close > VWAP -> SHORT).
     Si se cumplen las dos direcciones a la vez (vela gigante), no hay bandera (ambigua, se declara).
 
+Otras temporalidades (2h, 4h; 2026-11-19): `build_htf_context(..., bar_hours=N, trend_from=ctx_1h)` agrega las velas
+de 1h cerradas en velas de N h alineadas a UTC (00:00, 02:00, ... / 00:00, 04:00, ...; una vela de N h existe solo si
+cerro y tiene sus N horas) y calcula los MISMOS numeros, setups y niveles con esas velas (ATR14, EMA20, ADX14, mechas en
+unidades de la vela de N h). La tendencia del dia NO se recalcula: es la de `htf-trend-v1` en 1h (`trend_from`), asi
+"alcista/bajista/lateral" significa lo mismo en todas las temporalidades. Los campos `*_1h` del contexto quedan en
+unidades de la vela de `timeframe`.
+
 Setups (banderas por codigo; las estrategias 1h pre-registradas los exigen):
     pullback_ema20_1h_a_favor: tendencia alcista (bajista) y la ultima vela toco la EMA20 1h desde el lado de la
         tendencia (low <= EMA20 + 0.25 ATR; high >= EMA20 - 0.25 ATR) cerrando a <= 0.5 ATR de ella y del lado de
@@ -136,20 +143,21 @@ def _one_side(short: bool, long: bool, name: str, gaps: list[str]) -> str | None
 
 
 def build_levels(cs: Sequence[Candle1h], today: Sequence[Candle1h], day_start: int, prev: dict | None,
-                 atr: float | None, trend: str) -> HtfLevels:
-    """Niveles `htf-levels-v1` desde velas 1h CERRADAS (ya filtradas por el caller). Puro."""
+                 atr: float | None, trend: str, bar_ms: int = HOUR_MS) -> HtfLevels:
+    """Niveles `htf-levels-v1` desde velas CERRADAS de `bar_ms` (ya filtradas por el caller). Puro."""
     lv = HtfLevels()
     miss = lv.sin_datos
     last = today[-1] if today else None
     # rango de Asia
     asia = [c for c in today if c.open_ms < day_start + ASIA_END_H * HOUR_MS]
-    lv.asia_hours = len(asia)
-    if len(asia) == ASIA_END_H:
+    asia_n = ASIA_END_H * HOUR_MS // bar_ms
+    lv.asia_hours = len(asia) * bar_ms // HOUR_MS
+    if len(asia) == asia_n:
         lv.asia_high, lv.asia_low = max(c.high for c in asia), min(c.low for c in asia)
-    elif last is not None and last.open_ms < day_start + (ASIA_END_H - 1) * HOUR_MS:
-        miss.append(f"rango de Asia: en curso ({len(asia)}/{ASIA_END_H} velas cerradas)")
+    elif last is not None and last.open_ms < day_start + ASIA_END_H * HOUR_MS - bar_ms:
+        miss.append(f"rango de Asia: en curso ({len(asia)}/{asia_n} velas cerradas)")
     else:
-        miss.append(f"rango de Asia: faltan velas de 00-08 UTC ({len(asia)}/{ASIA_END_H})")
+        miss.append(f"rango de Asia: faltan velas de 00-08 UTC ({len(asia)}/{asia_n})")
     # extremos de ayer
     if prev is not None:
         lv.prev_day_high, lv.prev_day_low = prev["high"], prev["low"]
@@ -160,7 +168,7 @@ def build_levels(cs: Sequence[Candle1h], today: Sequence[Candle1h], day_start: i
         miss.append("VWAP: todavia no cerro ninguna vela de 1h del dia")
     else:
         hours = {c.open_ms for c in today}
-        holes = [h for h in range(day_start, today[-1].open_ms + HOUR_MS, HOUR_MS) if h not in hours]
+        holes = [h for h in range(day_start, today[-1].open_ms + bar_ms, bar_ms) if h not in hours]
         no_1m = [c for c in today if c.vwap_pv is None or c.vwap_vol is None]
         vol = sum(c.vwap_vol or 0.0 for c in today)
         if holes:
@@ -235,8 +243,8 @@ def classify_trend(change_atr: float | None, last_close: float | None, ema_1d: f
     return "lateral", detail
 
 
-def _daily(candles: Sequence[Candle1h], day_start_ms: int) -> tuple[list[dict[str, float]], int]:
-    """Velas diarias de los dias ANTERIORES completos (24 velas). Devuelve (dias, dias incompletos)."""
+def _daily(candles: Sequence[Candle1h], day_start_ms: int, per_day: int = 24) -> tuple[list[dict[str, float]], int]:
+    """Velas diarias de los dias ANTERIORES completos (`per_day` velas). Devuelve (dias, dias incompletos)."""
     days: dict[int, list[Candle1h]] = {}
     for c in candles:
         d = c.open_ms - c.open_ms % DAY_MS
@@ -245,7 +253,7 @@ def _daily(candles: Sequence[Candle1h], day_start_ms: int) -> tuple[list[dict[st
     out, incomplete = [], 0
     for d in sorted(days):
         cs = days[d]
-        if len(cs) != 24:
+        if len(cs) != per_day:
             incomplete += 1
             continue
         out.append({"open_ms": d, "open": cs[0].open, "high": max(c.high for c in cs),
@@ -253,22 +261,69 @@ def _daily(candles: Sequence[Candle1h], day_start_ms: int) -> tuple[list[dict[st
     return out, incomplete
 
 
+TIMEFRAME_HOURS = {"1h": 1, "2h": 2, "4h": 4}
+
+
+def tf_label(bar_hours: int) -> str:
+    return f"{bar_hours}h"
+
+
+def aggregate_bars(candles: Sequence[Candle1h], bar_hours: int, now_ms: int, gaps: list[str]) -> list[Candle1h]:
+    """Velas de 1h CERRADAS -> velas de `bar_hours` h alineadas a UTC. Solo velas cerradas y con sus N horas; una
+    vela de N h incompleta se descarta y se declara en `gaps` (sin fallos silenciosos)."""
+    bar_ms = bar_hours * HOUR_MS
+    if 24 % bar_hours:
+        raise ValueError(f"bar_hours={bar_hours} no divide el dia UTC")
+    groups: dict[int, dict[int, Candle1h]] = {}
+    for c in candles:
+        if c.open_ms % HOUR_MS or c.open_ms + HOUR_MS > now_ms:
+            continue
+        groups.setdefault(c.open_ms - c.open_ms % bar_ms, {})[c.open_ms] = c
+    out: list[Candle1h] = []
+    incomplete = 0
+    for b in sorted(groups):
+        if b + bar_ms > now_ms:
+            continue  # en curso
+        hs = [groups[b][k] for k in sorted(groups[b])]
+        if len(hs) != bar_hours:
+            incomplete += 1
+            continue
+        vw_ok = all(h.vwap_pv is not None and h.vwap_vol is not None for h in hs)
+        out.append(Candle1h(
+            open_ms=b, open=hs[0].open, high=max(h.high for h in hs), low=min(h.low for h in hs), close=hs[-1].close,
+            source="rest" if any(h.source == "rest" for h in hs) else hs[0].source,
+            minutes=sum(h.minutes for h in hs),
+            vwap_pv=sum(h.vwap_pv or 0.0 for h in hs) if vw_ok else None,
+            vwap_vol=sum(h.vwap_vol or 0.0 for h in hs) if vw_ok else None))
+    if incomplete:
+        gaps.append(f"htf {tf_label(bar_hours)}: {incomplete} vela(s) de {bar_hours}h sin sus {bar_hours} horas "
+                    "de 1h (descartadas)")
+    return out
+
+
 def build_htf_context(symbol: str, candles: Sequence[Candle1h], now_ms: int,
-                      gaps: Sequence[str] = (), day_start_ms: int | None = None) -> HtfContext:
+                      gaps: Sequence[str] = (), day_start_ms: int | None = None, *,
+                      bar_hours: int = 1, trend_from: HtfContext | None = None) -> HtfContext:
     """Arma el contexto desde velas de 1h (cualquier orden). `gaps`: huecos que ya declaro la fuente.
 
     `day_start_ms` (opcional) fija el dia UTC a describir; por defecto el dia de `now_ms`. Lo usa el analisis de
     cierre (a las 00:00 UTC describe el dia que termino, con sus 24 velas ya cerradas).
+    `bar_hours` > 1: contexto de velas de N h armadas desde las de 1h; la tendencia del dia sale de `trend_from`
+    (el contexto de 1h, `htf-trend-v1`); sin `trend_from` la tendencia queda sin_datos.
     """
     data_gaps = list(gaps)
+    bar_ms = bar_hours * HOUR_MS
+    tf = tf_label(bar_hours)
+    if bar_hours > 1:
+        candles = aggregate_bars(candles, bar_hours, now_ms, data_gaps)
     day_start = now_ms - now_ms % DAY_MS if day_start_ms is None else day_start_ms - day_start_ms % DAY_MS
     uniq: dict[int, Candle1h] = {}
     future = 0
     for c in candles:
-        if c.open_ms % HOUR_MS:
+        if c.open_ms % bar_ms:
             data_gaps.append(f"htf: vela desalineada descartada (open_ms={c.open_ms})")
             continue
-        if c.open_ms + HOUR_MS > now_ms:
+        if c.open_ms + bar_ms > now_ms:
             future += 1
             continue
         uniq[c.open_ms] = c
@@ -277,21 +332,22 @@ def build_htf_context(symbol: str, candles: Sequence[Candle1h], now_ms: int,
     cs = [uniq[k] for k in sorted(uniq)]
     if not cs:
         data_gaps.append("htf: sin velas de 1h cerradas: tendencia diaria sin_datos")
-        return HtfContext(symbol=symbol, ts_ms=now_ms, status="missing", day_start_ms=day_start,
-                          trend_reason="sin velas de 1h", data_gaps=data_gaps)
+        return HtfContext(symbol=symbol, ts_ms=now_ms, status="missing", day_start_ms=day_start, timeframe=tf,
+                          trend_reason=f"sin velas de {tf}", data_gaps=data_gaps)
 
-    holes = sum((b.open_ms - a.open_ms) // HOUR_MS - 1 for a, b in zip(cs, cs[1:]))
+    holes = sum((b.open_ms - a.open_ms) // bar_ms - 1 for a, b in zip(cs, cs[1:]))
     if holes:
-        data_gaps.append(f"htf: {holes} hora(s) sin vela dentro de la serie de 1h (EMA/ATR las saltean)")
-    partial = [c for c in cs[-OUT_CANDLES:] if c.minutes < 60]
+        data_gaps.append(f"htf: {holes} hora(s) sin vela dentro de la serie de 1h (EMA/ATR las saltean)" if bar_hours == 1
+                         else f"htf {tf}: {holes} vela(s) de {tf} faltantes dentro de la serie (EMA/ATR las saltean)")
+    partial = [c for c in cs[-OUT_CANDLES:] if c.minutes < 60 * bar_hours]
     if partial:
-        data_gaps.append(f"htf: {len(partial)} vela(s) de 1h armadas con minutos faltantes "
-                         f"(minimo {min(c.minutes for c in partial)}/60)")
+        data_gaps.append(f"htf: {len(partial)} vela(s) de {tf} armadas con minutos faltantes "
+                         f"(minimo {min(c.minutes for c in partial)}/{60 * bar_hours})")
 
     cs = [c for c in cs if c.open_ms < day_start + DAY_MS]  # nada posterior al dia descripto
     if not cs:
-        return HtfContext(symbol=symbol, ts_ms=now_ms, status="missing", day_start_ms=day_start,
-                          trend_reason="sin velas de 1h hasta el dia pedido", data_gaps=data_gaps)
+        return HtfContext(symbol=symbol, ts_ms=now_ms, status="missing", day_start_ms=day_start, timeframe=tf,
+                          trend_reason=f"sin velas de {tf} hasta el dia pedido", data_gaps=data_gaps)
     closes = [c.close for c in cs]
     atr = wilder_atr(cs)
     ema1h = ema_series(closes, EMA_1H)
@@ -301,9 +357,9 @@ def build_htf_context(symbol: str, candles: Sequence[Candle1h], now_ms: int,
         slope = (ema1h[-1] - ema1h[-1 - SLOPE_BARS]) / atr
     sma50 = sum(closes[-SMA_1H:]) / SMA_1H if len(closes) >= SMA_1H else None
     last = cs[-1]
-    expected_last = min(now_ms - now_ms % HOUR_MS, day_start + DAY_MS) - HOUR_MS
+    expected_last = min(now_ms - now_ms % bar_ms, day_start + DAY_MS) - bar_ms
     if last.open_ms < expected_last:
-        data_gaps.append(f"htf: la ultima vela de 1h cerrada disponible tiene "
+        data_gaps.append(f"htf: la ultima vela de {tf} cerrada disponible tiene "
                          f"{(expected_last - last.open_ms) // HOUR_MS} hora(s) de atraso")
 
     today = [c for c in cs if day_start <= c.open_ms < day_start + DAY_MS]
@@ -319,7 +375,7 @@ def build_htf_context(symbol: str, candles: Sequence[Candle1h], now_ms: int,
     elif today:
         data_gaps.append("htf: falta la vela de 00:00 UTC: sin apertura del dia")
 
-    days, incomplete = _daily(cs, day_start)
+    days, incomplete = _daily(cs, day_start, 24 // bar_hours)
     if incomplete:
         data_gaps.append(f"htf: {incomplete} dia(s) UTC incompletos excluidos de las medias diarias")
     dcloses = [d["close"] for d in days]
@@ -329,7 +385,12 @@ def build_htf_context(symbol: str, candles: Sequence[Candle1h], now_ms: int,
     if ema1d_now is None:
         data_gaps.append(f"htf: {len(dcloses)} dias completos < {EMA_1D} para la EMA diaria")
 
-    trend, reason = classify_trend(chg_atr, last.close, ema1d_now, slope)
+    if bar_hours == 1:
+        trend, reason = classify_trend(chg_atr, last.close, ema1d_now, slope)
+    elif trend_from is not None:
+        trend, reason = trend_from.daily_trend, f"tendencia del dia en 1h (htf-trend-v1): {trend_from.trend_reason}"
+    else:
+        trend, reason = "sin_datos", "sin contexto de 1h para la tendencia del dia"
     dist = (last.close - ema_now) / atr if atr and ema_now is not None else None
 
     setups = HtfSetups()
@@ -348,7 +409,7 @@ def build_htf_context(symbol: str, candles: Sequence[Candle1h], now_ms: int,
         setups.continuacion_a_favor = bool(on_side and abs(dist) <= CONT_MAX_ATR and not at_trend_extreme)
 
     prev = days[-1] if days and days[-1]["open_ms"] == day_start - DAY_MS else None
-    levels = build_levels(cs, today, day_start, prev, atr, trend)
+    levels = build_levels(cs, today, day_start, prev, atr, trend, bar_ms)
     data_gaps.extend(f"htf-levels: {m}" for m in levels.sin_datos  # lo "en curso" no es un hueco de datos
                      if "en curso" not in m and "todavia no cerro" not in m and "ambigua" not in m)
     sources: dict[str, int] = {}
@@ -356,7 +417,7 @@ def build_htf_context(symbol: str, candles: Sequence[Candle1h], now_ms: int,
         sources[c.source] = sources.get(c.source, 0) + 1
     status = "ok" if trend != "sin_datos" and not holes and not partial else "partial"
     return HtfContext(
-        symbol=symbol, ts_ms=now_ms, status=status, candles_1h=cs[-OUT_CANDLES:], last_closed_open_ms=last.open_ms,
+        symbol=symbol, ts_ms=now_ms, status=status, timeframe=tf, candles_1h=cs[-OUT_CANDLES:], last_closed_open_ms=last.open_ms,
         day_start_ms=day_start, day_hours_closed=len(today), day_open=day_open, day_high=day_high, day_low=day_low,
         last_close=last.close, change_from_open_pct=chg_pct, change_from_open_atr=chg_atr, pos_in_day_range=pos,
         day_range_atr=range_atr,

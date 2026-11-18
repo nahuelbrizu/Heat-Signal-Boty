@@ -29,6 +29,13 @@ Modos (`mode`, `HEATSIGNAL_ANALYSIS_MODE`):
                 por codigo se guarda igual y la fila 'llm' queda 'sin_llm'. Una sesion perdida por un reinicio se
                 recupera si pasaron < 2 h desde su disparo (catch-up); nunca se duplica (UNIQUE en el diario).
 
+  - `hourly`    (2026-11-19) el grafo corre al cierre de CADA vela de 1h (24 ciclos/dia, todos los simbolos
+                batcheados) y ademas en las sesiones como en `sessions` (diario + setups de apertura). Una hora cuyo
+                cierre coincide con el disparo de una sesion (+-5 min) no corre aparte: la cubre la sesion. En las
+                corridas horarias no se ofrecen los setups de apertura de sesion (son de la vela de apertura y ya los
+                ve la corrida de la sesion). Cada ciclo deja, por simbolo, la decision y por que no entro cada
+                estrategia (codigo). El tope semanal de LLM (`agents/spend.py`) sigue mandando.
+
 `run_symbols()` corre un ciclo fuera de turno para algunos simbolos ("Analizar ahora" del panel): mismos
 estados, mismo historial, detalle con el motivo adelante ("manual: ...") y sin avanzar la rotacion.
 """
@@ -69,7 +76,9 @@ log = logging.getLogger("heatsignal.pipeline.analysis")
 DEFAULT_INTERVAL_S = 900.0
 SESSION_GRACE_MS = 90_000          # el grabador escribe el ultimo minuto de la vela ~15 s despues de cerrar
 SESSION_CATCHUP_MS = 2 * 3_600_000  # una sesion perdida por reinicio se recupera si su disparo fue hace < 2 h
-AnalysisMode = Literal["interval", "sessions"]
+AnalysisMode = Literal["interval", "sessions", "hourly"]
+HOURLY_SESSION_OVERLAP_MS = 5 * 60_000  # una hora cuyo cierre cae a <= 5 min de un disparo de sesion la cubre la sesion
+GRAPH_BAR_HOURS = (2, 4)  # temporalidades ademas de 1h (contextos en FeatureSet.htf_tf)
 DEFAULT_WINDOW_S = 1800
 
 CycleStatus = Literal["warmup", "no_strategies", "no_llm", "ran", "error"]
@@ -144,6 +153,7 @@ def run_view(final: dict[str, Any]) -> dict[str, Any]:
     for sym, fs in (final.get("features_by_symbol") or {}).items():
         symbols[sym] = {
             "htf": htf_brief(getattr(fs, "htf", None)),
+            "htf_tf": {tf: htf_brief(c) for tf, c in (getattr(fs, "htf_tf", None) or {}).items()},
             "liquidations": None if sym not in liq else
                 {"confidence": liq[sym].confidence, "text": liq[sym].cluster_summary},
             "order_flow": None if sym not in flow else
@@ -169,7 +179,7 @@ def htf_brief(h: Any) -> dict[str, Any] | None:
     if h is None:
         return None
     return {
-        "htf_model_id": h.htf_model_id, "status": h.status, "daily_trend": h.daily_trend, "trend_reason": h.trend_reason,
+        "htf_model_id": h.htf_model_id, "timeframe": getattr(h, "timeframe", "1h"), "status": h.status, "daily_trend": h.daily_trend, "trend_reason": h.trend_reason,
         "last_closed_open_ms": h.last_closed_open_ms, "change_from_open_pct": h.change_from_open_pct,
         "change_from_open_atr": h.change_from_open_atr, "pos_in_day_range": h.pos_in_day_range,
         "dist_ema20_1h_atr": h.dist_ema20_1h_atr, "setups": h.setups.model_dump(), "n_gaps": len(h.data_gaps),
@@ -224,8 +234,8 @@ class AnalysisLoop:
         oi_poller: Any = None,  # ingestion.binance_oi_poller.BinanceOiPoller: sus fallos van a data_gaps
         budget_check: Callable[[], Any] | None = None,  # agents.spend.budget_state: tope semanal de LLM (None = sin tope)
     ) -> None:
-        if mode not in ("interval", "sessions"):
-            raise ValueError(f"mode debe ser 'interval' o 'sessions', no {mode!r}")
+        if mode not in ("interval", "sessions", "hourly"):
+            raise ValueError(f"mode debe ser 'interval', 'sessions' u 'hourly', no {mode!r}")
         if mode == "sessions" and not sessions:
             raise ValueError("mode='sessions' necesita sesiones configuradas")
         if interval_s <= 0 or window_s <= 0:
@@ -248,6 +258,7 @@ class AnalysisLoop:
         self.journal = journal
         self.macro = macro
         self._sessions_done: set[tuple[str, str]] = set()  # sin diario: no repetir en este proceso
+        self._hours_done: set[int] = set()  # modo hourly: cierres de vela ya corridos en este proceso
         self.last_result: CycleResult | None = None
         self.llm_providers: list[str] = []  # orden de proveedores (primario -> fallback), para el panel
         self.last_ran: CycleResult | None = None  # ultimo ciclo en que corrio el grafo (sobrevive a warmups)
@@ -297,7 +308,12 @@ class AnalysisLoop:
             if fs.quality is not None:
                 update["quality"] = fs.quality.model_copy(update={"warmup_have_s": self._memory.accumulated_s()})
             if self.htf is not None:
-                htf_ctx = await run_heavy(self.htf.context, sym, now_ms)
+                multi = getattr(self.htf, "contexts", None)
+                if callable(multi):
+                    htf_ctx, tf_ctx = await run_heavy(multi, sym, now_ms, GRAPH_BAR_HOURS)
+                    update["htf_tf"] = tf_ctx
+                else:
+                    htf_ctx = await run_heavy(self.htf.context, sym, now_ms)
                 update["htf"] = htf_ctx
                 update["data_gaps"] += [g for g in htf_ctx.data_gaps if g not in update["data_gaps"]]
             if self._news is not None:
@@ -355,7 +371,8 @@ class AnalysisLoop:
         return sess, render_journal(entries), latest
 
     async def _run(self, only: list[str] | None, *, reason: str | None = None,
-                   run_id: str | None = None, session: dict[str, Any] | None = None) -> CycleResult:
+                   run_id: str | None = None, session: dict[str, Any] | None = None,
+                   exclude_session_setups: bool = False) -> CycleResult:
         now_ms = self._clock_ms()
         run_id = run_id or f"cycle-{now_ms}"
         prefix = f"{reason}: " if reason else ""
@@ -382,6 +399,10 @@ class AnalysisLoop:
             ))
 
         strategies = active_strategies(self._registry)
+        if exclude_session_setups:
+            from ..evaluation.timeframes import SESSION_SETUPS
+
+            strategies = [s for s in strategies if (s.entry_conditions or {}).get("htf_setup") not in SESSION_SETUPS]
         if not strategies:
             return self._finish(CycleResult(
                 run_id, "no_strategies", features,
@@ -552,6 +573,39 @@ class AnalysisLoop:
             with contextlib.suppress(asyncio.TimeoutError):
                 await asyncio.wait_for(stop.wait(), timeout=wait_s)
 
+    # ---------------------------------------------------------------- cada hora
+
+    def due_hour(self, now_ms: int) -> int | None:
+        """Cierre de vela de 1h (ms) que toca correr ahora, o None (ya corrido, o lo cubre una sesion)."""
+        h = now_ms - now_ms % HOUR_MS
+        if now_ms - h < SESSION_GRACE_MS or h in self._hours_done:
+            return None
+        if self.sessions and triggers_between(self.sessions, h - HOURLY_SESSION_OVERLAP_MS, h + HOURLY_SESSION_OVERLAP_MS):
+            return None
+        return h
+
+    async def run_hour(self, h: int) -> CycleResult:
+        self._hours_done.add(h)
+        for old in [x for x in self._hours_done if x < h - 24 * HOUR_MS]:
+            self._hours_done.discard(old)
+        label = time.strftime("%Y-%m-%d %H:00", time.gmtime(h / 1000))
+        return await self._run(list(self._symbols), reason=f"hora {label} UTC", exclude_session_setups=True)
+
+    async def _run_hourly_forever(self, stop: asyncio.Event) -> None:
+        log.info("grafo cada hora (cierre de vela 1h + %.0f s) + sesiones", SESSION_GRACE_MS / 1000)
+        while not stop.is_set():
+            now = self._clock_ms()
+            h = self.due_hour(now)
+            if h is not None:
+                try:
+                    await self.run_hour(h)
+                except Exception:  # noqa: BLE001 - una hora fallida no apaga el reloj
+                    log.exception("hora %s: fallo", h)
+            now = self._clock_ms()
+            nxt = now - now % HOUR_MS + HOUR_MS + SESSION_GRACE_MS
+            with contextlib.suppress(asyncio.TimeoutError):
+                await asyncio.wait_for(stop.wait(), timeout=max(1.0, (nxt - now) / 1000))
+
     def _mark_running(self, strategies: list[StrategyHypothesis]) -> None:
         set_status = getattr(self._registry, "set_status", None)
         if not callable(set_status):
@@ -587,6 +641,16 @@ class AnalysisLoop:
         """`interval`: un ciclo cada `interval_s` (el primero tras un intervalo). `sessions`: ver docstring."""
         if self.mode == "sessions":
             await self._run_sessions_forever(stop)
+            return
+        if self.mode == "hourly":
+            tasks = [asyncio.create_task(self._run_hourly_forever(stop), name="hourly")]
+            if self.sessions:
+                tasks.append(asyncio.create_task(self._run_sessions_forever(stop), name="sessions"))
+            try:
+                await asyncio.gather(*tasks)
+            finally:
+                for t in tasks:
+                    t.cancel()
             return
         watcher = None
         if self.sessions:  # el diario por codigo existe tambien en modo interval (sin LLM extra)

@@ -19,7 +19,8 @@ Configuracion por variables de entorno (ver `.env.example` en la raiz del repo):
   HEATSIGNAL_ANALYSIS_INTERVAL_S 900   ciclo features -> grafo -> hipotesis (modo memory; 0 lo apaga)
   HEATSIGNAL_ANALYSIS_WINDOW_S  1800   ventana de features (<= retencion de trades)
   HEATSIGNAL_GRAPH_ROTATION     2      simbolos sin estrategia que el grafo analiza por turnos en cada ciclo (0 = ninguno)
-  HEATSIGNAL_ANALYSIS_MODE      interval  "sessions": el grafo corre al cerrar la 1a vela de 1h de cada sesion
+  HEATSIGNAL_ANALYSIS_MODE      interval  "hourly": el grafo corre al cierre de cada vela de 1h + en las sesiones;
+                                          "sessions": el grafo corre al cerrar la 1a vela de 1h de cada sesion
                                          (4 ciclos/dia, todas las criptos); "interval": cada ANALYSIS_INTERVAL_S
   HEATSIGNAL_SESSIONS           asia=Asia/Tokyo@09:00,europa=Europe/London@08:00,eeuu=America/New_York@09:30,cierre=UTC@23:00
                                          sesiones (zona IANA, hora local, DST por zoneinfo); "cierre" = ultima vela del dia UTC

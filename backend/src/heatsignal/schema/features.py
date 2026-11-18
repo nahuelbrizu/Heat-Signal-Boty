@@ -184,6 +184,8 @@ class HtfContext(BaseModel):
     symbol: str
     ts_ms: int
     status: Literal["ok", "partial", "missing"]
+    timeframe: str = Field(default="1h", description="Vela del contexto: 1h, 2h o 4h (los campos *_1h quedan en esa "
+                                                     "unidad; la tendencia del dia siempre es la de 1h)")
     candles_1h: list[Candle1h] = Field(default_factory=list, description="Ultimas <= 48 velas de 1h cerradas")
     last_closed_open_ms: int | None = None
     day_start_ms: int
@@ -217,8 +219,8 @@ class HtfContext(BaseModel):
     def snapshot(self) -> dict:
         """Resumen chico que se guarda con cada hipotesis (auditoria del corte por tendencia)."""
         return {
-            "htf_model_id": self.htf_model_id, "status": self.status, "last_closed_open_ms": self.last_closed_open_ms,
-            "day_open": self.day_open, "last_close": self.last_close, "change_from_open_pct": self.change_from_open_pct,
+            "htf_model_id": self.htf_model_id, "timeframe": self.timeframe, "status": self.status,
+            "last_closed_open_ms": self.last_closed_open_ms, "day_open": self.day_open, "last_close": self.last_close, "change_from_open_pct": self.change_from_open_pct,
             "change_from_open_atr": self.change_from_open_atr, "pos_in_day_range": self.pos_in_day_range,
             "dist_ema20_1h_atr": self.dist_ema20_1h_atr, "ema20_1h_slope_atr": self.ema20_1h_slope_atr,
             "close_vs_ema10_1d_pct": self.close_vs_ema10_1d_pct, "atr14_1h": self.atr14_1h,
@@ -245,5 +247,7 @@ class FeatureSet(BaseModel):
     news_model_id: str | None = Field(default=None, description="Version del lector/etiquetado de noticias")
     quality: DataQuality | None = Field(default=None, description="Calidad de datos estructurada (panel)")
     htf: HtfContext | None = Field(default=None, description="Velas de 1h cerradas + tendencia del dia UTC")
+    htf_tf: dict[str, HtfContext] = Field(default_factory=dict, description="Contextos de 2h y 4h (misma tendencia "
+                                                                             "del dia que `htf`)")
     session: SessionSymbolAnalysis | None = Field(
         default=None, description="Ultimo analisis de sesion del dia para este simbolo (schema/sessions.py)")

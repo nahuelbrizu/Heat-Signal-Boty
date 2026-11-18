@@ -1,0 +1,26 @@
+{
+  "description": "4h-retroceso-ema-a-favor-v1: a favor de la tendencia diaria (htf-trend-v1) tras retroceso de la ultima vela de 4h cerrada (la que acaba de cerrar) a la EMA20 de 4h; salida al cierre de la 4a vela de 4h completa",
+  "entry_conditions": {
+    "family": "4h-tendencia-diaria",
+    "scope": "rotation",
+    "timeframe": "4h",
+    "htf_model_id": "htf-trend-v1",
+    "htf_setup": "pullback_ema20_1h_a_favor",
+    "daily_trend_in": [
+      "alcista",
+      "bajista"
+    ],
+    "alignment": "a_favor",
+    "direction_rule": "LONG si daily_trend=alcista, SHORT si daily_trend=bajista",
+    "setup_rule": "ultima vela 4h cerrada toca la EMA20 4h desde el lado de la tendencia (low <= EMA20 + 0.25 ATR14 4h en alcista; high >= EMA20 - 0.25 ATR en bajista) y cierra a <= 0.5 ATR de la EMA20 sin cruzarla mas de 0.5 ATR",
+    "entry_price": "mark price al emitir (lo fija el codigo)",
+    "origen": "copia de 1h-retroceso-ema-a-favor-v1 con las mismas reglas sobre velas de 4h alineadas a UTC (2026-11-19, pedido del usuario); la tendencia del dia es htf-trend-v1 calculada en 1h; la entrada solo se verifica en la corrida de la hora en que cierra la vela de 4h"
+  },
+  "exit_conditions": {
+    "timeframe": "4h",
+    "horizon_bars": 4,
+    "exit_rule": "cierre (mark) de la 4a vela de 4h completa posterior a la emision; due_at = ceil_4h(emision) + 4 x 4 h",
+    "costs": "10 bps ida y vuelta (resolver por defecto)"
+  },
+  "author": "nahue"
+}
