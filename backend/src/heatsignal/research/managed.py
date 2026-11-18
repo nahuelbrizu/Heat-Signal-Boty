@@ -37,9 +37,9 @@ log = logging.getLogger("heatsignal.research")
 
 HERE = Path(__file__).parent
 NAME = "HeatSignal - investigacion semanal"
-# Tope pedido por el usuario (2026-11-18): US$0,05 por informe. A precio de lista: web_search US$0,01 c/u, sesion
-# US$0,08/h, Haiku 5.5 US$0,10/US$0,50 por M tokens. Por eso Haiku, <= 2 busquedas (el resto por web_fetch a la API de
-# arXiv, que no cobra busqueda), web_fetch recortado y sin evaluador de rubrica (llamadas extra).
+# Tope pedido por el usuario (2026-11-18): US$0,05 por informe (prueba: US$0,03 en 61 s). web_search US$0,01 c/u, sesion
+# US$0,08/h, Haiku 5.5 US$0,10/US$0,50 por M tokens. Por eso Haiku, <= 2 busquedas, web_fetch solo de URLs de los
+# resultados (no abre URLs inventadas), recortado, y sin evaluador de rubrica (llamadas extra).
 MODEL = {"id": "claude-haiku-5-5", "effort": "low"}
 SCHEDULE = {"type": "cron", "expression": "0 2 * * 1", "timezone": "UTC"}  # lunes 02:00 UTC, tras la revision semanal
 BUDGET = {"type": "limit", "max_list_cost": {"currency": "USD", "amount": "5"}}  # centavos: US$0,05 por corrida
