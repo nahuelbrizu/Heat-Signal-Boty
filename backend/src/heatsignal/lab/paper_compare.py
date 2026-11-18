@@ -30,6 +30,10 @@ Pasos:
   4. Escribe ~/heatsignal-lab/paper/compare_<fecha>.json y paper_summary.json (ultimo + historial; una fila por
      fecha) y con --upload los sube a la VM (~/heatsignal/data/, donde los lee GET /api/paper/compare).
   5. Timer semanal: deploy/pc/heatsignal-paper-compare.{service,timer} (domingos 01:00 hora local).
+
+Modo local (`--local` o HEATSIGNAL_PAPER_COMPARE=local): cuando Freqtrade corre en la PC (desde 2026-11-18, VM
+caida), lee la base del dry-run directo (`--ft-db`, solo lectura) y --upload copia los archivos a `--data-dir`
+(~/heatsignal/data/, donde los lee el panel). Mismo calculo.
 """
 
 from __future__ import annotations
@@ -116,6 +120,29 @@ class GcloudRemote:
     def upload(self, files: list[Path]) -> None:
         subprocess.run(["gcloud", "compute", "scp", *self.flags, *map(str, files), f"{self.host}:{VM_DIR}"],
                        check=True, timeout=300, env=os.environ.copy())
+
+
+class LocalRemote:
+    """Freqtrade en esta misma maquina (todo corre en la PC desde 2026-11-18): sin SSH.
+
+    Lee la base del dry-run con `freqtrade_db.dump` (abre en `mode=ro`: nunca escribe) y "sube" copiando los
+    archivos a `data_dir` (donde los lee el panel), con reemplazo atomico para no mostrar archivos a medias.
+    """
+
+    def __init__(self, db_path: Path, data_dir: Path) -> None:
+        self.db_path, self.data_dir = Path(db_path).expanduser(), Path(data_dir).expanduser()
+
+    def dump(self) -> dict[str, Any]:
+        if not self.db_path.is_file():
+            raise RuntimeError(f"no existe la base del dry-run: {self.db_path}")
+        return ftdb.dump(self.db_path)
+
+    def upload(self, files: list[Path]) -> None:
+        self.data_dir.mkdir(parents=True, exist_ok=True)
+        for f in map(Path, files):
+            tmp = self.data_dir / f".{f.name}.tmp"
+            tmp.write_bytes(f.read_bytes())
+            tmp.replace(self.data_dir / f.name)
 
 
 # ---- datos de mercado en la PC ----------------------------------------------------------------------------
@@ -633,13 +660,21 @@ def main(argv: Iterable[str] | None = None) -> int:
     p.add_argument("--no-update", action="store_true", help="no bajar velas ni funding (usar lo que hay en la PC)")
     p.add_argument("--warmup-days", type=int, default=WARMUP_DAYS)
     p.add_argument("--out", default=None, help="carpeta de salida (por defecto ~/heatsignal-lab/paper)")
+    p.add_argument("--local", action="store_true", default=os.environ.get("HEATSIGNAL_PAPER_COMPARE") == "local",
+                   help="Freqtrade en esta maquina (sin SSH); tambien con HEATSIGNAL_PAPER_COMPARE=local")
+    p.add_argument("--ft-db", default=os.environ.get("HEATSIGNAL_FREQTRADE_DB", str(Path.home() / "heatsignal" / "data" / "freqtrade_dryrun.sqlite")),
+                   help="base del dry-run (solo con --local)")
+    p.add_argument("--data-dir", default=os.environ.get("HEATSIGNAL_DATA_DIR", str(Path.home() / "heatsignal" / "data")),
+                   help="donde deja los resultados --upload para el panel (solo con --local)")
     args = p.parse_args(list(argv) if argv is not None else None)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     since = pd.Timestamp(args.since, tz="UTC") if args.since else None
-    r = run(remote=GcloudRemote(), since=since, out_dir=Path(args.out) if args.out else None,
+    remote: Remote = LocalRemote(Path(args.ft_db), Path(args.data_dir)) if args.local else GcloudRemote()
+    r = run(remote=remote, since=since, out_dir=Path(args.out) if args.out else None,
             update=not args.no_update, upload=args.upload, warmup_days=args.warmup_days)
     _print_summary(r)
-    print("archivos: " + ", ".join(r["_files"]) + (" (subidos a la VM)" if args.upload else ""))
+    dest = f" (copiados a {args.data_dir})" if args.local else " (subidos a la VM)"
+    print("archivos: " + ", ".join(r["_files"]) + (dest if args.upload else ""))
     return 0
 
 

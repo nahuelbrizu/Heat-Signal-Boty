@@ -1,0 +1,12 @@
+[Unit]
+Description=HeatSignal: worker del laboratorio (cola local en la PC: toma pedidos del panel, corre el backtest, deja el resultado)
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/nahue/criptoBoty/heatsignal/backend
+Environment=PYTHONPATH=/home/nahue/criptoBoty/heatsignal/backend/src
+Environment=HEATSIGNAL_EVAL_DB=/home/nahue/heatsignal/data/heatsignal_eval.sqlite
+Environment=PATH=/snap/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/home/nahue/criptoBoty/heatsignal/backend/.venv/bin/python -m heatsignal.lab.worker --once --local --worker pc
+Nice=10
+TimeoutStartSec=6h

@@ -212,3 +212,25 @@ def test_update_market_data_reports_errors(tmp_path) -> None:
     assert ("klines", "AAAUSDT", "2026-10") in calls and ("funding", "AAAUSDT", "2026-09") in calls
     assert not any(c[0] == "funding" and c[2] == "2026-10" for c in calls)  # el mes en curso va por REST
     assert out["rows"] > 0 and any("BBBUSDT" in e for e in out["errors"]) and any("timeout" in e for e in out["errors"])
+
+
+def test_run_with_local_remote_reads_ro_and_copies_to_data_dir(tmp_path, data, monkeypatch) -> None:
+    res = _sim(data)
+    db = _paper_db(tmp_path, res)
+    before = Path(db).read_bytes()
+    monkeypatch.setattr(pc, "load_window", lambda symbols, start, warmup, root=None: {s: data[s] for s in SYMS})
+    import heatsignal.lab.strategies as strat
+    monkeypatch.setattr(strat, "SEVEN", SYMS)
+    data_dir = tmp_path / "data"
+    out = pc.run(remote=pc.LocalRemote(db, data_dir), out_dir=tmp_path / "paper", update=False, upload=True)
+    assert out["status"] == "ok"
+    names = sorted(p.name for p in data_dir.iterdir())
+    assert names == sorted([f"compare_{out['generated_at'][:10]}.json", "paper_summary.json"])  # sin .tmp
+    assert Path(db).read_bytes() == before  # solo lectura
+
+
+def test_local_remote_missing_db(tmp_path) -> None:
+    import pytest
+
+    with pytest.raises(RuntimeError, match="no existe la base"):
+        pc.LocalRemote(tmp_path / "nada.sqlite", tmp_path).dump()

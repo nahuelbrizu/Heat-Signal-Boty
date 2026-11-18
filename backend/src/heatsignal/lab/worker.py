@@ -16,6 +16,10 @@ Por cada solicitud (la toma por SSH con `heatsignal.evaluation.lab_requests clai
      ese simbolo: "correr lab.vision"), la marca `error` con el motivo de cada una.
 
 El acceso a la VM esta detras de `Remote` (inyectable): los tests no usan red ni SSH.
+
+Cola local (`--local` o HEATSIGNAL_LAB_QUEUE=local): cuando todo corre en la PC (desde 2026-11-18, VM caida), la
+cola vive en la base de evaluacion local (`--eval-db`, default HEATSIGNAL_EVAL_DB o ~/heatsignal/data/...) y el
+resultado se escribe directo en su carpeta `lab_requests/`. Mismo flujo y mismas reglas (holdout sellado).
 """
 
 from __future__ import annotations
@@ -78,6 +82,40 @@ class GcloudRemote:
         subprocess.run(["gcloud", "compute", "scp", *self.flags, str(local),
                         f"{self.host}:{self.root}/data/lab_requests/{request_id}.json"],
                        check=True, timeout=300, env=os.environ.copy())
+
+
+class LocalRemote:
+    """Cola en esta misma maquina (todo corre en la PC desde 2026-11-18): sin SSH.
+
+    Llama a la CLI de `lab_requests` en el mismo proceso (misma salida JSON que por SSH) contra la base de
+    evaluacion local, y deja el resultado en `<dir de la base>/lab_requests/`, donde lo lee el panel.
+    """
+
+    def __init__(self, eval_db: Path) -> None:
+        self.eval_db = Path(eval_db).expanduser()
+
+    def cli(self, args: list[str]) -> dict[str, Any]:
+        import contextlib
+        import io
+
+        from ..evaluation import lab_requests
+
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = lab_requests.main(["--db", str(self.eval_db), *args])
+        out = buf.getvalue().strip().splitlines()
+        if not out:
+            raise RuntimeError(f"la CLI local no devolvio nada (rc={rc})")
+        return json.loads(out[-1])
+
+    def upload(self, local: Path, request_id: str) -> None:
+        from ..evaluation.lab_requests import RESULTS_DIRNAME
+
+        dest = self.eval_db.parent / RESULTS_DIRNAME
+        dest.mkdir(parents=True, exist_ok=True)
+        tmp = dest / f".{request_id}.json.tmp"
+        tmp.write_bytes(Path(local).read_bytes())
+        tmp.replace(dest / f"{request_id}.json")  # atomico: el panel nunca ve un archivo a medias
 
 
 def _default_evaluate(cfg: Any, registry: Any) -> dict[str, Any]:
@@ -175,12 +213,17 @@ def main(argv: Iterable[str] | None = None) -> int:
     p.add_argument("--interval", type=float, default=DEFAULT_INTERVAL_S)
     p.add_argument("--worker", default=os.environ.get("HEATSIGNAL_LAB_WORKER", "pc"))
     p.add_argument("--registry", default=str(Path(os.environ.get("HEATSIGNAL_LAB_HOME", Path.home() / "heatsignal-lab")) / "trials.sqlite"))
+    p.add_argument("--local", action="store_true", default=os.environ.get("HEATSIGNAL_LAB_QUEUE") == "local",
+                   help="cola en esta maquina (sin SSH a la VM); tambien con HEATSIGNAL_LAB_QUEUE=local")
+    p.add_argument("--eval-db", default=os.environ.get("HEATSIGNAL_EVAL_DB", str(Path.home() / "heatsignal" / "data" / "heatsignal_eval.sqlite")),
+                   help="base de evaluacion local (solo con --local)")
     args = p.parse_args(list(argv) if argv is not None else None)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     from .trials import TrialRegistry
 
     home = lab_dir().parent
-    remote = GcloudRemote()
+    remote: Remote = LocalRemote(Path(args.eval_db)) if args.local else GcloudRemote()
+    log.info("cola: %s", f"local ({remote.eval_db})" if isinstance(remote, LocalRemote) else "VM por gcloud")
     while True:
         reg = TrialRegistry(args.registry)
         try:
