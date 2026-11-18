@@ -6,6 +6,8 @@
 #   systemctl --user daemon-reload && systemctl --user enable --now heatsignal-paper-compare.timer
 # A mano: systemctl --user start heatsignal-paper-compare.service   (o el comando de ExecStart)
 # Logs:   journalctl --user -u heatsignal-paper-compare -n 100
+# --since 2026-11-18: Freqtrade estuvo parado del 2026-10-25 al 2026-11-18 (VM caida); la ventana arranca cuando
+# volvio a correr en la PC, asi el hueco no infla la diferencia por timing.
 [Unit]
 Description=HeatSignal: comparacion paper trading vs backtest (Freqtrade local en la PC, deja el resultado al panel)
 After=network-online.target
@@ -16,6 +18,6 @@ Type=oneshot
 WorkingDirectory=/home/nahue/criptoBoty/heatsignal/backend
 Environment=PYTHONPATH=/home/nahue/criptoBoty/heatsignal/backend/src
 Environment=PATH=/snap/bin:/usr/local/bin:/usr/bin:/bin
-ExecStart=/home/nahue/criptoBoty/heatsignal/backend/.venv/bin/python -m heatsignal.lab.paper_compare --upload --local
+ExecStart=/home/nahue/criptoBoty/heatsignal/backend/.venv/bin/python -m heatsignal.lab.paper_compare --upload --local --since 2026-11-18
 Nice=10
 TimeoutStartSec=2h

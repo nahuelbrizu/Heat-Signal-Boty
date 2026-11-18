@@ -26,7 +26,8 @@ Ahora todo corre en la PC (WSL) como **servicios de usuario** (`systemctl --user
 - Worker del laboratorio en **cola local** (`heatsignal.lab.worker --local`, timer cada 5 min; unidad versionada en
   `deploy/pc/heatsignal-lab-worker.service`): toma los pedidos de `~/heatsignal/data/heatsignal_eval.sqlite` y deja
   el resultado en `~/heatsignal/data/lab_requests/`, sin SSH.
-- `paper-compare` en **modo local** (`heatsignal.lab.paper_compare --upload --local`, timer semanal dom 01:00; unidad
+- `paper-compare` en **modo local** (`heatsignal.lab.paper_compare --upload --local --since 2026-11-18`: la ventana
+  arranca cuando Freqtrade volvió a correr, para que el hueco no infle el timing; timer semanal dom 01:00; unidad
   versionada en `deploy/pc/`): lee `~/heatsignal/data/freqtrade_dryrun.sqlite` en solo lectura y copia
   `compare_<fecha>.json` + `paper_summary.json` a `~/heatsignal/data/`.
 - Apagado porque depende de la VM: `heatsignal-tunnel`.
