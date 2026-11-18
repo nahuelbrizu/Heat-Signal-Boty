@@ -62,6 +62,7 @@ DEFAULT_BARS = 500
 TF_MS = {"1m": 60_000, "5m": 300_000, "15m": 900_000, "1h": 3_600_000}
 EXCHANGE_PRIORITY = ("binance", "bybit", "okx", "hyperliquid")  # referencia de precio en `combine=true`
 LAB_ID = re.compile(r"^[a-z0-9][a-z0-9._-]{0,99}$")  # = lab.publish.SAFE_ID (sin importar heatsignal.lab)
+RESEARCH_RUN_ID = re.compile(r"^drun_[A-Za-z0-9]{1,80}$")  # deployment run de Managed Agents (research/managed.py)
 RUN_ID = re.compile(r"^[A-Za-z0-9._:-]{1,120}$")
 WEEK_ID = re.compile(r"^\d{4}-W\d{2}$")  # = paper.weekly.WEEK_RE
 SUMMARY_TTL_S = 10.0
@@ -686,6 +687,7 @@ def register_api(app: FastAPI, ctx: PanelContext, build_id: str) -> None:  # noq
                 "graph_enabled": ctx.analysis is not None and ctx.analysis.graph_enabled,
                 "llm_providers": [] if ctx.analysis is None else list(getattr(ctx.analysis, "llm_providers", [])),
                 "llm_cooldowns": _llm_cooldowns(),
+                "llm_budget": _llm_budget(ctx),
                 "interval_s": interval_s,
                 "last_cycle": last_brief,
                 "last_ran": _brief(last_ran, True),
@@ -1451,6 +1453,29 @@ def register_api(app: FastAPI, ctx: PanelContext, build_id: str) -> None:  # noq
         return {**view, "strategies": [{**s, "exits": ficha_json(str(s.get("strategy_id")))} if isinstance(s, dict) else s
                                        for s in view["strategies"]]}
 
+    # ---------------------------------------------------------------- investigacion semanal (Managed Agents)
+    def _research_base() -> Path:
+        if ctx.lab_summary_path is None:
+            raise HTTPException(status_code=404, detail="investigacion no configurada")
+        return ctx.lab_summary_path.parent
+
+    @app.get("/api/research")
+    async def research_index() -> Any:
+        from ..research.managed import read_index
+
+        return json_safe(read_index(_research_base()))
+
+    @app.get("/api/research/{run_id}")
+    async def research_report(run_id: str = PathParam(..., max_length=90)) -> Any:
+        if not RESEARCH_RUN_ID.match(run_id):
+            raise HTTPException(status_code=400, detail=f"run_id invalido: {run_id!r}")
+        from ..research.managed import read_report
+
+        r = read_report(_research_base(), run_id)
+        if r is None:
+            raise HTTPException(status_code=404, detail=f"sin corrida {run_id}")
+        return json_safe(r)
+
     @app.get("/api/lab/{strategy_id}")
     async def lab_detail(strategy_id: str = PathParam(..., max_length=100)) -> Any:
         if not LAB_ID.match(strategy_id):
@@ -1972,6 +1997,26 @@ def _runtime() -> dict | None:
 
     mon = loop_monitor.current()
     return None if mon is None else mon.snapshot()
+
+
+_BUDGET_CACHE: dict[str, Any] = {}
+
+
+def _llm_budget(ctx: PanelContext) -> dict | None:
+    """Gasto de LLM de la semana contra el tope (agents/spend.py). Cache de 30 s: /api/summary se pollea cada 5 s."""
+    if ctx.lab_summary_path is None:
+        return None
+    hit = _BUDGET_CACHE.get("v")
+    if hit is not None and time.time() - hit[0] < 30:
+        return hit[1]
+    try:
+        from ..agents.spend import SpendLedger, budget_state
+
+        out = budget_state(SpendLedger(ctx.lab_summary_path.parent / "llm_spend.sqlite", timeout_s=1.0)).as_dict()
+    except Exception as exc:  # noqa: BLE001 - el resumen sigue sin este dato, marcado
+        out = {"error": f"{type(exc).__name__}: {exc}"[:200]}
+    _BUDGET_CACHE["v"] = (time.time(), out)
+    return out
 
 
 def _llm_cooldowns() -> dict:

@@ -27,6 +27,19 @@ export async function mount(root, ctx) {
 }
 
 /** Tenencias de largo plazo del usuario: no son estrategias (no entran al grafo ni al laboratorio). */
+/** Gasto de LLM de la semana contra el tope (agents/spend.py): precio de lista, lun-vie UTC. */
+function budgetCell(b) {
+  if (!b) return "—";
+  if (b.error) return chip("sin dato: " + b.error, "warn");
+  const money = (v) => "US$" + (Number(v) || 0).toFixed(2);
+  const share = b.limit_usd ? b.spent_usd / b.limit_usd : 0;
+  const kind = !b.allowed ? "bad" : share >= 0.8 ? "warn" : "ok";
+  const parts = Object.entries(b.by_source || {}).map(([k, v]) => k + " " + money(v)).join(" · ");
+  return el("div", {}, chip(money(b.spent_usd) + " de " + money(b.limit_usd), kind),
+    el("div", { class: "small muted" }, "precio de lista · LLM solo " + b.days + " (UTC)" + (parts ? " · " + parts : "")),
+    b.reason ? el("div", { class: "small" }, b.reason) : null);
+}
+
 function walletCard(w) {
   if (!w || (w.configured === false && !w.error)) return null;
   if (w.error) return card("Mi wallet", null, el("div", { class: "note warn" }, "No se pudo leer: " + w.error));
@@ -88,6 +101,7 @@ function view(s, ctx) {
     kv([
       ["Estado", !a.enabled ? chip("apagado", "warn") : a.graph_enabled ? chip("habilitado", "ok") : chip("sin LLM (falta key)", "warn")],
       ["Proveedor LLM", providersText(a.llm_providers) || "—"],
+      ["Gasto LLM de la semana", budgetCell(a.llm_budget)],
       ["Modelos en pausa", Object.keys(a.llm_cooldowns || {}).length
         ? el("div", {}, Object.entries(a.llm_cooldowns).map(([m, c]) => el("div", { class: "small" }, chip(m, "warn"), " ", c.motivo, " · vuelve en " + dur(c.segundos))))
         : chip("ninguno", "ok")],

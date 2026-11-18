@@ -230,21 +230,30 @@ def make_llms(
     api_key: str | None = None,
     max_tokens: int = DEFAULT_MAX_TOKENS,
     max_retries: int = 2,
+    source: str = "graph",
+    track_spend: bool = True,
 ) -> ModelRouting:
     """Construye el par (cheap, strong). Las keys se leen del entorno en ESTE momento.
 
     Orden: Anthropic (si hay key) y despues Gemini (si hay key) como fallback.
+    Cada modelo anota sus tokens y su costo de lista en el registro de gasto (`agents/spend.py`, `source`), que es
+    lo que usa el tope semanal.
     """
     if provider not in ("anthropic", "gemini"):
         raise UnsupportedProviderError(f"proveedor {provider!r} no soportado ('anthropic' o 'gemini')")
     a_key = api_key or os.environ.get("ANTHROPIC_API_KEY")
     g_key = os.environ.get("GOOGLE_API_KEY") or os.environ.get("GEMINI_API_KEY")
     chains: list[tuple[str, Any, Any]] = []
+    cb: dict[str, Any] = {}
+    if track_spend:
+        from .spend import make_callback
+
+        cb = {"callbacks": [make_callback(source)]}
     if a_key and provider == "anthropic":
         chat_cls = _anthropic_chat_class()
         chains.append(("anthropic",
-                       chat_cls(model=cheap_model, api_key=a_key, max_tokens=max_tokens, max_retries=max_retries),
-                       chat_cls(model=strong_model, api_key=a_key, max_tokens=max_tokens, max_retries=max_retries)))
+                       chat_cls(model=cheap_model, api_key=a_key, max_tokens=max_tokens, max_retries=max_retries, **cb),
+                       chat_cls(model=strong_model, api_key=a_key, max_tokens=max_tokens, max_retries=max_retries, **cb)))
     if g_key:
         base_cls = _gemini_chat_class()
         if gemini_uses_vertex(g_key):
@@ -256,17 +265,17 @@ def make_llms(
         g_cheap = os.environ.get("HEATSIGNAL_GEMINI_CHEAP_MODEL", DEFAULT_GEMINI_CHEAP)
         g_strong = os.environ.get("HEATSIGNAL_GEMINI_STRONG_MODEL", DEFAULT_GEMINI_STRONG)
         chains.append(("gemini",
-                       g_cls(model=g_cheap, google_api_key=g_key, max_output_tokens=max_tokens, max_retries=max_retries),
-                       g_cls(model=g_strong, google_api_key=g_key, max_output_tokens=max_tokens, max_retries=max_retries)))
+                       g_cls(model=g_cheap, google_api_key=g_key, max_output_tokens=max_tokens, max_retries=max_retries, **cb),
+                       g_cls(model=g_strong, google_api_key=g_key, max_output_tokens=max_tokens, max_retries=max_retries, **cb)))
         b_cheap = os.environ.get("HEATSIGNAL_GEMINI_CHEAP_BACKUP", DEFAULT_GEMINI_CHEAP_BACKUP)
         b_strong = os.environ.get("HEATSIGNAL_GEMINI_STRONG_BACKUP", DEFAULT_GEMINI_STRONG_BACKUP)
         if b_cheap and b_strong:
             chains.append(("gemini-backup",
-                           g_cls(model=b_cheap, google_api_key=g_key, max_output_tokens=max_tokens, max_retries=max_retries),
-                           g_cls(model=b_strong, google_api_key=g_key, max_output_tokens=max_tokens, max_retries=max_retries)))
+                           g_cls(model=b_cheap, google_api_key=g_key, max_output_tokens=max_tokens, max_retries=max_retries, **cb),
+                           g_cls(model=b_strong, google_api_key=g_key, max_output_tokens=max_tokens, max_retries=max_retries, **cb)))
         last = os.environ.get("HEATSIGNAL_GEMINI_LAST_RESORT", DEFAULT_GEMINI_LAST_RESORT)
         if last:
-            m = g_cls(model=last, google_api_key=g_key, max_output_tokens=max_tokens, max_retries=max_retries)
+            m = g_cls(model=last, google_api_key=g_key, max_output_tokens=max_tokens, max_retries=max_retries, **cb)
             chains.append(("gemini-last", m, m))
     if not chains:
         raise MissingApiKeyError("falta ANTHROPIC_API_KEY o GOOGLE_API_KEY (variable de entorno o argumento api_key)")

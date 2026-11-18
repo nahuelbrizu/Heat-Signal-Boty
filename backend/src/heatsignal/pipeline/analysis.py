@@ -222,6 +222,7 @@ class AnalysisLoop:
         journal: Any = None,  # pipeline.session_journal.SessionJournal
         macro: Any = None,  # macro.context.MacroContextProvider: bloque "Macro y eventos" (None = apagado)
         oi_poller: Any = None,  # ingestion.binance_oi_poller.BinanceOiPoller: sus fallos van a data_gaps
+        budget_check: Callable[[], Any] | None = None,  # agents.spend.budget_state: tope semanal de LLM (None = sin tope)
     ) -> None:
         if mode not in ("interval", "sessions"):
             raise ValueError(f"mode debe ser 'interval' o 'sessions', no {mode!r}")
@@ -233,6 +234,7 @@ class AnalysisLoop:
         self._symbols = list(symbols)
         self._registry = registry
         self._runner = graph_runner
+        self._budget_check = budget_check
         self._interval_s = interval_s
         self._window_s = window_s
         self._skip_during_warmup = skip_during_warmup
@@ -391,6 +393,17 @@ class AnalysisLoop:
                 run_id, "no_llm", features,
                 detail=f"{prefix}grafo deshabilitado (falta ANTHROPIC_API_KEY o GOOGLE_API_KEY); solo features",
             ))
+
+        if self._budget_check is not None:
+            try:
+                budget = self._budget_check()
+            except Exception as exc:  # noqa: BLE001 - sin poder medir el gasto no se gasta (nunca a ciegas)
+                return self._finish(CycleResult(
+                    run_id, "no_llm", features,
+                    detail=f"{prefix}no se pudo leer el gasto de LLM ({type(exc).__name__}); solo features",
+                ))
+            if not budget.allowed:
+                return self._finish(CycleResult(run_id, "no_llm", features, detail=f"{prefix}{budget.reason}"))
 
         rotated: list[str] = []
         if only is None:

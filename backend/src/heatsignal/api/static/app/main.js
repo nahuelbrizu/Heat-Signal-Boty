@@ -21,6 +21,7 @@ const VIEWS = {
   paper: { title: "Paper trading", mod: "paper" },
   paperbot: { title: "Bot paper", mod: "paperbot" },
   semanal: { title: "Revisión semanal", mod: "semanal" },
+  investigacion: { title: "Investigación semanal", mod: "investigacion" },
   macro: { title: "Macro y eventos", mod: "macro" },
   noticias: { title: "Noticias", mod: "noticias" },
   datos: { title: "Datos guardados", mod: "datos" },

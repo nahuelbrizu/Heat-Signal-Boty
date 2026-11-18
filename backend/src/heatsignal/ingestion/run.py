@@ -413,6 +413,7 @@ async def start_analysis(
         memory, symbols, registry, graph_runner=runner,
         interval_s=cfg.analysis_interval_s, window_s=cfg.analysis_window_s, news=news, cycle_log=cycle_log,
         rotation_per_cycle=cfg.graph_rotation, macro=_macro_provider(cfg), oi_poller=oi_poller,
+        budget_check=_budget_check(cfg) if runner is not None else None,
         **_session_setup(cfg, stack),
     )
     loop.llm_providers = list(llms.providers) if runner is not None else []
@@ -458,6 +459,14 @@ def _htf_provider(cfg: RunConfig) -> Any:
 
 def _macro_db(cfg: RunConfig) -> Path:
     return Path(os.environ.get("HEATSIGNAL_MACRO_DB") or Path(cfg.eval_db).parent / "heatsignal_macro.sqlite")
+
+
+def _budget_check(cfg: "RunConfig") -> Any:
+    """Tope semanal de LLM (agents/spend.py): lun-vie UTC, US$5 por semana por defecto."""
+    from ..agents.spend import SpendLedger, budget_state
+
+    ledger = SpendLedger(Path(cfg.eval_db).expanduser().parent / "llm_spend.sqlite")
+    return lambda: budget_state(ledger)
 
 
 def _macro_provider(cfg: RunConfig) -> Any:

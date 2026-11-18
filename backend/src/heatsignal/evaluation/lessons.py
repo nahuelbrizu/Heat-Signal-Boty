@@ -420,13 +420,18 @@ def get_one(conn: sqlite3.Connection, hypothesis_id: str) -> dict[str, Any] | No
 
 
 def make_cheap_llm() -> tuple[Any, str | None, str | None]:
-    """(llm barato, nombre, motivo si no hay). Usa `llm_factory.make_llms` sin modificarlo."""
+    """(llm barato, nombre, motivo si no hay). Respeta el tope semanal de LLM (`agents/spend.py`)."""
     try:
         from ..agents.llm_factory import MissingApiKeyError, make_llms
     except Exception as exc:  # noqa: BLE001 - sin dependencias de LLM instaladas
         return None, None, f"sin LLM ({type(exc).__name__})"
     try:
-        routing = make_llms()
+        from ..agents.spend import budget_state
+
+        budget = budget_state()
+        if not budget.allowed:
+            return None, None, f"sin LLM: {budget.reason}"
+        routing = make_llms(source="lessons")
     except MissingApiKeyError as exc:
         return None, None, str(exc)
     except Exception as exc:  # noqa: BLE001

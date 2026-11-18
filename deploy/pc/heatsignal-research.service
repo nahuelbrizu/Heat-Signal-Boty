@@ -1,0 +1,19 @@
+# Investigacion semanal (Claude Managed Agents): refresca el contexto que recibe el agente y baja los informes nuevos
+# a ~/heatsignal/data/research/ (los muestra el panel en #/investigacion). Si una corrida quedo esperando aprobacion,
+# la niega (nadie la mira). El agente corre en Anthropic los lunes 02:00 UTC; esto solo sincroniza.
+# Instalar: cp deploy/pc/heatsignal-research.{service,timer} ~/.config/systemd/user/
+#           systemctl --user daemon-reload && systemctl --user enable --now heatsignal-research.timer
+[Unit]
+Description=HeatSignal: investigacion semanal (sincroniza contexto e informes del agente de Managed Agents)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/nahue/criptoBoty/heatsignal/backend
+EnvironmentFile=-/home/nahue/heatsignal/.env
+Environment=PYTHONPATH=/home/nahue/criptoBoty/heatsignal/backend/src
+Environment=HEATSIGNAL_EVAL_DB=/home/nahue/heatsignal/data/heatsignal_eval.sqlite
+ExecStart=/home/nahue/criptoBoty/heatsignal/backend/.venv/bin/python -m heatsignal.research.managed sync
+Nice=10
+TimeoutStartSec=10min

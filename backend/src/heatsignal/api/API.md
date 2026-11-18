@@ -76,7 +76,10 @@ Estado liviano para el polling frecuente.
                    "n_hypotheses": 0, "detail": "XRP-USDT=no_hypothesis", "age_s": 586.2},
     "last_ran":   {"run_id": "cycle-1792253100000", "...": "igual que last_cycle", "decisions": [
                    {"symbol": "XRP-USDT", "outcome": "no_hypothesis", "reason": "...", "strategy_id": null}]},
-    "next_cycle_eta_ms": 1792254000000
+    "next_cycle_eta_ms": 1792254000000,
+    "llm_budget": {"allowed": true, "reason": null, "spent_usd": 0.4213, "limit_usd": 5.0,
+                   "by_source": {"graph": 0.41, "lessons": 0.0113}, "window_start": "2026-11-16T00:00:00+00:00",
+                   "window_end": "2026-11-23T00:00:00+00:00", "days": "lun,mar,mie,jue,vie"}
   },
   "counts": {
     "strategies": {"total": 2, "by_status": {"running": 1, "pending": 1}},
@@ -109,6 +112,10 @@ Estado liviano para el polling frecuente.
 - `recording.status`: `ok` (escribió hace < 120 s), `starting` (recién arrancado), `stale` (no escribe),
   `off` (grabación apagada).
 - `lab`: `null` sin resumen publicado; `{"error": "..."}` si el archivo está roto.
+- `analysis.llm_budget`: gasto de LLM de la semana (lunes 00:00 UTC en adelante) a precio de lista, contra el tope
+  (`agents/spend.py`; `HEATSIGNAL_LLM_WEEKLY_USD`, default 5, y `HEATSIGNAL_LLM_DAYS`, default lun–vie). Con
+  `allowed: false`, `reason` dice por qué (fin de semana o tope alcanzado) y los ciclos quedan `no_llm` con ese
+  motivo. Cache 30 s. `{"error": ...}` si no se pudo leer el registro.
 - `paper`: `null` si el paper trading no está configurado; `{"available": false, "error": "Freqtrade no esta: ..."}`
   si no existe la base del dry-run. Sale solo de la base (cache 15 s, otro hilo; no llama a la API REST).
   `open` es el contador del menú. `compare`: `null` sin comparación publicada.
@@ -965,6 +972,21 @@ Point-in-time a ahora. Lee `data/heatsignal_macro.sqlite` (lo escribe `heatsigna
 ```
 
 FRED sin `FRED_API_KEY` → `sources.fred.state = "apagado"` (nunca un éxito vacío). Base inexistente → `db_note`.
+
+## `GET /api/research` y `GET /api/research/{run_id}` — investigación semanal
+
+Informes del agente de Claude Managed Agents que investiga y propone familias nuevas (`research/managed.py`). El
+agente corre en Anthropic (lunes 02:00 UTC); el timer de la PC `heatsignal-research` baja cada informe a
+`data/research/reports/` y escribe `data/research/index.json`, que es lo único que lee este endpoint. Solo lectura:
+nada vuelve al grafo ni registra estrategias.
+
+`GET /api/research` → `{configured, paused, schedule, deployment_id, agent_id, updated_at, items:[{run_id,
+created_at, trigger ("schedule"|"manual"), session_id, status ("ok"|"en_curso"|"sin_informe"|"error"), outcome
+(resultado de la rúbrica: "satisfied", "max_iterations_reached", ...), file, error, denied_calls, checked_at}]}`.
+`configured: false` si todavía no se corrió `provision`.
+
+`GET /api/research/{run_id}` → la misma entrada más `text` (el informe en Markdown, o `null`) y `trace_url` (la sesión en la consola de Anthropic). **400** si el
+`run_id` no tiene forma `drun_...`; **404** si no existe.
 
 ## `GET /api/lessons` y `GET /api/lessons/{hypothesis_id}` — diario de lecciones
 

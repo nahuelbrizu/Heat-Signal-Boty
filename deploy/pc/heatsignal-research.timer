@@ -1,0 +1,10 @@
+[Unit]
+Description=HeatSignal: sincronizar la investigacion semanal (diario 01:30 UTC, antes de la corrida del lunes; y cada hora los lunes)
+
+[Timer]
+OnCalendar=*-*-* 01:30:00 UTC
+OnCalendar=Mon *-*-* 03..12:15:00 UTC
+Persistent=true
+
+[Install]
+WantedBy=timers.target

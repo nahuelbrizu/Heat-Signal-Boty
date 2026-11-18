@@ -31,6 +31,21 @@ Ahora todo corre en la PC (WSL) como **servicios de usuario** (`systemctl --user
   versionada en `deploy/pc/`): lee `~/heatsignal/data/freqtrade_dryrun.sqlite` en solo lectura y copia
   `compare_<fecha>.json` + `paper_summary.json` a `~/heatsignal/data/`.
 - Apagado porque depende de la VM: `heatsignal-tunnel`.
+- LLM del grafo: Anthropic (`ANTHROPIC_API_KEY` en `~/heatsignal/.env`, cobra por uso, aparte del plan de Claude).
+- **Tope de LLM (2026-11-18, pedido del usuario):** US$5 por semana para todo lo que se analiza (grafo + lecciones +
+  investigación), y LLM solo lunes a viernes UTC (`HEATSIGNAL_LLM_WEEKLY_USD=5`, `HEATSIGNAL_LLM_DAYS=0-4`).
+  `agents/spend.py`: cada llamada anota tokens y costo de lista en `~/heatsignal/data/llm_spend.sqlite`; al llegar
+  al tope (o en fin de semana) los ciclos quedan `no_llm` con el motivo y las lecciones se escriben por código.
+  Panel: "Gasto LLM de la semana" en el Resumen. Lo gastado antes de 2026-11-18 ~04:20 UTC no quedó anotado.
+  Vertex `AQ.` del proyecto 985048017093 guardada comentada (falta habilitar aiplatform.googleapis.com).
+- **Investigación semanal** (Claude Managed Agents, beta; `heatsignal.research.managed`): agente Haiku 5.5 con
+  esfuerzo bajo, red `limited` a sitios de investigación (`HOSTS`), permiso `auto`, **tope US$0,05 por corrida**
+  (pedido del usuario: web_search cuesta US$0,01, así que ≤ 2 búsquedas + API de arXiv por web_fetch, sin
+  evaluador de rúbrica); activo desde 2026-11-18, lunes 02:00 UTC. Recibe `contexto.md` generado desde
+  `lab_summary.json` y deja `informe.md`. Solo propone. Timer
+  `heatsignal-research` (diario 01:30 UTC + lunes cada hora) refresca el contexto, baja informes a
+  `~/heatsignal/data/research/` y niega llamadas que quedaron esperando aprobación. Panel `#/investigacion`. IDs
+  en `~/heatsignal/data/research/managed.json`. Comandos: `provision`, `run-now`, `pause`, `unpause`, `sync`, `status`.
 - Hueco en la prueba hacia adelante: del 2026-10-25 al 2026-11-18 (el paperbot lo registró como `hueco`, 575 h
   sin simular). Las -v2 arrancaron después del respaldo y quedaron sin su estado del 26/10.
 - Si WSL se apaga, todo se detiene: la PC tiene que estar prendida y WSL corriendo.
