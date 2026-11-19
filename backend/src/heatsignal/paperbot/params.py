@@ -91,6 +91,37 @@ def params_from_lab_detail(detail: dict[str, Any], spec: Any) -> tuple[dict[str,
     raise ParamsError("el detalle del laboratorio no trae selected_params ni ventanas del walk-forward")
 
 
+def enroll(strategy_id: str, spec: Any, detail: dict[str, Any], *, sharpe: float | None = None, note: str = "",
+           path: Path | str = PARAMS_PATH, today: str | None = None) -> dict[str, Any]:
+    """Suma una estrategia del laboratorio al bot como 'seguimiento' (panel, 2026-11-19). Devuelve la entrada nueva.
+
+    Reglas: no pisa una que ya corre (el historial es append-only y su 'desde' no cambia); el spec_hash del detalle
+    tiene que ser el del catalogo; los parametros salen del laboratorio (holdout > ultima ventana del walk-forward)
+    o del spec si no tiene grilla. Entra "desde hoy" y NO decide nada: seguimiento exploratorio."""
+    raw = json.loads(Path(path).read_text(encoding="utf-8"))
+    if strategy_id in raw["strategies"]:
+        raise ParamsError(f"{strategy_id} ya corre en el bot (rol {role(raw['strategies'][strategy_id])})")
+    if spec.grid:
+        chosen, origin = params_from_lab_detail(detail, spec)
+    else:
+        if detail.get("spec_hash") != spec.spec_hash():
+            raise ParamsError(f"el detalle del laboratorio es de otra version de la regla ({detail.get('spec_hash')} != "
+                              f"{spec.spec_hash()})")
+        chosen, origin = {}, "spec congelada (sin grilla)"
+    universe = [str(s) for s in (detail.get("symbols") or [])]
+    sh = f"Sharpe OOS {sharpe:.2f}; " if isinstance(sharpe, (int, float)) else ""
+    entry = {"spec_hash": spec.spec_hash(), "universe": universe, "params": chosen,
+             "origen": (f"{origin}. Enviada desde el panel ({sh}seguimiento exploratorio: NO decide; correccion "
+                        f"Benjamini-Hochberg al evaluar)" + (f". Nota: {note}" if note else "")),
+             "desde": today or datetime.now(timezone.utc).date().isoformat(), "rol": "seguimiento"}
+    effective(strategy_id, entry, spec)  # valida antes de escribir
+    raw["strategies"][strategy_id] = entry
+    tmp = Path(path).with_name(f".{Path(path).name}.tmp")
+    tmp.write_text(json.dumps(raw, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    tmp.replace(path)  # atomico: el bot nunca lee un params.json a medio escribir
+    return entry
+
+
 def write_choice(strategy_id: str, params: dict[str, Any], origin: str, spec: Any, path: Path | str = PARAMS_PATH) -> None:
     raw = json.loads(Path(path).read_text(encoding="utf-8"))
     entry = raw["strategies"][strategy_id]

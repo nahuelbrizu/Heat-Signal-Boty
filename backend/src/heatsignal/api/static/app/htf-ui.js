@@ -48,6 +48,22 @@ export function htfBrief(b) {
       " · vs EMA20 1h " + (isNum(b.dist_ema20_1h_atr) ? fixed(b.dist_ema20_1h_atr, 2) + " ATR" : DASH) + " · setups: " + setupsText(b.setups) + (b.daily_trend === "lateral" && b.levels ? " · lateral: " + lateralText(b.levels) : "")));
 }
 
+/** Contextos de 2h y 4h de un ciclo (report.symbols[sym].htf_tf): mismos setups calculados sobre esas velas. */
+export function htfTfBriefs(m) {
+  const tfs = m ? Object.keys(m).sort() : [];
+  if (!tfs.length) return null;
+  return el("div", { style: { margin: "0 0 8px" } }, tfs.map((tf) => {
+    const b = m[tf];
+    if (!b) return null;
+    const last = isNum(b.last_closed_open_ms) ? new Date(b.last_closed_open_ms).toISOString().slice(11, 16) + " UTC" : DASH;
+    return el("div", { class: "row small" }, el("b", {}, "Velas de " + tf),
+      b.status !== "ok" ? chip(b.status, "warn") : null,
+      el("span", { class: "muted" }, "última cerrada abre " + last + " · vs EMA20 " + tf + " " +
+        (isNum(b.dist_ema20_1h_atr) ? fixed(b.dist_ema20_1h_atr, 2) + " ATR" : DASH) + " · setups: " + setupsText(b.setups) +
+        (b.daily_trend === "lateral" && b.levels ? " · lateral: " + lateralText(b.levels) : "")));
+  }));
+}
+
 /** Tarjeta "Velas de 1h y tendencia del día" de una moneda. Devuelve {node, reload(fit), reloadHyps(), dispose()}. */
 export function htfPanel(ctx, symbol, { title = "Velas de 1h cerradas y tendencia del día" } = {}) {
   let last = null;

@@ -5,8 +5,8 @@
 // Cada estrategia tiene su propio inicio (la que se sumó después arranca con su capital y su canasta desde ahí). Honestidad: aviso fijo de que es simulado y de que
 // el backtest todavia puede descartarlas; huecos y corridas con error a la vista; tasas con n e IC.
 import {
-  el, clear, api, errorBox, when, int, num, frac, price, card, table, pageHead, loading, chip, kv, stat, isNum,
-  signedFrac, rateText, sym as toSym, DASH,
+  el, clear, api, apiPost, errorBox, when, int, num, frac, price, card, table, pageHead, loading, chip, kv, stat, isNum,
+  signedFrac, rateText, sym as toSym, DASH, fixed,
 } from "../core.js";
 import { css, signedBars, legend, xyChart } from "../charts.js";
 import { exitChips, exitRows, reasonBars, motivoChip, MOTIVO } from "../exits-ui.js";
@@ -101,11 +101,12 @@ export function labBlock(lab) {
 }
 
 export async function mount(root, ctx) {
-  const head = pageHead("Bot paper", "Bot propio que corre cada hora en la VM y simula, con las mismas reglas del laboratorio, la prueba hacia adelante del lote 6 (hipótesis principal y seguimiento) y el paper previo. Solo lectura.",
+  const head = pageHead("Bot paper", "Bot propio que corre cada hora en la PC y simula, con las mismas reglas del laboratorio, la prueba hacia adelante del lote 6 (hipótesis principal y seguimiento) y el paper previo. Desde acá podés enviarle estrategias del laboratorio como seguimiento.",
     el("a", { class: "btn", href: ctx.href("paper") }, "Freqtrade dry-run →"));
   const top = el("div", {}, loading());
   const detailBox = el("div", {});
-  clear(root, head, top, detailBox);
+  const enrollBox = el("div", {});
+  clear(root, head, top, enrollBox, detailBox);
   let ov = null;
   const selected = () => ctx.route.parts[0] || (ov && ov.strategies.length ? ov.strategies[0].strategy_id : null);
 
@@ -130,8 +131,87 @@ export async function mount(root, ctx) {
     }
   }
   await load();
+  clear(enrollBox, enrollBlock(ctx, load));
   ctx.every(60000, load);
   return { refresh: load };
+}
+
+// ------------------------------------------------------------------ enviar estrategias del laboratorio al bot
+
+const MAX_ENROLL = 10; // = PaperbotEnrollBody.strategy_ids max_length
+
+/** Estrategias del laboratorio que todavia no corren en el bot, ordenadas por Sharpe fuera de muestra, con casilla
+ * para elegir y "Enviar al bot" (POST /api/paperbot/enroll): entran como seguimiento, desde su primera corrida. */
+export function enrollBlock(ctx, onDone) {
+  const box = el("div", {}, loading());
+  const status = el("div", { role: "status" });
+  let showAll = false;
+  async function load() {
+    let d;
+    try { d = await api("/api/paperbot/candidates", showAll ? { all: 1 } : null, ctx.signal); } catch (e) {
+      const b = errorBox(e, "las estrategias del laboratorio"); if (b) clear(box, b); return;
+    }
+    const items = d.items || [];
+    const visible = showAll ? items : items.filter((x) => x.enviable).slice(0, 15);
+    const boxes = new Map();
+    const send = el("button", { class: "btn primary", type: "button", disabled: true }, "Enviar al bot");
+    const count = el("span", { class: "muted small" }, "");
+    const sync = () => {
+      const n = [...boxes.values()].filter((c) => c.checked).length;
+      send.disabled = n === 0 || n > MAX_ENROLL;
+      count.textContent = n ? n + " elegida(s)" + (n > MAX_ENROLL ? " · máximo " + MAX_ENROLL + " por envío" : "") : "";
+    };
+    const rows = visible.map((x) => {
+      const cb = el("input", { type: "checkbox", value: x.strategy_id, disabled: !x.enviable,
+        "aria-label": "elegir " + x.strategy_id });
+      cb.addEventListener("change", sync);
+      if (x.enviable) boxes.set(x.strategy_id, cb);
+      return [cb,
+        el("div", {}, el("a", { href: ctx.href("laboratorio", [x.strategy_id]) }, el("b", { class: "mono small" }, x.strategy_id)),
+          x.description ? el("div", { class: "small muted" }, String(x.description).slice(0, 110)) : null,
+          x.motivo ? el("div", { class: "small warn-t" }, "no se puede enviar: " + x.motivo) : null),
+        el("span", { class: "num" }, fixed(x.sharpe)),
+        el("span", { class: "num" }, fixed(x.dsr, 3)),
+        el("span", { class: "num" }, int(x.trades)),
+        el("span", { class: "num" }, isNum(x.max_drawdown) ? frac(x.max_drawdown) : DASH),
+        el("span", { class: "chips" }, x.pasa_lab ? chip("pasa lab", "ok") : chip("no pasa lab", "bad"),
+          x.pasa_programa ? chip("pasa programa", "ok") : chip("no pasa corrección", "warn",
+            "veredicto del programa: corregido por la cantidad de estrategias probadas"))];
+    });
+    send.addEventListener("click", async () => {
+      const ids = [...boxes.entries()].filter(([, c]) => c.checked).map(([k]) => k);
+      if (!ids.length) return;
+      send.disabled = true;
+      clear(status, el("span", { class: "muted" }, "enviando…"));
+      try {
+        const r = await apiPost("/api/paperbot/enroll", { strategy_ids: ids }, ctx.signal);
+        const errs = Object.entries(r.errors || {});
+        clear(status, chip(int((r.added || []).length) + " enviada(s) al bot", "ok"), " ",
+          el("span", { class: "muted small" }, r.nota || ""),
+          errs.length ? el("div", { class: "err small" }, errs.map(([k, v]) => k + ": " + v).join(" · ")) : null);
+        await load();
+        if (onDone) await onDone();
+      } catch (e) {
+        send.disabled = false;
+        clear(status, el("span", { class: "err" }, "No se pudo enviar: " + e.message));
+      }
+    });
+    const toggle = el("button", { class: "btn", type: "button" }, showAll ? "Ver solo las mejores enviables" : "Ver todas (" + int(items.length) + ")");
+    toggle.addEventListener("click", () => { showAll = !showAll; load(); });
+    clear(box,
+      el("p", { class: "small muted" }, "Estrategias del laboratorio que todavía no corren en el bot, ordenadas por Sharpe fuera de muestra. ",
+        "Al enviarlas entran como ", el("b", {}, "seguimiento"), " (exploratorio: no deciden nada y al evaluarlas se corrige por comparaciones múltiples), ",
+        "con los parámetros que eligió el laboratorio, desde su primera corrida (:02 UTC) y con 10.000 US$ ficticios. Simulado, sin plata real. ",
+        "Un Sharpe alto en el backtest no garantiza nada: justamente para eso está el paper."),
+      items.length ? table([{ label: "" }, { label: "Estrategia" }, { label: "Sharpe OOS", cls: "num" }, { label: "DSR", cls: "num" },
+        { label: "Trades", cls: "num" }, { label: "Max DD", cls: "num" }, { label: "Veredicto" }], rows)
+        : el("p", { class: "muted" }, "Todas las estrategias del laboratorio ya corren en el bot."),
+      el("div", { class: "row", style: { justifyContent: "space-between", marginTop: "8px", gap: "8px", flexWrap: "wrap" } },
+        toggle, el("span", { class: "row", style: { gap: "8px" } }, count, send)),
+      status);
+  }
+  load();
+  return card("Enviar estrategias del laboratorio al bot", "elegí y mandá a correr en el bot (seguimiento)", box);
 }
 
 function disclaimer(ov) {

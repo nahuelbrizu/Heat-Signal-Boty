@@ -14,7 +14,21 @@
 > - Paper y prueba hacia adelante: "Paper trading", "max-ruptura-10d-v1 al bot", "Revisión semanal",
 >   "Prueba hacia adelante", "Enmienda a los criterios de parada", "Stop loss", "Consulta a un trader".
 > - Grafo 1h: "Hipótesis de 1h", "5 estrategias del grafo", "Lateralidad", "días laterales", "Grafo cada hora".
-> - Decisiones pendientes: sección `- **Grafo cada hora con velas de 1h, 2h y 4h (2026-11-19).** Pedido del usuario: "el grafo debe correr las 24hs,
+> - Bot paper: "Enviar estrategias del laboratorio al bot".
+> - Decisiones pendientes: sección `- **Enviar estrategias del laboratorio al bot desde el panel (2026-11-19).** Pedido del usuario: "en seguimiento del
+  paperbot propio me gustaria seleccionar y enviar a estrategias con el mejor share a tradear y correrlas en el bot".
+  Elegido (preguntado): boton en el panel. Bot paper -> "Enviar estrategias del laboratorio al bot": lista las del
+  laboratorio que no corren, ordenadas por Sharpe OOS, con casilla y "Enviar al bot" (`GET /api/paperbot/candidates`,
+  `POST /api/paperbot/enroll`, `paperbot/params.enroll`). Reglas: entran SIEMPRE como `seguimiento` (no deciden; BH al
+  evaluar), "desde hoy" (sin historia hacia atras), con los parametros del laboratorio (holdout > ultima ventana del
+  walk-forward; spec congelada si no hay grilla) y el `spec_hash` del catalogo; no se pisa una que ya corre. Antes de
+  escribir, la regla se prueba con velas sinteticas con las columnas exactas del bot (OHLC, sin volumen ni metrics 5m):
+  `cartera-tendencia-v1`, `ema-cruce-v1` y `ema-cruce-filtrado-v1` piden `volume` y harian fallar la corrida horaria
+  entera, asi que no se pueden enviar. `params.json` queda modificado en el arbol: commitear con el origen.
+  Ademas: `lab.publish --local --if-changed` corre despues de cada pasada del worker del laboratorio
+  (`ExecStartPost`), porque desde la migracion a la PC los detalles quedaban en `~/heatsignal-lab/` y el panel daba
+  "sin detalle publicado".
+- **Grafo cada hora con velas de 1h, 2h y 4h (2026-11-19).** Pedido del usuario: "el grafo debe correr las 24hs,
   analizando velas de 1h, 2h, 3h, 4h, etc." y "siempre tiene que dar una hipotesis, en cada ciclo, aunque no entre,
   diga porque no entro". Elegido (preguntado): todo el grafo en Haiku 5.5 (`HEATSIGNAL_ANTHROPIC_STRONG_MODEL`), LLM
   solo lunes a viernes (tope US$5/semana sin cambios) y copiar las reglas a 2h y 4h (no 3h ni 6–12h: menos intentos).

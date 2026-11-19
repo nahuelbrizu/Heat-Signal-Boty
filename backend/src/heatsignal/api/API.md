@@ -833,6 +833,19 @@ Lee `data/paperbot.sqlite` en solo lectura (sin pandas). 503 si el bot nunca cor
 - `gaps`: horas sin corrida ok (VM apagada o errores). No se simulan después: la corrida siguiente lleva las
   posiciones al objetivo de la regla (órdenes con `reason` = `hueco`).
 
+## `GET /api/paperbot/candidates` y `POST /api/paperbot/enroll` (2026-11-19)
+
+`GET /api/paperbot/candidates[?all=1]`: estrategias del laboratorio que todavia NO corren en el bot, ordenadas por
+Sharpe OOS: `{lab_generated_at, running, items: [{strategy_id, description, family, direction, sharpe, sharpe_ci95,
+dsr, trades, max_drawdown, pasa_lab, pasa_programa, has_detail, enviable, motivo}]}`. `enviable=false` con `motivo`
+si no esta en el catalogo, no es backtesteable, usa datos que el bot no tiene (`metrics`) o la regla falla con las
+columnas del bot (prueba con velas sinteticas OHLC; sin `all` se prueban las 15 mejores, cacheado por `spec_hash`).
+
+`POST /api/paperbot/enroll` (header `X-HeatSignal-Action: 1`, JSON `{strategy_ids: [1..10], note?}`): agrega cada una
+a `paperbot/params.json` como `rol: seguimiento`, `desde` = hoy, con los parametros del laboratorio. 201
+`{added: [...], errors: {id: motivo}, nota}`; 400 si ninguna se pudo agregar (ya corre, no enviable, otra version de
+la regla, fuera de la grilla). Entra en la proxima corrida del bot (:02 UTC). Simulado, sin plata real.
+
 ## `GET /api/paperbot/{strategy_id}`
 
 Lo mismo que un elemento de `strategies` más: `equity_hourly` (`[[hour_ms, equity, basket_equity]]`), `breakdown`

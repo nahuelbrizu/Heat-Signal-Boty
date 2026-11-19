@@ -94,6 +94,12 @@ class LabRequestBody(BaseModel):
     note: str = Field("", max_length=500)
 
 
+class PaperbotEnrollBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    strategy_ids: list[str] = Field(min_length=1, max_length=10)
+    note: str = Field("", max_length=300)
+
+
 async def action_body(request: Request, model: type[BaseModel]) -> Any:
     """Valida un POST de accion: header propio (403), JSON (415), tamano (413), forma (400/422)."""
     if request.headers.get(ACTION_HEADER) != "1":
@@ -1687,6 +1693,120 @@ def register_api(app: FastAPI, ctx: PanelContext, build_id: str) -> None:  # noq
         return {**out, "lab_generated_at": lab.get("generated_at") if isinstance(lab, dict) else None,
                 "strategies": [{**s, "lab": pbv.lab_verdict(lab, s["strategy_id"], s.get("spec_hash"))}
                                for s in out.get("strategies") or []]}
+
+    # Enviar estrategias del laboratorio al bot (2026-11-19). Se registran ANTES que /api/paperbot/{strategy_id}.
+    # Entran como 'seguimiento' (no deciden), "desde hoy", con los parametros que eligio el laboratorio.
+    _enroll_lock = asyncio.Lock()
+
+    _probe_cache: dict[tuple[str, str], str | None] = {}
+
+    def _enroll_candidates(probe: int | None = None) -> dict[str, Any]:
+        from ..lab.strategies import CATALOG  # trae pandas (se llama en un hilo)
+        from ..paperbot import params as P
+
+        bot_data = {"klines", "funding"}  # lo que el bot arma por hora (paperbot/engine.py): sin metrics de 5m
+
+        lab = _lab_view(ctx)
+        if not isinstance(lab, dict) or not isinstance(lab.get("strategies"), list):
+            raise HTTPException(status_code=503, detail="no hay resumen del laboratorio publicado (lab.publish --local)")
+        try:
+            running = P.load(P.PARAMS_PATH)  # se lee en cada llamada (los tests lo redirigen)
+        except P.ParamsError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from None
+        base = ctx.lab_summary_path.parent if ctx.lab_summary_path else None
+        items = []
+        for s in lab["strategies"]:
+            sid = str(s.get("strategy_id") or "")
+            if not LAB_ID.match(sid) or sid in running:
+                continue
+            prog = s.get("veredicto_programa") if isinstance(s.get("veredicto_programa"), dict) else {}
+            spec = CATALOG[sid][0] if sid in CATALOG else None
+            why = ("no esta en el catalogo del laboratorio" if spec is None
+                   else "no es backtesteable" if not spec.backtestable
+                   else f"usa datos que el bot no tiene: {sorted(set(spec.needs) - bot_data)}"
+                   if not set(spec.needs) <= bot_data else None)
+            if why is None and s.get("spec_hash") and s.get("spec_hash") != spec.spec_hash():
+                why = "el resultado del laboratorio es de otra version de la regla"
+            items.append({"strategy_id": sid, "enviable": why is None, "motivo": why, "description": s.get("description"), "family": s.get("family"),
+                          "direction": s.get("direction"), "sharpe": s.get("sharpe"), "sharpe_ci95": s.get("sharpe_ci95"),
+                          "dsr": s.get("dsr"), "trades": s.get("trades"), "max_drawdown": s.get("max_drawdown"),
+                          "pasa_lab": bool((s.get("verdict") or {}).get("pasa")), "pasa_programa": bool(prog.get("pasa")),
+                          "has_detail": bool(base and (base / f"lab_detail_{sid}.json").is_file())})
+        items.sort(key=lambda x: -(x["sharpe"] if isinstance(x["sharpe"], (int, float)) else float("-inf")))
+        if probe is not None:  # prueba con los datos del bot (cacheada por version de la regla): las mejores `probe`
+            from ..paperbot.engine import probe_rule
+
+            left = probe
+            for x in items:
+                if left <= 0:
+                    break
+                if not x["enviable"] or not x["has_detail"]:
+                    continue
+                left -= 1
+                spec, rule = CATALOG[x["strategy_id"]][0], CATALOG[x["strategy_id"]][1]
+                key = (x["strategy_id"], spec.spec_hash())
+                if key not in _probe_cache:
+                    try:
+                        d = json.loads((base / f"lab_detail_{x['strategy_id']}.json").read_text(encoding="utf-8"))
+                        chosen = P.params_from_lab_detail(d, spec)[0] if spec.grid else {}
+                        _probe_cache[key] = probe_rule(rule, {**spec.params, **chosen}, list(d.get("symbols") or []))
+                    except (OSError, ValueError, P.ParamsError) as exc:
+                        _probe_cache[key] = str(exc)
+                if _probe_cache[key]:
+                    x["enviable"], x["motivo"] = False, _probe_cache[key]
+        return {"lab_generated_at": lab.get("generated_at"), "running": len(running), "items": items}
+
+    @app.get("/api/paperbot/candidates")
+    async def paperbot_candidates(all: bool = False) -> Any:  # noqa: A002 - nombre del parametro de la URL
+        # por defecto se prueban las 15 mejores (lo que muestra el panel); ?all=1 prueba todas (unos segundos)
+        return json_safe(await asyncio.to_thread(_enroll_candidates, 10_000 if all else 15))
+
+    @app.post("/api/paperbot/enroll", status_code=201)
+    async def paperbot_enroll(request: Request) -> Any:
+        body = await action_body(request, PaperbotEnrollBody)
+        ids = list(dict.fromkeys(body.strategy_ids))
+        bad = [i for i in ids if not LAB_ID.match(i)]
+        if bad:
+            raise HTTPException(status_code=400, detail=f"strategy_id invalido: {bad}")
+
+        def work() -> dict[str, Any]:
+            from ..lab.strategies import CATALOG
+            from ..paperbot import params as P
+
+            cands = {c["strategy_id"]: c for c in _enroll_candidates()["items"]}
+            unknown = [i for i in ids if i not in cands]
+            if unknown:
+                raise HTTPException(status_code=400, detail=f"no se pueden enviar (ya corren en el bot o no estan en el "
+                                                            f"laboratorio): {unknown}")
+            blocked = {i: cands[i]["motivo"] for i in ids if not cands[i]["enviable"]}
+            if blocked:
+                raise HTTPException(status_code=400, detail=f"no se pueden enviar: {blocked}")
+            base = ctx.lab_summary_path.parent
+            added, errors = [], {}
+            for sid in ids:
+                try:
+                    detail = json.loads((base / f"lab_detail_{sid}.json").read_text(encoding="utf-8"))
+                    spec, rule = CATALOG[sid][0], CATALOG[sid][1]
+                    chosen = P.params_from_lab_detail(detail, spec)[0] if spec.grid else {}
+                    from ..paperbot.engine import probe_rule
+
+                    err = probe_rule(rule, {**spec.params, **chosen}, list(detail.get("symbols") or []))
+                    if err:
+                        raise P.ParamsError(err)
+                    entry = P.enroll(sid, CATALOG[sid][0], detail, sharpe=cands[sid]["sharpe"], note=body.note.strip(),
+                                     path=P.PARAMS_PATH)
+                    added.append({"strategy_id": sid, **entry})
+                except (OSError, ValueError, P.ParamsError) as exc:
+                    errors[sid] = str(exc)
+            return {"added": added, "errors": errors,
+                    "nota": "entran en la proxima corrida del bot (:02 UTC) como seguimiento; params.json quedo "
+                            "modificado: commitear el cambio"}
+
+        async with _enroll_lock:
+            out = await asyncio.to_thread(work)
+        if not out["added"]:
+            raise HTTPException(status_code=400, detail=f"no se agrego ninguna: {out['errors']}")
+        return json_safe(out)
 
     @app.get("/api/paperbot/{strategy_id}")
     async def paperbot_detail(strategy_id: str = PathParam(..., max_length=100)) -> Any:

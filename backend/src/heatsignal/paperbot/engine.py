@@ -618,6 +618,29 @@ def _votes(components: dict[str, float], data: dict[str, Any], H: int) -> dict[s
     return out
 
 
+def probe_rule(rule: Any, params: dict[str, Any], universe: list[str], *, days: int = 30) -> str | None:
+    """Prueba previa al envio desde el panel (2026-11-19): corre la regla sobre velas 1m SINTETICAS con exactamente las
+    columnas que arma el bot (`load_klines`: open/high/low/close, sin volumen) y funding vacio. Devuelve el error o
+    None. Una regla que pide columnas que el bot no tiene (p. ej. `volume`) haria fallar la corrida horaria ENTERA."""
+    from ..lab.strategies import MarketData
+
+    rng = np.random.default_rng(0)
+    n = days * 1440
+    idx = pd.date_range(end=pd.Timestamp("2026-01-01", tz="UTC"), periods=n, freq="1min")
+    data = {}
+    for i, s in enumerate(universe):
+        close = 100.0 * (1 + i) * np.exp(np.cumsum(rng.normal(0, 0.0008, n)))
+        open_ = np.concatenate([[close[0]], close[:-1]])
+        hi, lo = np.maximum(open_, close) * 1.0005, np.minimum(open_, close) * 0.9995
+        k = pd.DataFrame({"open": open_, "high": hi, "low": lo, "close": close}, index=idx)
+        data[s] = MarketData(k, pd.Series([], index=pd.DatetimeIndex([], tz="UTC"), dtype=float, name="rate"))
+    try:
+        rule(data, params)
+    except Exception as exc:  # noqa: BLE001 - se informa tal cual al panel
+        return f"la regla falla con los datos del bot: {type(exc).__name__}: {exc}"
+    return None
+
+
 def summary_line(run: dict[str, Any]) -> str:
     d = run.get("detail") or {}
     if isinstance(d, str):

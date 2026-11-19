@@ -31,10 +31,15 @@ Ahora todo corre en la PC (WSL) como **servicios de usuario** (`systemctl --user
   `compare_<fecha>.json` + `paper_summary.json` a `~/heatsignal/data/`.
 - Apagado porque depende de la VM: `heatsignal-tunnel`.
 - LLM del grafo: Anthropic (`ANTHROPIC_API_KEY` en `~/heatsignal/.env`, cobra por uso, aparte del plan de Claude).
-- **Grafo cada hora (2026-11-19)**: `HEATSIGNAL_ANALYSIS_MODE=hourly`, todo en Haiku 5.5 (~US$0,01 por ciclo,
-  ~US$1,3 por semana), cierre de cada vela 1h + sesiones; 18 estrategias activas: 8 de 1h + 10 nuevas de 2h/4h
+- **Grafo cada hora (2026-11-19)**: `HEATSIGNAL_ANALYSIS_MODE=hourly`, todo en Haiku 5.5 (~US$0,024 por ciclo medido,
+  ~US$2,9 por semana), cierre de cada vela 1h + sesiones; 18 estrategias activas: 8 de 1h + 10 nuevas de 2h/4h
   (`backend/strategies/*-2h`, `*-4h`; decisions.md "Grafo cada hora"). Cada ciclo deja, por cripto, la decisión
   y por qué no entró cada estrategia.
+- **Bot paper: enviar estrategias desde el panel (2026-11-19)**: Bot paper -> "Enviar estrategias del laboratorio al
+  bot" (ordenadas por Sharpe OOS; entran como seguimiento). El laboratorio se publica solo al panel local despues de
+  cada pasada del worker (`lab.publish --local --if-changed`).
+- **Macro caido (2026-11-19)**: el DNS de la red de la PC devuelve NXDOMAIN para `gamma-api.polymarket.com`
+  (1.1.1.1 y 8.8.8.8 si resuelven) y falta `FRED_API_KEY` en `~/heatsignal/.env`. El calendario si se exporta.
 - **Tope de LLM (2026-11-18, pedido del usuario):** US$5 por semana para todo lo que se analiza (grafo + lecciones +
   investigación), y LLM solo lunes a viernes UTC (`HEATSIGNAL_LLM_WEEKLY_USD=5`, `HEATSIGNAL_LLM_DAYS=0-4`).
   `agents/spend.py`: cada llamada anota tokens y costo de lista en `~/heatsignal/data/llm_spend.sqlite`; al llegar

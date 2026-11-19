@@ -3,6 +3,7 @@ Resumen y detalle del laboratorio para el panel de la VM.
 
     python -m heatsignal.lab.publish            # arma ~/heatsignal-lab/lab_summary.json + lab_detail_<id>.json
     python -m heatsignal.lab.publish --upload   # y los copia todos a la VM (~/heatsignal/data/)
+    python -m heatsignal.lab.publish --local    # y los copia al panel de la PC (dir de HEATSIGNAL_EVAL_DB)
 
 El laboratorio corre en la PC; el panel vive en la VM. Se publica solo lo necesario para mirar resultados,
 nunca los datos de mercado:
@@ -440,13 +441,49 @@ def write_all(home: Path) -> list[Path]:
     return files
 
 
+def needs_publish(home: Path, dest: Path | None = None) -> bool:
+    """True si algun JSON de results/ es mas nuevo que el lab_summary.json publicado (o si falta en `dest`)."""
+    summary = home / "lab_summary.json"
+    if not summary.is_file() or (dest is not None and not (dest / "lab_summary.json").is_file()):
+        return True
+    since = summary.stat().st_mtime
+    return any(f.stat().st_mtime > since for f in (home / "results").rglob("*.json"))
+
+
+def local_panel_dir() -> Path:
+    """Donde el panel local busca lab_summary.json y lab_detail_<id>.json: junto a la base de evaluacion."""
+    eval_db = os.environ.get("HEATSIGNAL_EVAL_DB")
+    return Path(eval_db).parent if eval_db else Path.home() / "heatsignal" / "data"
+
+
+def copy_to(files: Iterable[Path], dest: Path) -> None:
+    """Copia atomica (tmp + rename): el panel nunca lee un JSON a medio escribir."""
+    dest.mkdir(parents=True, exist_ok=True)
+    for f in files:
+        tmp = dest / f".{f.name}.tmp"
+        tmp.write_bytes(Path(f).read_bytes())
+        tmp.replace(dest / f.name)
+
+
 def main(argv: Iterable[str] | None = None) -> int:
     p = argparse.ArgumentParser(description="Resumen y detalle del laboratorio para el panel.")
-    p.add_argument("--upload", action="store_true")
+    p.add_argument("--upload", action="store_true", help="copiar a la VM por gcloud scp (panel en la VM)")
+    p.add_argument("--local", action="store_true",
+                   help="copiar al directorio de datos del panel local (el de HEATSIGNAL_EVAL_DB, default "
+                        "~/heatsignal/data): desde 2026-11-18 el panel corre en la PC")
+    p.add_argument("--if-changed", action="store_true",
+                   help="no hacer nada si no hay resultados nuevos desde el ultimo resumen (para el timer del worker)")
     args = p.parse_args(list(argv) if argv is not None else None)
     home = lab_dir().parent
+    if args.if_changed and not needs_publish(home, local_panel_dir() if args.local else None):
+        print("sin resultados nuevos del laboratorio: no se republica")
+        return 0
     files = write_all(home)
     print(f"{len(files) - 1} detalles + resumen -> {home}")
+    if args.local:
+        dest = local_panel_dir()
+        copy_to(files, dest)
+        print(f"copiados {len(files)} archivos al panel local ({dest})")
     if args.upload:
         # un solo scp con todos los archivos al directorio de datos de la VM (donde los lee el panel)
         subprocess.run(["gcloud", "compute", "scp", *VM, *map(str, files), f"{VM_HOST}:{VM_DIR}"], check=True,
