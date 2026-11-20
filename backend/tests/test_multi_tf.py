@@ -157,7 +157,9 @@ def test_missed_and_failed_hours_are_reviewed_by_code_in_the_next_ran_cycle() ->
         def filled_minutes(self, sym, start, end):
             return [(start, 100.0, 103.0, 98.0, 101.0, 1.0), (end - 60_000, 101.0, 101.5, 100.5, 99.0, 1.0)], []
 
-    loop = AnalysisLoop(MemoryWindowSink(), ["BTC-USDT"], registry=None, mode="hourly", live=Live())  # type: ignore[arg-type]
+    now = {"ms": 0}
+    loop = AnalysisLoop(MemoryWindowSink(), ["BTC-USDT"], registry=None, mode="hourly", live=Live(),  # type: ignore[arg-type]
+                        clock_ms=lambda: now["ms"])
     calls: list[tuple[str | None, str | None]] = []
     statuses = iter(["ran", "error", "ran"])
 
@@ -169,8 +171,10 @@ def test_missed_and_failed_hours_are_reviewed_by_code_in_the_next_ran_cycle() ->
     h = lambda n: DAY0 + n * HOUR_MS  # noqa: E731
     asyncio.run(loop.run_hour(h(2)))
     assert calls[-1][1] is None
+    now["ms"] = h(10) + 90_000
     asyncio.run(loop.run_hour(h(10)))  # 03..09 nunca se vieron; 10 falla
     assert "sin analisis 7 h (02:00-09:00 UTC)" in calls[-1][1]
+    assert loop.due_hour(h(10) + 120_000) is None  # espera de reintento (5 min), aunque el bucle mire cada 60 s
     assert h(10) not in loop._hours_done and loop.due_hour(h(10) + 400_000) == h(10)  # se reintenta
     asyncio.run(loop.run_hour(h(10)))  # vuelve la red
     rec = calls[-1][1]
@@ -193,3 +197,54 @@ def test_tf_strategy_files_are_valid(path: Path) -> None:
 def test_session_setups_cannot_be_registered_in_2h() -> None:
     s = _strategy("2h-x", "2h", htf_setup="apertura_continuacion_a_favor", sessions=["europa"])
     assert "vela de 1h de una sesion" in validate_hourly(s)
+
+
+def test_restart_reads_done_hours_from_the_cycle_log() -> None:
+    """Tras un reinicio, una hora ya analizada no se repite (antes dejaba un ciclo 'warmup' de mas) y una con error
+    sigue pendiente para la revision del hueco."""
+    import time as _t
+
+    def label(h):
+        return "hora " + _t.strftime("%Y-%m-%d %H:00", _t.gmtime(h / 1000)) + " UTC"
+
+    h = lambda n: DAY0 + n * HOUR_MS  # noqa: E731
+
+    class FakeLog:
+        def latest_ran(self):
+            return None
+
+        def counts(self):
+            return {"ran": 3}
+
+        def latest(self, limit):
+            return [{"status": "ran", "detail": label(h(18)) + ": BTC-USDT=no_hypothesis"},
+                    {"status": "error", "detail": label(h(17)) + ": grafo: ConnectionError"},
+                    {"status": "warmup", "detail": label(h(16)) + ": ventana incompleta"},
+                    {"status": "ran", "detail": label(h(16)) + ": [sin analisis 2 h] ..."},
+                    {"status": "ran", "detail": "sesion europa 2026-11-20: ..."}]
+
+    loop = AnalysisLoop(MemoryWindowSink(), ["BTC-USDT"], registry=None, mode="hourly", cycle_log=FakeLog())  # type: ignore[arg-type]
+    assert loop.due_hour(h(18) + 600_000) is None  # ya corrida antes del reinicio
+    assert loop.due_hour(h(17) + 600_000) == h(17)  # con error: se puede reintentar
+    assert loop._missed_hours == {h(17)} and loop._last_hour_seen == h(18)
+
+
+def test_warmup_hour_is_retried_within_the_hour() -> None:
+    import asyncio
+
+    from heatsignal.pipeline.analysis import CycleResult
+
+    h19 = DAY0 + 19 * HOUR_MS
+    loop = AnalysisLoop(MemoryWindowSink(), ["BTC-USDT"], registry=None, mode="hourly",  # type: ignore[arg-type]
+                        clock_ms=lambda: h19 + 90_000)
+    statuses = iter(["warmup", "ran"])
+
+    async def fake_run(only, **kw):
+        return CycleResult("r", next(statuses))
+
+    loop._run = fake_run  # type: ignore[method-assign]
+    asyncio.run(loop.run_hour(h19))
+    assert loop.due_hour(h19 + 3 * 60_000) is None  # no reintenta cada minuto: espera 5 min
+    assert loop.due_hour(h19 + 11 * 60_000) == h19  # calentamiento tras un reinicio: se reintenta
+    asyncio.run(loop.run_hour(h19))
+    assert loop.due_hour(h19 + 16 * 60_000) is None and not loop._missed_hours

@@ -278,6 +278,7 @@ class AnalysisLoop:
         # vieja con el LLM: abriria hipotesis con precio de entrada pasado y el resultado ya conocido.
         self._missed_hours: set[int] = set()
         self._last_hour_seen: int | None = None
+        self._retry_at: tuple[int, int] | None = None  # (hora, no antes de ms): reintento tras error / calentamiento
         self.last_result: CycleResult | None = None
         self.llm_providers: list[str] = []  # orden de proveedores (primario -> fallback), para el panel
         self.last_ran: CycleResult | None = None  # ultimo ciclo en que corrio el grafo (sobrevive a warmups)
@@ -301,6 +302,7 @@ class AnalysisLoop:
             if prev is not None:
                 self.last_ran = CycleResult(prev["run_id"], "ran", {}, prev["n_hypotheses"], prev["detail"],
                                             prev["decisions"], prev["report"])
+            self._seed_hours(cycle_log)
 
     @property
     def symbols(self) -> list[str]:
@@ -605,9 +607,41 @@ class AnalysisLoop:
         h = now_ms - now_ms % HOUR_MS
         if now_ms - h < SESSION_GRACE_MS or h in self._hours_done:
             return None
+        if self._retry_at is not None and self._retry_at[0] == h and now_ms < self._retry_at[1]:
+            return None  # fallo o calentamiento: el proximo intento de esta hora es a los HOURLY_RETRY_S
         if self.sessions and triggers_between(self.sessions, h - HOURLY_SESSION_OVERLAP_MS, h + HOURLY_SESSION_OVERLAP_MS):
             return None
         return h
+
+    def _seed_hours(self, cycle_log: Any, scan: int = 80) -> None:
+        """Al arrancar, las horas ya corridas salen del historial persistente (no del proceso): un reinicio dentro de
+        una hora ya analizada no la repite (antes dejaba un ciclo 'warmup' de mas), y las horas con error / warmup sin
+        una corrida buena despues quedan para la revision del hueco, igual que si el proceso nunca se hubiera caido."""
+        import calendar
+        import re
+
+        pat = re.compile(r"^hora (\d{4})-(\d{2})-(\d{2}) (\d{2}):00 UTC")
+        try:
+            rows = cycle_log.latest(scan)
+        except Exception:  # noqa: BLE001 - sin historial se arranca como antes
+            log.exception("no se pudieron leer las horas ya corridas del historial")
+            return
+        done, bad, seen = set(), set(), []
+        for r in rows:
+            m = pat.match(str(r.get("detail") or ""))
+            if not m:
+                continue
+            # 'hora 10:00 UTC' = la misma h de run_hour (piso de la hora = cierre de la vela 09:00-10:00)
+            h = calendar.timegm(tuple(int(x) for x in m.groups()) + (0, 0)) * 1000
+            seen.append(h)
+            if r.get("status") in ("ran", "no_llm", "no_strategies"):
+                done.add(h)
+            elif r.get("status") in ("error", "warmup"):
+                bad.add(h)
+        self._hours_done |= done
+        if seen:
+            self._last_hour_seen = max(seen)
+            self._missed_hours |= {h for h in bad - done if h >= max(seen) - 24 * HOUR_MS}
 
     def gap_review(self, hours: Sequence[int]) -> str | None:
         """Revision simple, por codigo, de las horas sin analisis: que hizo el precio en el hueco (velas 1m propias
@@ -654,9 +688,14 @@ class AnalysisLoop:
         label = time.strftime("%Y-%m-%d %H:00", time.gmtime(h / 1000))
         result = await self._run(list(self._symbols), reason=f"hora {label} UTC", exclude_session_setups=True,
                                  recovery=recovery)
-        if result.status == "error":
+        if result.status in ("error", "warmup"):
+            # error (red, proveedor) o ventana en calentamiento tras un reinicio: se reintenta dentro de la hora
+            # (ver _run_hourly_forever); si la hora termina sin correr, queda para la revision del hueco
             self._missed_hours.add(h)
-            self._hours_done.discard(h)  # se reintenta dentro de la hora (ver _run_hourly_forever)
+            self._hours_done.discard(h)
+            self._retry_at = (h, self._clock_ms() + int(HOURLY_RETRY_S * 1000))
+            log.info("hora %s %s: reintento en %.0f s", label, "con error" if result.status == "error" else
+                     "en calentamiento", HOURLY_RETRY_S)
         elif result.status == "ran":
             self._missed_hours.clear()  # el hueco ya quedo revisado en este ciclo
         return result
@@ -666,22 +705,17 @@ class AnalysisLoop:
         while not stop.is_set():
             now = self._clock_ms()
             h = self.due_hour(now)
-            failed = False
             if h is not None:
                 try:
-                    failed = (await self.run_hour(h)).status == "error"
+                    await self.run_hour(h)
                 except Exception:  # noqa: BLE001 - una hora fallida no apaga el reloj
                     log.exception("hora %s: fallo", h)
             now = self._clock_ms()
             nxt = now - now % HOUR_MS + HOUR_MS + SESSION_GRACE_MS
-            wait_s = (nxt - now) / 1000
-            if failed:
-                wait_s = min(wait_s, HOURLY_RETRY_S)
-                log.info("hora %s con error: reintento en %.0f s", h, wait_s)
             # Los timers de asyncio usan el reloj monotono, que NO avanza con la PC suspendida: una espera de 1 h
-            # despertaba hasta 1 h tarde. Mirando cada 60 s, al despertar el ciclo corre en <= 1 min
-            # (due_hour evita repetir la hora).
-            wait_s = min(wait_s, HOURLY_POLL_S)
+            # despertaba hasta 1 h tarde. Mirando cada 60 s, al despertar el ciclo corre en <= 1 min. due_hour evita
+            # repetir la hora y respeta la espera de reintento (_retry_at), que no depende de cuanto duerma el bucle.
+            wait_s = min((nxt - now) / 1000, HOURLY_POLL_S)
             with contextlib.suppress(asyncio.TimeoutError):
                 await asyncio.wait_for(stop.wait(), timeout=max(1.0, wait_s))
 
