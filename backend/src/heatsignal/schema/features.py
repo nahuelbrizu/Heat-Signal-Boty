@@ -229,6 +229,40 @@ class HtfContext(BaseModel):
         }
 
 
+LIVE_MODEL_ID = "live-5m15m-v1"
+
+
+class LiveTf(BaseModel):
+    """Velas de 5m o 15m CERRADAS armadas con los bars_1m propios (features/live.py). Solo apoyo y monitoreo:
+    ninguna estrategia entra por esto (no estan pre-registradas en estas temporalidades)."""
+
+    timeframe: Literal["5m", "15m"]
+    status: Literal["ok", "partial", "missing"]
+    reason: str = ""
+    last_closed_open_ms: int | None = None
+    close: float | None = None
+    ema20: float | None = None
+    atr14: float | None = None
+    dist_ema20_atr: float | None = None    # (cierre - EMA20) / ATR14 de esta temporalidad
+    ema20_slope_atr: float | None = None   # EMA20 ahora - EMA20 hace 3 velas, en ATR
+    ret_3bars_pct: float | None = None     # cambio % de las ultimas 3 velas cerradas
+    bars: int = 0
+    candles: list[tuple[int, float, float, float, float]] = Field(default_factory=list)  # ultimas (open_ms, o, h, l, c)
+
+
+class LiveContext(BaseModel):
+    live_model_id: str = LIVE_MODEL_ID
+    symbol: str
+    ts_ms: int
+    status: Literal["ok", "partial", "missing"]
+    last_minute_ms: int | None = None      # ultimo minuto con precio en bars_1m
+    last_price: float | None = None        # cierre de ese minuto
+    vwap_day: float | None = None          # VWAP del dia UTC con los bars_1m (volumen USD -> base)
+    dist_vwap_atr15: float | None = None   # (ultimo precio - VWAP) / ATR14 de 15m
+    tfs: dict[str, LiveTf] = Field(default_factory=dict)
+    data_gaps: list[str] = Field(default_factory=list)
+
+
 class FeatureSet(BaseModel):
     """Todo lo que el grafo de agentes recibe para un simbolo en una corrida."""
 
@@ -249,5 +283,7 @@ class FeatureSet(BaseModel):
     htf: HtfContext | None = Field(default=None, description="Velas de 1h cerradas + tendencia del dia UTC")
     htf_tf: dict[str, HtfContext] = Field(default_factory=dict, description="Contextos de 2h y 4h (misma tendencia "
                                                                              "del dia que `htf`)")
+    live: LiveContext | None = Field(default=None, description="Velas de 5m y 15m cerradas (apoyo y monitoreo, "
+                                                               "features/live.py); no abren hipotesis")
     session: SessionSymbolAnalysis | None = Field(
         default=None, description="Ultimo analisis de sesion del dia para este simbolo (schema/sessions.py)")

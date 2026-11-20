@@ -833,6 +833,20 @@ Lee `data/paperbot.sqlite` en solo lectura (sin pandas). 503 si el bot nunca cor
 - `gaps`: horas sin corrida ok (VM apagada o errores). No se simulan después: la corrida siguiente lleva las
   posiciones al objetivo de la regla (órdenes con `reason` = `hueco`).
 
+## `GET /api/live` (2026-11-19)
+
+Velas de 5m y 15m CERRADAS armadas con los `bars_1m` propios (los de "Datos guardados"; `features/live.py`,
+`live-5m15m-v1`) y el seguimiento de cada hipotesis abierta. Cache 20 s. Solo apoyo y monitoreo: no abre ni cierra
+hipotesis. `{ts_ms, model_id, open_hypotheses, alerts, nota, symbols: [{symbol, live: LiveContext, hypotheses: [...]}]}`.
+`LiveContext`: `status` (ok | partial | missing), `last_minute_ms`, `last_price`, `vwap_day`, `dist_vwap_atr15`,
+`data_gaps`, `tfs.{5m,15m}`: `status`, `reason`, `last_closed_open_ms`, `close`, `ema20`, `atr14`, `dist_ema20_atr`,
+`ema20_slope_atr`, `ret_3bars_pct`, `bars`, `candles` (ultimas 12: `[open_ms, o, h, l, c]`). Cada hipotesis:
+`hypothesis_id, strategy, direction, entry_price, last_price, pnl_pct, pnl_atr15, mfe_pct, mae_pct, minutes_to_due,
+minutes_seguida, alerts` (reglas fijas: cierre de 15m del lado contrario de la EMA20 de 15m, ultimas 3 velas de 5m y
+15m en contra, +-1 ATR de 15m, precio del lado contrario del VWAP del dia). 503 con `HEATSIGNAL_LIVE=0`.
+Los ciclos (`/api/cycles/{run_id}`) traen `symbols.<sym>.live` (lo mismo sin velas) y el Analista de Contexto recibe
+una linea con 15m/5m.
+
 ## `GET /api/paperbot/candidates` y `POST /api/paperbot/enroll` (2026-11-19)
 
 `GET /api/paperbot/candidates[?all=1]`: estrategias del laboratorio que todavia NO corren en el bot, ordenadas por

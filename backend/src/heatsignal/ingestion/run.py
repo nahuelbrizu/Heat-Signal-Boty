@@ -493,7 +493,13 @@ def _session_setup(cfg: RunConfig, stack: Any) -> dict[str, Any]:
     stack.callback(journal.close)
     source = SessionDataSource(cfg.history_db, htf, rest=os.environ.get("HEATSIGNAL_HTF_REST", "1").strip() != "0")
     log.info("modo de analisis: %s; sesiones: %s", mode, ", ".join(d.spec() for d in sessions))
-    return {"htf": htf, "mode": mode, "sessions": sessions, "session_source": source, "journal": journal}
+    live = None
+    if os.environ.get("HEATSIGNAL_LIVE", "1").strip() != "0":  # velas de 5m/15m de apoyo (features/live.py)
+        from ..history.live import LiveCandleProvider
+
+        live = LiveCandleProvider(cfg.history_db)
+    return {"htf": htf, "mode": mode, "sessions": sessions, "session_source": source, "journal": journal,
+            "live": live}
 
 
 def _cold_reader(cfg: RunConfig, sinks: list[EventSink]) -> Any:

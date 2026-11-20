@@ -102,6 +102,10 @@ def render_context(fs: FeatureSet) -> str:
     )
     if fs.htf is not None:
         out += "\n" + render_htf(fs, n_candles=6)
+    if getattr(fs, "live", None) is not None:  # 5m/15m de apoyo (features/live.py): una linea, no abre hipotesis
+        from ..features.live import live_brief_line
+
+        out += "\n" + live_brief_line(fs.live)
     return out
 
 

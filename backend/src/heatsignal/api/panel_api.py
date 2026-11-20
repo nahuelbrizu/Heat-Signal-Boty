@@ -1694,6 +1694,67 @@ def register_api(app: FastAPI, ctx: PanelContext, build_id: str) -> None:  # noq
                 "strategies": [{**s, "lab": pbv.lab_verdict(lab, s["strategy_id"], s.get("spec_hash"))}
                                for s in out.get("strategies") or []]}
 
+    # ---------------------------------------------------------------- en vivo: 5m/15m + hipotesis abiertas (2026-11-19)
+
+    def _live_provider() -> Any:
+        prov = getattr(ctx.analysis, "live", None) if ctx.analysis is not None else None
+        if prov is None and ctx.db_paths.get("history"):
+            from ..history.live import LiveCandleProvider
+
+            prov = LiveCandleProvider(ctx.db_paths["history"])
+        return prov
+
+    def _live_symbols() -> list[str]:
+        if ctx.analysis is not None and getattr(ctx.analysis, "_symbols", None):
+            return list(ctx.analysis._symbols)
+        out = []
+        for s in ctx.config.get("symbols", []):
+            b = binance_symbol(s)
+            out.append(f"{b[:-4]}-USDT" if b.endswith("USDT") else b)
+        return out
+
+    def _live_open() -> dict[str, list[dict[str, Any]]]:
+        """Hipotesis abiertas por simbolo (en el hilo del event loop: el registry no es thread-safe)."""
+        from ..evaluation.pending_store import HypothesisStatus
+
+        open_by: dict[str, list[dict[str, Any]]] = {}
+        if ctx.store is None:
+            return open_by
+        _, recs = ctx.store.query(status=HypothesisStatus.PENDING, limit=200)
+        for rec in recs:
+            h = rec.hypothesis
+            s = ctx.registry.get(h.strategy_id) if ctx.registry is not None else None
+            open_by.setdefault(h.symbol, []).append({
+                "hypothesis_id": str(h.hypothesis_id), "symbol": h.symbol,
+                "direction": getattr(h.direction, "value", str(h.direction)),
+                "entry_price": float(h.entry_reference_price), "created_ms": int(h.created_at.timestamp() * 1000),
+                "due_ms": int(rec.due_at.timestamp() * 1000), "strategy_id": str(h.strategy_id),
+                "strategy": s.description.split(":", 1)[0] if s is not None else None, "timeframe": h.timeframe})
+        return open_by
+
+    def _live_work(open_by: dict[str, list[dict[str, Any]]]) -> dict[str, Any]:
+        prov = _live_provider()
+        if prov is None:
+            raise HTTPException(status_code=503, detail="velas en vivo apagadas (HEATSIGNAL_LIVE=0 o sin base historica)")
+        now_ms = int(time.time() * 1000)
+        symbols = []
+        for sym in _live_symbols():
+            live, hyps = prov.monitor(sym, open_by.get(sym, []), now_ms)
+            symbols.append({"symbol": sym, "live": live.model_dump(), "hypotheses": hyps})
+        n_alerts = sum(len(h["alerts"]) for s in symbols for h in s["hypotheses"])
+        return {"ts_ms": now_ms, "model_id": "live-5m15m-v1", "open_hypotheses": sum(len(v) for v in open_by.values()),
+                "alerts": n_alerts, "symbols": symbols,
+                "nota": "velas de 5m/15m cerradas con bars_1m propios; solo apoyo y monitoreo: no abren ni cierran "
+                        "hipotesis (la resolucion es la del evaluador al vencimiento)"}
+
+    @app.get("/api/live")
+    async def live_view() -> Any:
+        hit = paper_cache.get("live")
+        if hit is not None and time.time() - hit[0] <= 20.0:
+            return hit[1]
+        open_by = _live_open()
+        return json_safe(await _paper_cached("live", 20.0, lambda: _live_work(open_by)))
+
     # Enviar estrategias del laboratorio al bot (2026-11-19). Se registran ANTES que /api/paperbot/{strategy_id}.
     # Entran como 'seguimiento' (no deciden), "desde hoy", con los parametros que eligio el laboratorio.
     _enroll_lock = asyncio.Lock()

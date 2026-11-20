@@ -15,7 +15,33 @@
 >   "Prueba hacia adelante", "Enmienda a los criterios de parada", "Stop loss", "Consulta a un trader".
 > - Grafo 1h: "Hipótesis de 1h", "5 estrategias del grafo", "Lateralidad", "días laterales", "Grafo cada hora".
 > - Bot paper: "Enviar estrategias del laboratorio al bot".
-> - Decisiones pendientes: sección `- **Enviar estrategias del laboratorio al bot desde el panel (2026-11-19).** Pedido del usuario: "en seguimiento del
+> - En vivo: "Velas de 5m y 15m en vivo".
+> - Recuperación: "Ciclos que fallan o se pierden".
+> - Decisiones pendientes: sección `## Abiertas` (cerca del final).
+
+## Cerradas
+- **Ciclos que fallan o se pierden: reintento y revisión del hueco (2026-11-19).** Pedido del usuario: "cuando no
+  puede hacer correr por algun error, cuando vuelva la red o se resulva el error analize el ciclo para analizar el
+  sentido y revisarlo, de manera simple". Caso real: PC suspendida 03:00-10:10 UTC y sin cable de red al volver.
+  Modo hourly: una hora con error se reintenta cada 5 min dentro de su hora (`HOURLY_RETRY_S`); las horas que el
+  reloj no vio y las que quedaron con error se juntan y el primer ciclo que corre recibe una revisión POR CÓDIGO del
+  hueco (`AnalysisLoop.gap_review`: variación, máximo y mínimo de cada cripto con `bars_1m` + velas 1m REST), que va al
+  detalle del ciclo (`[sin analisis N h ...]`, visible en el historial del panel) y al diario del grafo. NUNCA se
+  re-corre una hora vieja con el LLM: abriría hipótesis con precio de entrada pasado y el resultado ya conocido
+  (anti-p-hacking) y sin el flujo en vivo de esas horas. Costo extra: ~0 (unas líneas más de prompt). El estado es
+  del proceso: un reinicio en medio del hueco lo pierde (tras reiniciar hay warmup igual). "En vivo" rellena los
+  minutos sin `bars_1m` con `klines` 1m de Binance (precio y volumen, sin flujo propio) y lo declara en sus avisos.
+- **Velas de 5m y 15m en vivo para apoyar y monitorear (2026-11-19).** Pedido del usuario: "me gustaria analizar
+  mas velas de menos duracion para apoyar y monitoriar las conclusiones y tratar de seguir en vivo al mercado"
+  (aceptada la propuesta: 5m y 15m, solo codigo). `features/live.py` (`live-5m15m-v1`) arma velas CERRADAS con los
+  `bars_1m` propios (>= 80 % de minutos con precio; las otras se descartan y se declaran), EMA20, ATR14, pendiente,
+  ultimas 3 velas y VWAP del dia. Usos: (1) una linea en el contexto del Analista de Contexto en cada ciclo (~60
+  tokens por cripto); (2) panel "En vivo" (`GET /api/live`, cada 30 s): como va cada hipotesis abierta (pnl, maximo a
+  favor / en contra, alertas fijas). Reglas: NO abre hipotesis ni cambia decisiones (ninguna estrategia esta
+  pre-registrada en 5m/15m; usarlas para entrar seria una estrategia nueva) y NO cierra hipotesis antes del
+  vencimiento (la resolucion sigue siendo la del evaluador). Las alertas se calculan al pedirlas (no se guardan).
+  Apagable con `HEATSIGNAL_LIVE=0`.
+- **Enviar estrategias del laboratorio al bot desde el panel (2026-11-19).** Pedido del usuario: "en seguimiento del
   paperbot propio me gustaria seleccionar y enviar a estrategias con el mejor share a tradear y correrlas en el bot".
   Elegido (preguntado): boton en el panel. Bot paper -> "Enviar estrategias del laboratorio al bot": lista las del
   laboratorio que no corren, ordenadas por Sharpe OOS, con casilla y "Enviar al bot" (`GET /api/paperbot/candidates`,
@@ -45,10 +71,6 @@
   multiplicidad. Por qué no entró: cada decisión `no_hypothesis` del CIO termina con los motivos por código de cada
   estrategia (`cio.code_candidates(misses=)`, `group_misses`), que quedan en el historial de ciclos y en
   `cio_verdicts.outcome_reason`. El puente a Freqtrade de hipótesis, el resolver y el panel aceptan 2h y 4h.
-
-## Abiertas` (cerca del final).
-
-## Cerradas
 - **Fuente de datos → WS nativos de exchanges (Binance + Bybit + OKX).** Sobre CoinGlass pago. Razón:
   gratis, sin cláusula de redistribución comercial (elimina el Bloqueante A), y control total sobre el
   modelo de heatmap. Costo: hay que agregar/normalizar cada exchange y construir el heatmap propio.

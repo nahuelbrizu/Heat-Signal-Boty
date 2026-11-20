@@ -38,6 +38,9 @@ Ahora todo corre en la PC (WSL) como **servicios de usuario** (`systemctl --user
 - **Bot paper: enviar estrategias desde el panel (2026-11-19)**: Bot paper -> "Enviar estrategias del laboratorio al
   bot" (ordenadas por Sharpe OOS; entran como seguimiento). El laboratorio se publica solo al panel local despues de
   cada pasada del worker (`lab.publish --local --if-changed`).
+- **En vivo (2026-11-19)**: velas de 5m/15m cerradas con los bars_1m propios (`features/live.py`); panel "En vivo"
+  sigue cada hipotesis abierta con alertas de codigo; el Analista de Contexto recibe una linea por cripto. No abre ni
+  cierra hipotesis.
 - **Macro caido (2026-11-19)**: el DNS de la red de la PC devuelve NXDOMAIN para `gamma-api.polymarket.com`
   (1.1.1.1 y 8.8.8.8 si resuelven) y falta `FRED_API_KEY` en `~/heatsignal/.env`. El calendario si se exporta.
 - **Tope de LLM (2026-11-18, pedido del usuario):** US$5 por semana para todo lo que se analiza (grafo + lecciones +

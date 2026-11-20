@@ -64,6 +64,21 @@ export function htfTfBriefs(m) {
   }));
 }
 
+/** Lineas "Velas de 15m / 5m (en vivo)" del ciclo (pipeline.analysis.live_brief): solo apoyo, no abren hipotesis. */
+export function liveBriefs(lv) {
+  if (!lv || !lv.tfs) return null;
+  return el("div", { style: { margin: "0 0 8px" } }, ["15m", "5m"].map((tf) => {
+    const b = lv.tfs[tf];
+    if (!b) return null;
+    const last = isNum(b.last_closed_open_ms) ? new Date(b.last_closed_open_ms).toISOString().slice(11, 16) + " UTC" : DASH;
+    return el("div", { class: "row small" }, el("b", {}, "Velas de " + tf + " (apoyo)"),
+      b.status !== "ok" ? chip(b.status, "warn", b.reason || "") : null,
+      el("span", { class: "muted" }, "última cerrada abre " + last + " · vs EMA20 " + tf + " " +
+        (isNum(b.dist_ema20_atr) ? fixed(b.dist_ema20_atr, 2) + " ATR" : DASH) + " · últimas 3 velas " +
+        (isNum(b.ret_3bars_pct) ? fixed(b.ret_3bars_pct, 2) + " %" : DASH)));
+  }), isNum(lv.dist_vwap_atr15) ? el("div", { class: "row small muted" }, "precio vs VWAP del día " + fixed(lv.dist_vwap_atr15, 2) + " ATR de 15m") : null);
+}
+
 /** Tarjeta "Velas de 1h y tendencia del día" de una moneda. Devuelve {node, reload(fit), reloadHyps(), dispose()}. */
 export function htfPanel(ctx, symbol, { title = "Velas de 1h cerradas y tendencia del día" } = {}) {
   let last = null;

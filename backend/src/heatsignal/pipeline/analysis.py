@@ -78,6 +78,8 @@ SESSION_GRACE_MS = 90_000          # el grabador escribe el ultimo minuto de la 
 SESSION_CATCHUP_MS = 2 * 3_600_000  # una sesion perdida por reinicio se recupera si su disparo fue hace < 2 h
 AnalysisMode = Literal["interval", "sessions", "hourly"]
 HOURLY_SESSION_OVERLAP_MS = 5 * 60_000  # una hora cuyo cierre cae a <= 5 min de un disparo de sesion la cubre la sesion
+HOURLY_RETRY_S = 300.0  # un ciclo horario con error (red, proveedor) se reintenta cada 5 min dentro de su hora
+HOURLY_POLL_S = 60.0  # el reloj horario mira cada 60 s si toca (ver _run_hourly_forever: PC suspendida)
 GRAPH_BAR_HOURS = (2, 4)  # temporalidades ademas de 1h (contextos en FeatureSet.htf_tf)
 DEFAULT_WINDOW_S = 1800
 
@@ -154,6 +156,7 @@ def run_view(final: dict[str, Any]) -> dict[str, Any]:
         symbols[sym] = {
             "htf": htf_brief(getattr(fs, "htf", None)),
             "htf_tf": {tf: htf_brief(c) for tf, c in (getattr(fs, "htf_tf", None) or {}).items()},
+            "live": live_brief(getattr(fs, "live", None)),
             "liquidations": None if sym not in liq else
                 {"confidence": liq[sym].confidence, "text": liq[sym].cluster_summary},
             "order_flow": None if sym not in flow else
@@ -172,6 +175,15 @@ def run_view(final: dict[str, Any]) -> dict[str, Any]:
         "summary": draft.summary if draft else None,
         "symbols": symbols,
     }
+
+
+def live_brief(lv: Any) -> dict[str, Any] | None:
+    """5m/15m del ciclo para el panel (sin las velas)."""
+    if lv is None:
+        return None
+    return {"status": lv.status, "last_price": lv.last_price, "last_minute_ms": lv.last_minute_ms,
+            "dist_vwap_atr15": lv.dist_vwap_atr15, "data_gaps": lv.data_gaps,
+            "tfs": {tf: t.model_dump(exclude={"candles"}) for tf, t in lv.tfs.items()}}
 
 
 def htf_brief(h: Any) -> dict[str, Any] | None:
@@ -233,6 +245,7 @@ class AnalysisLoop:
         macro: Any = None,  # macro.context.MacroContextProvider: bloque "Macro y eventos" (None = apagado)
         oi_poller: Any = None,  # ingestion.binance_oi_poller.BinanceOiPoller: sus fallos van a data_gaps
         budget_check: Callable[[], Any] | None = None,  # agents.spend.budget_state: tope semanal de LLM (None = sin tope)
+        live: Any = None,  # history.live.LiveCandleProvider: velas de 5m/15m de apoyo (None = apagado)
     ) -> None:
         if mode not in ("interval", "sessions", "hourly"):
             raise ValueError(f"mode debe ser 'interval', 'sessions' u 'hourly', no {mode!r}")
@@ -252,6 +265,7 @@ class AnalysisLoop:
         self._news = news
         self.oi_poller = oi_poller
         self.htf = htf
+        self.live = live
         self.mode: AnalysisMode = mode
         self.sessions: list[SessionDef] = list(sessions or [])
         self._session_source = session_source
@@ -259,6 +273,11 @@ class AnalysisLoop:
         self.macro = macro
         self._sessions_done: set[tuple[str, str]] = set()  # sin diario: no repetir en este proceso
         self._hours_done: set[int] = set()  # modo hourly: cierres de vela ya corridos en este proceso
+        # Horas sin analisis (PC suspendida, sin red, error del grafo): al volver, el primer ciclo que corre las
+        # revisa por codigo (que hizo el precio en el hueco) y se lo pasa al grafo. Nunca se re-corre una hora
+        # vieja con el LLM: abriria hipotesis con precio de entrada pasado y el resultado ya conocido.
+        self._missed_hours: set[int] = set()
+        self._last_hour_seen: int | None = None
         self.last_result: CycleResult | None = None
         self.llm_providers: list[str] = []  # orden de proveedores (primario -> fallback), para el panel
         self.last_ran: CycleResult | None = None  # ultimo ciclo en que corrio el grafo (sobrevive a warmups)
@@ -316,6 +335,8 @@ class AnalysisLoop:
                     htf_ctx = await run_heavy(self.htf.context, sym, now_ms)
                 update["htf"] = htf_ctx
                 update["data_gaps"] += [g for g in htf_ctx.data_gaps if g not in update["data_gaps"]]
+            if self.live is not None:  # 5m/15m de apoyo: sus huecos quedan en live.data_gaps (no ensucian el prompt)
+                update["live"] = await run_heavy(self.live.context, sym, now_ms)
             if self._news is not None:
                 update["news"] = self._news.items_for(sym, now_ms)
                 update["news_model_id"] = NEWS_MODEL_ID
@@ -372,10 +393,12 @@ class AnalysisLoop:
 
     async def _run(self, only: list[str] | None, *, reason: str | None = None,
                    run_id: str | None = None, session: dict[str, Any] | None = None,
-                   exclude_session_setups: bool = False) -> CycleResult:
+                   exclude_session_setups: bool = False, recovery: str | None = None) -> CycleResult:
         now_ms = self._clock_ms()
         run_id = run_id or f"cycle-{now_ms}"
         prefix = f"{reason}: " if reason else ""
+        if recovery:
+            prefix = f"{prefix}[{recovery}] "
         try:
             features = await self.build_features(now_ms, only)
         except Exception as exc:  # noqa: BLE001
@@ -447,6 +470,8 @@ class AnalysisLoop:
         }
         if sess is not None:
             state["session"] = sess
+        if recovery:
+            journal_text = "\n".join(x for x in [journal_text, f"Hueco sin analisis (revision por codigo): {recovery}"] if x)
         if journal_text:
             state["day_journal"] = journal_text
         if self.macro is not None:
@@ -584,27 +609,81 @@ class AnalysisLoop:
             return None
         return h
 
+    def gap_review(self, hours: Sequence[int]) -> str | None:
+        """Revision simple, por codigo, de las horas sin analisis: que hizo el precio en el hueco (velas 1m propias
+        + REST de Binance). Sin LLM. None si no hay horas o no hay fuente de velas."""
+        if not hours:
+            return None
+        hs = sorted(hours)
+        start, end = hs[0] - HOUR_MS, hs[-1]  # la hora h es el CIERRE de la vela [h-1h, h)
+        fmt = lambda ms: time.strftime("%H:%M", time.gmtime(ms / 1000))  # noqa: E731
+        head = f"sin analisis {len(hs)} h ({fmt(start)}-{fmt(end)} UTC)"
+        filled = getattr(self.live, "filled_minutes", None)
+        if not callable(filled):
+            return head + "; sin velas para revisar el hueco"
+        parts = []
+        for sym in self._symbols:
+            try:
+                rows = [r for r in filled(sym, start, end)[0] if r[4] is not None]
+            except Exception as exc:  # noqa: BLE001 - la revision nunca frena el ciclo
+                parts.append(f"{sym} sin datos ({type(exc).__name__})")
+                continue
+            if not rows:
+                parts.append(f"{sym} sin datos")
+                continue
+            o, c = float(rows[0][1]), float(rows[-1][4])
+            hi, lo = max(float(r[2]) for r in rows), min(float(r[3]) for r in rows)
+            parts.append(f"{sym} {(c / o - 1) * 100:+.2f}% (max {(hi / o - 1) * 100:+.2f}%, min {(lo / o - 1) * 100:+.2f}%)")
+        return head + "; precio en el hueco: " + ", ".join(parts)
+
     async def run_hour(self, h: int) -> CycleResult:
         self._hours_done.add(h)
         for old in [x for x in self._hours_done if x < h - 24 * HOUR_MS]:
             self._hours_done.discard(old)
+        if self._last_hour_seen is not None and h - self._last_hour_seen > HOUR_MS:
+            # horas que el reloj nunca vio (PC suspendida / proceso trabado); las de sesion tambien cuentan
+            self._missed_hours.update(range(self._last_hour_seen + HOUR_MS, h, HOUR_MS))
+        self._last_hour_seen = h
+        self._missed_hours = {x for x in self._missed_hours if x >= h - 24 * HOUR_MS}
+        missed = sorted(x for x in self._missed_hours if x != h)
+        try:
+            recovery = await run_heavy(self.gap_review, missed) if missed else None
+        except Exception:  # noqa: BLE001
+            log.exception("hora %s: fallo la revision del hueco", h)
+            recovery = f"sin analisis {len(missed)} h; no se pudo revisar el hueco"
         label = time.strftime("%Y-%m-%d %H:00", time.gmtime(h / 1000))
-        return await self._run(list(self._symbols), reason=f"hora {label} UTC", exclude_session_setups=True)
+        result = await self._run(list(self._symbols), reason=f"hora {label} UTC", exclude_session_setups=True,
+                                 recovery=recovery)
+        if result.status == "error":
+            self._missed_hours.add(h)
+            self._hours_done.discard(h)  # se reintenta dentro de la hora (ver _run_hourly_forever)
+        elif result.status == "ran":
+            self._missed_hours.clear()  # el hueco ya quedo revisado en este ciclo
+        return result
 
     async def _run_hourly_forever(self, stop: asyncio.Event) -> None:
         log.info("grafo cada hora (cierre de vela 1h + %.0f s) + sesiones", SESSION_GRACE_MS / 1000)
         while not stop.is_set():
             now = self._clock_ms()
             h = self.due_hour(now)
+            failed = False
             if h is not None:
                 try:
-                    await self.run_hour(h)
+                    failed = (await self.run_hour(h)).status == "error"
                 except Exception:  # noqa: BLE001 - una hora fallida no apaga el reloj
                     log.exception("hora %s: fallo", h)
             now = self._clock_ms()
             nxt = now - now % HOUR_MS + HOUR_MS + SESSION_GRACE_MS
+            wait_s = (nxt - now) / 1000
+            if failed:
+                wait_s = min(wait_s, HOURLY_RETRY_S)
+                log.info("hora %s con error: reintento en %.0f s", h, wait_s)
+            # Los timers de asyncio usan el reloj monotono, que NO avanza con la PC suspendida: una espera de 1 h
+            # despertaba hasta 1 h tarde. Mirando cada 60 s, al despertar el ciclo corre en <= 1 min
+            # (due_hour evita repetir la hora).
+            wait_s = min(wait_s, HOURLY_POLL_S)
             with contextlib.suppress(asyncio.TimeoutError):
-                await asyncio.wait_for(stop.wait(), timeout=max(1.0, (nxt - now) / 1000))
+                await asyncio.wait_for(stop.wait(), timeout=max(1.0, wait_s))
 
     def _mark_running(self, strategies: list[StrategyHypothesis]) -> None:
         set_status = getattr(self._registry, "set_status", None)

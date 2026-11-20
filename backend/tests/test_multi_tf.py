@@ -146,6 +146,38 @@ def test_due_hour_skips_grace_repeats_and_session_hours(tmp_path) -> None:
     assert loop.due_hour(DAY0 + 120_000) is None  # cierre (23:00 UTC) dispara a las 00:00
 
 
+def test_missed_and_failed_hours_are_reviewed_by_code_in_the_next_ran_cycle() -> None:
+    """PC suspendida 02-09 + 10:00 con error de red: se reintenta la hora y el primer ciclo que corre recibe la
+    revision del hueco (sin re-correr horas viejas con el LLM)."""
+    import asyncio
+
+    from heatsignal.pipeline.analysis import CycleResult
+
+    class Live:
+        def filled_minutes(self, sym, start, end):
+            return [(start, 100.0, 103.0, 98.0, 101.0, 1.0), (end - 60_000, 101.0, 101.5, 100.5, 99.0, 1.0)], []
+
+    loop = AnalysisLoop(MemoryWindowSink(), ["BTC-USDT"], registry=None, mode="hourly", live=Live())  # type: ignore[arg-type]
+    calls: list[tuple[str | None, str | None]] = []
+    statuses = iter(["ran", "error", "ran"])
+
+    async def fake_run(only, *, reason=None, recovery=None, **kw):
+        calls.append((reason, recovery))
+        return CycleResult("r", next(statuses))
+
+    loop._run = fake_run  # type: ignore[method-assign]
+    h = lambda n: DAY0 + n * HOUR_MS  # noqa: E731
+    asyncio.run(loop.run_hour(h(2)))
+    assert calls[-1][1] is None
+    asyncio.run(loop.run_hour(h(10)))  # 03..09 nunca se vieron; 10 falla
+    assert "sin analisis 7 h (02:00-09:00 UTC)" in calls[-1][1]
+    assert h(10) not in loop._hours_done and loop.due_hour(h(10) + 400_000) == h(10)  # se reintenta
+    asyncio.run(loop.run_hour(h(10)))  # vuelve la red
+    rec = calls[-1][1]
+    assert "sin analisis 7 h (02:00-09:00 UTC)" in rec and "BTC-USDT -1.00% (max +3.00%, min -2.00%)" in rec
+    assert not loop._missed_hours
+
+
 # ---- estrategias de 2h/4h ------------------------------------------------------------------------------
 
 @pytest.mark.parametrize("path", sorted(p for d in ("2h", "4h") for p in STRATEGIES.glob(f"*-{d}/*.json")))

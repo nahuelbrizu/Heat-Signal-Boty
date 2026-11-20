@@ -13,6 +13,7 @@ const VIEWS = {
   mercado: { title: "Mercado", mod: "mercado" },
   analisis: { title: "Análisis del grafo", mod: "analisis" },
   sesiones: { title: "Sesiones del día", mod: "sesiones" },
+  envivo: { title: "En vivo", mod: "envivo" },
   ciclos: { title: "Ciclos", mod: "ciclos" },
   estrategias: { title: "Estrategias", mod: "estrategias" },
   hipotesis: { title: "Hipótesis", mod: "hipotesis" },
