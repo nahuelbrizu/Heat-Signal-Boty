@@ -48,9 +48,9 @@ Ahora todo corre en la PC (WSL) como **servicios de usuario** (`systemctl --user
   panel "Oportunidades" (mandar a la demo / descartar / automatico por estrategia). Ejecutor (fase 4) en una cuenta
   demo de Bybit APARTE: falta que el usuario cree la subcuenta y pegue la clave en
   ~/heatsignal/secrets/bybit_demo_alertas.json; hasta entonces lo mandado queda en cola (candado: 'sin clave').
-- **Estrategias generadas (2026-11-21, fase 1 de 4)**: constructor por bloques `lab/builder.py` (registro
-  `data/lab_generated.jsonl`, vacio por ahora); panel Laboratorio -> "Estrategias generadas". Faltan: alertas de
-  oportunidad (fase 3), ejecutor en una segunda cuenta demo de Bybit (fase 4) y que el agente proponga (fase 2).
+- **Estrategias generadas (2026-11-21, fases 1 a 4)**: constructor por bloques `lab/builder.py` (registro
+  `data/lab_generated.jsonl`); el agente de investigacion propone hasta 5 por semana (lunes 02:00 UTC, agente v4) que
+  se validan, registran y van solas al laboratorio; panel Laboratorio -> "Estrategias generadas" e Investigacion.
 - **La PC se suspende**: 2026-11-19 03:00-10:10, 11:01-11:12, 15:44 -> 2026-11-20 14:19 y 14:37-15:08 UTC sin
   datos. Hay que desactivar la suspension de Windows.
 - **Macro caido (2026-11-19)**: el DNS de la red de la PC devuelve NXDOMAIN para `gamma-api.polymarket.com`

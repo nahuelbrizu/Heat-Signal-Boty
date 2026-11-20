@@ -185,3 +185,35 @@ async def test_panel_research_endpoints(tmp_path) -> None:
         assert r["text"] == "# informe" and r["status"] == "ok"
         assert (await c.get("/api/research/drun_nada")).status_code == 404
         assert (await c.get("/api/research/..%2Fsecreto")).status_code in (400, 404)
+
+
+def test_agent_strategies_are_validated_registered_and_sent_to_the_lab(tmp_path) -> None:
+    """Fase 2 (2026-11-21): estrategias.json del agente -> bloques validados, registro 'agente', cola del laboratorio."""
+    import json as _json
+    import sqlite3
+
+    from heatsignal.lab import builder as B
+
+    base, fc = _data(tmp_path), FakeClient()
+    st = M.provision(fc, base=base)
+    good = {"name": "rsi-tendencia-1h", "timeframe": "1h", "direction": "long",
+            "entry": {"type": "rsi", "period": 2, "low": 10, "high": 90}, "filters": [{"type": "daily_trend", "ema": 50}],
+            "exit": {"bars": 24, "stop_atr": 2.0}, "description": "reversion corta a favor de la tendencia [1]"}
+    other = {**good, "name": "ruptura-1h", "entry": {"type": "breakout", "n": 48}}
+    bad = {**good, "name": "magia", "entry": {"type": "magia"}}
+    fc.runs = [NS(id="drun_ok", created_at="2026-11-23T02:01:00Z", trigger_context=NS(type="schedule"),
+                  session_id="s_ok", error=None)]
+    fc.sessions = {"s_ok": NS(status="idle", outcome_evaluations=[])}
+    fc.outputs = {"s_ok": [NS(id="f_inf", filename="informe.md"), NS(id="f_est", filename="estrategias.json")]}
+    fc.downloads = {"f_inf": "# informe", "f_est": _json.dumps([good, bad, other, good])}
+    M.fetch_reports(fc, st, base=base)
+    (e,) = M.read_index(base)["items"]
+    res = e["strategies"]
+    assert [r["ok"] for r in res] == [True, False, True, True]
+    assert "desconocido" in res[1]["error"] and res[3]["added"] is False  # repetida: no se duplica
+    entries, _ = B.load_entries(base / "lab_generated.jsonl")
+    assert [x["origin"] for x in entries] == ["agente", "agente"] and "drun_ok" in entries[0]["note"]
+    n = sqlite3.connect(base / "heatsignal_eval.sqlite").execute("SELECT COUNT(*) FROM lab_requests").fetchone()[0]
+    assert n == 2
+    text = C.build(None, C.load_generated(base))
+    assert "Formato para proponer estrategias" in text and entries[0]["strategy_id"] in text

@@ -1,13 +1,14 @@
 // Investigación semanal (#/investigacion/<run_id>): informes del agente de Claude Managed Agents que busca evidencia
-// y propone familias nuevas (research/managed.py). SOLO para leer: nada entra al grafo ni registra estrategias; una
-// propuesta se pre-registra a mano. Fuente: /api/research y /api/research/{run_id}.
+// y propone familias nuevas (research/managed.py). Desde la fase 2 (2026-11-21) tambien propone hasta 5 estrategias
+// por BLOQUES (estrategias.json): el sistema las valida, las registra (origen agente) y las manda al laboratorio; aca
+// se ve que paso con cada una. Nada entra al grafo. Fuente: /api/research y /api/research/{run_id}.
 import { el, clear, api, errorBox, card, pageHead, loading, chip, prose, table, extLink, parseMs, when, DASH } from "../core.js";
 
 const STATUS = { ok: ["ok", "informe listo"], en_curso: ["info", "en curso"], sin_informe: ["warn", "sin informe"], error: ["bad", "falló"] };
 const OUTCOME = { satisfied: ["ok", "cumple la rúbrica"], max_iterations_reached: ["warn", "no llegó a cumplirla"], failed: ["bad", "rúbrica: falló"], interrupted: ["warn", "interrumpida"] };
 const pick = (map, v) => { const [k, t] = map[v] || ["", v || DASH]; return chip(t, k); };
 
-export const RULE_TEXT = "El agente solo propone: nada de esto entra al grafo ni se registra solo. Una propuesta se pre-registra a mano, antes de ver resultados.";
+export const RULE_TEXT = "El agente investiga y propone. Las estrategias que arma con los bloques fijos (nunca código) se validan, se registran con su hash antes de ver resultados y van al laboratorio, que las prueba como a todas. Nada entra al grafo.";
 
 function links(text) {
   const urls = [...new Set((String(text || "").match(/https?:\/\/[^\s)>\]]+/g) || []).map((u) => u.replace(/[.,;:]+$/, "")))];
@@ -27,7 +28,19 @@ function reportCard(r) {
   const src = r.text ? links(r.text) : null;
   return card("Informe " + (r.created_at ? when(parseMs(r.created_at)) : DASH),
     r.trace_url ? extLink(r.trace_url, "ver la sesión en Anthropic") : "",
-    head, body, src ? el("details", {}, el("summary", {}, "Enlaces del informe"), src) : null);
+    head, strategiesBlock(r.strategies), body, src ? el("details", {}, el("summary", {}, "Enlaces del informe"), src) : null);
+}
+
+/** Estrategias que el agente propuso en bloques: registradas y mandadas al laboratorio, repetidas o rechazadas. */
+function strategiesBlock(xs) {
+  if (xs == null) return el("p", { class: "small muted" }, "Esta corrida no propuso estrategias en bloques.");
+  if (!xs.length) return null;
+  return el("div", {}, el("b", { class: "small" }, "Estrategias propuestas (" + xs.length + ")"),
+    table([{ label: "Nombre" }, { label: "Resultado" }, { label: "Regla / motivo" }], xs.map((x) => [
+      x.strategy_id ? el("a", { href: "#/laboratorio/" + encodeURIComponent(x.strategy_id) }, el("span", { class: "small" }, x.strategy_id))
+        : el("span", { class: "small" }, x.name || DASH),
+      !x.ok ? chip("rechazada", "bad") : x.added === false ? chip("ya estaba registrada", "") : x.lab_request ? chip("al laboratorio", "ok") : chip("registrada (sin pedido al lab)", "warn"),
+      el("span", { class: "small" }, x.ok ? (x.describe || "") + (x.lab_error ? " · " + x.lab_error : "") : (x.error || ""))])));
 }
 
 export async function mount(root, ctx) {

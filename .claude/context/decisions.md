@@ -64,6 +64,15 @@
   API (create-demo-member) pide una clave de la cuenta REAL con permisos de transferencia: se descarto; camino
   elegido: subcuenta normal -> Demo Trading -> API (la doc no confirma explicitamente este camino en la web).
   Registro append-only `exec_events` (fill, rechazo, candado, conciliacion, error) + acciones ejecutada/rechazada.
+  **Fase 2 activada (2026-11-21, pedido "dale, activá la fase 2"): el agente propone estrategias en bloques.** El
+  agente de investigacion semanal (Haiku 5.5, tope US$0,05/corrida sin cambios, lunes 02:00 UTC; agente version 4)
+  ademas del informe escribe /mnt/session/outputs/estrategias.json (0 a 5 specs de 5min/15min/1h). Su contexto suma el
+  menu de bloques con rangos y la tabla de generadas ya registradas con su resultado (no repetir; ~1.800 tokens en
+  total). `research.managed sync` baja el archivo y llama a `lab.builder.ingest`: valida cada una (rechazo con motivo),
+  registra las validas con origen 'agente' (append-only, hash de la regla), descarta las repetidas, corta en 5 y pide
+  el laboratorio (cola lab_requests). El resultado por propuesta queda en research/index.json (`strategies`) y se ve
+  en el panel (Investigacion -> informe -> "Estrategias propuestas"; Laboratorio -> "Estrategias generadas").
+  Cada propuesta suma un intento a la correccion estadistica: el prompt pide pocas y fundadas.
 - **Demo de Bybit en vez de la de Binance (2026-11-20).** Pedido del usuario: "vamos a correr las simulaciones en el
   demo de binance". Verificado: la ayuda de Binance Demo Trading dice que "puede haber discrepancias en los graficos,
   en los precios del libro de ordenes y en la ejecucion" respecto del mercado real (mercado aparte; ademas solo en

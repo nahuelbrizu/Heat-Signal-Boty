@@ -9,8 +9,10 @@ Agente de investigacion semanal en Claude Managed Agents (beta): crearlo, refres
     python -m heatsignal.research.managed sync        # contexto al dia + baja informes nuevos (timer diario)
     python -m heatsignal.research.managed status
 
-El agente SOLO propone: escribe /mnt/session/outputs/informe.md; nada vuelve a ningun prompt del grafo ni registra
-estrategias. Red `limited` a una lista fija de sitios de investigacion (HOSTS), sin credenciales en el contenedor.
+El agente investiga y propone: escribe /mnt/session/outputs/informe.md y, desde la fase 2 (2026-11-21), hasta 5
+estrategias en /mnt/session/outputs/estrategias.json con el formato de BLOQUES de lab/builder.py (nunca codigo). `sync`
+las valida, las registra (origen 'agente', registro append-only) y las manda al laboratorio; lo invalido queda con el
+motivo en el indice. Nada vuelve a ningun prompt del grafo. Red `limited` a una lista fija de sitios de investigacion (HOSTS), sin credenciales en el contenedor.
 Herramientas con permiso `auto`: si el servidor pausa una llamada para pedir aprobacion, `sync` la niega (nadie mira
 la corrida). Tope de US$0,05 por corrida (Haiku 5.5); al llegar al tope la sesion queda `idle` y `sync` baja el
 informe que haya escrito hasta ahi.
@@ -46,6 +48,7 @@ BUDGET = {"type": "limit", "max_list_cost": {"currency": "USD", "amount": "5"}} 
 FETCH_MAX_TOKENS = 6000
 CONTEXT_MOUNT = "/contexto.md"  # queda en /mnt/session/uploads/contexto.md
 REPORT_NAME = "informe.md"
+STRATEGIES_NAME = "estrategias.json"  # propuestas en bloques (lab/builder.py), fase 2
 MA_BETA = "managed-agents-2026-04-01"
 # Sitios que puede leer (aprobados por el usuario 2026-11-18). Bajo red `limited`, web_search/web_fetch solo llegan a
 # estos hosts (coincidencia exacta); allowed_domains ademas filtra cada herramienta.
@@ -152,7 +155,7 @@ def provision(client: Any, *, base: Path | None = None, lab_summary: Path | None
                                           metadata={"proyecto": "heatsignal"})
         st["agent_id"], st["agent_version"] = agent.id, agent.version
         _write_json(state_path, st)
-    text = C.build(C.load_summary(lab_summary or (base or data_dir()) / "lab_summary.json"))
+    text = C.build(C.load_summary(lab_summary or (base or data_dir()) / "lab_summary.json"), C.load_generated(base or data_dir()))
     if not st.get("context_file_id"):
         st["context_file_id"], st["context_sha"] = _upload_context(client, text), C.sha(text)
         _write_json(state_path, st)
@@ -175,7 +178,7 @@ def provision(client: Any, *, base: Path | None = None, lab_summary: Path | None
 
 def refresh_context(client: Any, st: dict[str, Any], *, base: Path | None = None, lab_summary: Path | None = None) -> bool:
     """Si el contexto cambio (nuevo lab_summary), lo sube y apunta el deployment al archivo nuevo."""
-    text = C.build(C.load_summary(lab_summary or (base or data_dir()) / "lab_summary.json"))
+    text = C.build(C.load_summary(lab_summary or (base or data_dir()) / "lab_summary.json"), C.load_generated(base or data_dir()))
     if C.sha(text) == st.get("context_sha"):
         return False
     fid = _upload_context(client, text)
@@ -199,10 +202,10 @@ def _deny_pending(client: Any, session_id: str) -> int:
     return len(ids)
 
 
-def _download_report(client: Any, session_id: str, dest: Path) -> bool:
+def _download_report(client: Any, session_id: str, dest: Path, name: str = REPORT_NAME) -> bool:
     files = client.beta.files.list(scope_id=session_id, betas=[MA_BETA])
     for f in _get(files, "data", []) or []:
-        if _get(f, "filename") == REPORT_NAME:
+        if _get(f, "filename") == name:
             dest.parent.mkdir(parents=True, exist_ok=True)
             tmp = dest.with_name(f".{dest.name}.tmp")
             client.files.download(_get(f, "id")).write_to_file(str(tmp))
@@ -223,6 +226,23 @@ def _list_cost_usd(session: Any) -> float | None:
 def _outcome(session: Any) -> str | None:
     evals = _get(session, "outcome_evaluations") or []
     return _get(evals[-1], "result") if evals else None
+
+
+def _ingest_strategies(client: Any, session_id: str, rdir: Path, created: str, run_id: str,
+                       data: Path) -> list[dict[str, Any]] | None:
+    """estrategias.json de la corrida -> lab/builder.ingest (validar, registrar como 'agente', pedir el laboratorio).
+    None = el agente no propuso estrategias esta semana (valido)."""
+    dest = rdir / "strategies" / f"{created[:10] or 'sin-fecha'}_{session_id}.json"
+    try:
+        if not _download_report(client, session_id, dest, STRATEGIES_NAME):
+            return None
+        raw = json.loads(dest.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        return [{"ok": False, "error": f"estrategias.json ilegible: {exc}"[:300]}]
+    from ..lab import builder as B
+
+    return B.ingest(raw, origin="agente", note=f"investigacion semanal {created[:10]} ({run_id})",
+                    path=data / "lab_generated.jsonl", eval_db=data / "heatsignal_eval.sqlite")
 
 
 def fetch_reports(client: Any, st: dict[str, Any], *, base: Path | None = None) -> list[dict[str, Any]]:
@@ -256,6 +276,7 @@ def fetch_reports(client: Any, st: dict[str, Any], *, base: Path | None = None) 
                 got = _download_report(client, sid, rdir / "reports" / fname)
                 entry.update(status="ok" if got else "sin_informe", file=f"reports/{fname}" if got else None,
                              outcome=_outcome(session))
+                entry["strategies"] = _ingest_strategies(client, sid, rdir, created, rid, base or data_dir())
                 cost = _list_cost_usd(session)
                 if cost is not None and not entry.get("cost_recorded"):
                     # cuenta para el tope semanal de LLM (agents/spend.py), con la fecha de la corrida

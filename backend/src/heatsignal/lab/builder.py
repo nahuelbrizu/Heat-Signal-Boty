@@ -429,11 +429,11 @@ def _read(path: str) -> Any:
     return json.loads(sys.stdin.read() if path == "-" else Path(path).read_text(encoding="utf-8"))
 
 
-def enqueue(entry: dict[str, Any], origin: str) -> Any:
+def enqueue(entry: dict[str, Any], origin: str, eval_db: str | Path | None = None) -> Any:
     """Pide la corrida al laboratorio (misma cola que "Mandar al laboratorio" del panel)."""
     from ..evaluation.lab_requests import LabRequestStore
 
-    eval_db = os.environ.get("HEATSIGNAL_EVAL_DB") or str(Path("~/heatsignal/data/heatsignal_eval.sqlite").expanduser())
+    eval_db = eval_db or os.environ.get("HEATSIGNAL_EVAL_DB") or str(Path("~/heatsignal/data/heatsignal_eval.sqlite").expanduser())
     store = LabRequestStore(eval_db)
     try:
         req = store.create([entry["strategy_id"]], entry["spec"]["symbols"],
@@ -443,6 +443,41 @@ def enqueue(entry: dict[str, Any], origin: str) -> Any:
         if callable(close):
             close()
     return req.get("request_id") if isinstance(req, dict) else req
+
+
+MAX_AGENT_SPECS = 5  # tope por corrida del agente (cada una suma un intento a la correccion estadistica)
+
+
+def ingest(raw: Any, *, origin: str = "agente", note: str = "", enqueue_lab: bool = True,
+           path: Path | None = None, eval_db: str | Path | None = None,
+           max_specs: int = MAX_AGENT_SPECS) -> list[dict[str, Any]]:
+    """Propuestas del agente (lista de specs, o {"estrategias": [...]}) -> validar, registrar y pedir el laboratorio.
+    Devuelve un resultado por propuesta (registrada / ya existia / invalida con el motivo). Nunca levanta por una spec
+    mala: el motivo queda para el panel."""
+    items = raw.get("estrategias") if isinstance(raw, dict) else raw
+    if not isinstance(items, list):
+        return [{"ok": False, "error": "el archivo no tiene una lista de estrategias"}]
+    out: list[dict[str, Any]] = []
+    for i, spec in enumerate(items):
+        name = spec.get("name") if isinstance(spec, dict) else None
+        if i >= max_specs:
+            out.append({"ok": False, "name": name, "error": f"pasa el tope de {max_specs} por corrida: no se registra"})
+            continue
+        try:
+            entry = make_entry(spec, origin=origin, note=note)
+        except SpecError as exc:
+            out.append({"ok": False, "name": name, "error": str(exc)})
+            continue
+        added = append(entry, path)
+        res = {"ok": True, "name": name, "strategy_id": entry["strategy_id"], "added": added,
+               "describe": describe(entry["spec"])}
+        if added and enqueue_lab:
+            try:
+                res["lab_request"] = enqueue(entry, origin, eval_db)
+            except Exception as exc:  # noqa: BLE001 - registrada igual: se puede pedir el laboratorio a mano
+                res["lab_error"] = f"{type(exc).__name__}: {exc}"[:300]
+        out.append(res)
+    return out
 
 
 def main(argv: Iterable[str] | None = None) -> int:
