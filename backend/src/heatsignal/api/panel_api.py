@@ -100,6 +100,20 @@ class PaperbotEnrollBody(BaseModel):
     note: str = Field("", max_length=300)
 
 
+class AlertActionBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    action: Literal["enviada", "descartada"]
+
+
+class AlertAutoBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    strategy_id: str = Field(min_length=1, max_length=100)
+    enabled: bool
+
+
+ALERT_ID = re.compile(r"^[0-9a-f]{16}$")
+
+
 async def action_body(request: Request, model: type[BaseModel]) -> Any:
     """Valida un POST de accion: header propio (403), JSON (415), tamano (413), forma (400/422)."""
     if request.headers.get(ACTION_HEADER) != "1":
@@ -1668,6 +1682,76 @@ def register_api(app: FastAPI, ctx: PanelContext, build_id: str) -> None:  # noq
         if isinstance(cmp, dict) and "error" in cmp and len(cmp) == 1:
             raise HTTPException(status_code=500, detail=cmp["error"])
         return cmp
+
+    # ---------------------------------------------------------------- alertas de oportunidad (alerts/)
+
+    def _alert_store() -> Any:
+        if ctx.alerts_db is None:
+            raise HTTPException(status_code=503, detail="alertas no configuradas en este proceso")
+        from ..alerts.store import AlertStore
+
+        return AlertStore(ctx.alerts_db, timeout_s=5.0)
+
+    @app.get("/api/alerts")
+    async def alerts_list(hours: int = Query(48, ge=1, le=24 * 30), strategy: str | None = Query(None, max_length=100),
+                          symbol: str | None = Query(None, max_length=20),
+                          kind: Literal["entrada", "salida", "giro"] | None = None,
+                          limit: int = Query(300, ge=1, le=2000)) -> dict[str, Any]:
+        """Alertas de oportunidad (cambios de objetivo de cada estrategia sobre velas cerradas), con su estado en el
+        laboratorio y en el bot paper, las acciones (enviada / auto / descartada / ejecutada) y el interruptor de
+        automatico por estrategia. Sin base todavia: lista vacia y `configured: false`."""
+        if ctx.alerts_db is None or not Path(ctx.alerts_db).is_file():
+            return {"configured": False, "alerts": [], "runs": [], "auto": {}, "ts_ms": now_ms(),
+                    "nota": "el motor de alertas todavia no corrio (heatsignal-alerts.timer, cada 5 min)"}
+
+        def work() -> dict[str, Any]:
+            store = _alert_store()
+            try:
+                since = now_ms() - hours * 3_600_000
+                rows = store.recent(limit=limit, since_ms=since, strategy_id=strategy, symbol=symbol, kind=kind)
+                return json_safe({"configured": True, "ts_ms": now_ms(), "hours": hours, "alerts": rows,
+                                  "runs": store.runs(12), "auto": store.auto_map(), "queued": len(store.queued()),
+                                  "nota": "Aviso + cola para la demo: las alertas no abren hipotesis ni operan. "
+                                          "La ejecucion en la demo de Bybit llega con la fase 4."})
+            finally:
+                store.close()
+
+        return await asyncio.to_thread(work)
+
+    @app.post("/api/alerts/{alert_id}/action")
+    async def alerts_action(request: Request, alert_id: str = PathParam(..., max_length=16)) -> Any:
+        body = await action_body(request, AlertActionBody)
+        if not ALERT_ID.match(alert_id):
+            raise HTTPException(status_code=400, detail="alert_id invalido")
+
+        def work() -> Any:
+            from ..alerts.store import AlertError
+
+            store = _alert_store()
+            try:
+                return json_safe(store.act(alert_id, body.action, origin="panel"))
+            except AlertError as exc:
+                raise HTTPException(status_code=409, detail=str(exc)) from None
+            finally:
+                store.close()
+
+        return await asyncio.to_thread(work)
+
+    @app.post("/api/alerts/auto")
+    async def alerts_auto(request: Request) -> Any:
+        body = await action_body(request, AlertAutoBody)
+        if not LAB_ID.match(body.strategy_id):
+            raise HTTPException(status_code=400, detail="strategy_id invalido")
+
+        def work() -> Any:
+            store = _alert_store()
+            try:
+                store.set_auto(body.strategy_id, body.enabled, origin="panel")
+                return {"strategy_id": body.strategy_id, "auto": body.enabled, "auto_map": store.auto_map()}
+            finally:
+                store.close()
+
+        return await asyncio.to_thread(work)
 
     @app.get("/api/paper/demo")
     async def paper_demo() -> dict[str, Any]:

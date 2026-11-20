@@ -44,6 +44,9 @@ Ahora todo corre en la PC (WSL) como **servicios de usuario** (`systemctl --user
 - **Demo de Bybit (2026-11-20, armada, falta la clave)**: `heatsignal-freqtrade-bybitdemo` (deshabilitado hasta que
   el usuario pegue la clave demo en `freqtrade/config.bybitdemo.secrets.json`; ExecCondition lo frena con el marcador
   PEGAR_) corre donchian-ensemble-v1 en la demo de Bybit, API :8083. Panel Paper trading -> "Demo de Bybit".
+- **Alertas de oportunidad (2026-11-21, fase 3)**: timer `heatsignal-alerts` cada 5 min -> `data/alerts.sqlite`;
+  panel "Oportunidades" (mandar a la demo / descartar / automatico por estrategia). Lo mandado queda en cola hasta el
+  ejecutor de la fase 4.
 - **Estrategias generadas (2026-11-21, fase 1 de 4)**: constructor por bloques `lab/builder.py` (registro
   `data/lab_generated.jsonl`, vacio por ahora); panel Laboratorio -> "Estrategias generadas". Faltan: alertas de
   oportunidad (fase 3), ejecutor en una segunda cuenta demo de Bybit (fase 4) y que el agente proponga (fase 2).

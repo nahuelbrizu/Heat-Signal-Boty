@@ -39,6 +39,18 @@
   [--encolar]|listar`; panel Laboratorio -> "Estrategias generadas (por bloques)" (`GET /api/lab/generated`). Los
   tests apuntan HEATSIGNAL_GENERATED_PATH a un archivo inexistente (tests/conftest.py) para no depender del registro
   real. Advertencia registrada: en 5m/15m el catalogo escrito a mano fallo siempre por costos (~14 bps ida y vuelta).
+  **Fase 3 hecha (2026-11-21): alertas de oportunidad.** `heatsignal.alerts` (timer `heatsignal-alerts` cada 5 min,
+  :00/5:20 UTC): baja las velas 1m que falten (REST incremental), corta en velas CERRADAS (apertura < T), corre las
+  reglas del CATALOG (incluye las generadas) con los params del bot paper si la estrategia esta ahi, y registra en
+  `data/alerts.sqlite` (append-only) cada entrada / salida / giro con decision en (fin de la ultima corrida ok, T]
+  (como mucho 60 min: tras un hueco no se inventan alertas viejas). Los cambios de tamano sin cambio de signo no
+  alertan. Cada alerta lleva estado en el laboratorio (pasa / no pasa / sin probar), rol en el bot paper y la ficha de
+  salida. Velas atrasadas (> 2 min) -> corrida 'error' sin alertas. Cobertura v1: intradia (1m..4h) que solo pide
+  velas + funding (21 estrategias hoy); diarias / calendario / liquidacion y las que piden metrics 5m se listan como
+  salteadas. Primer vistazo (3 dias): ~100 alertas/dia, 2/3 de vwap-reversion-v1 (no pasa, Sharpe -6,3). Panel
+  "Oportunidades" (`/api/alerts`): filtros por estado del lab, "Mandar a la demo" / "Descartar" y automatico por
+  estrategia (apagado por defecto; recomendado solo para las que pasan). Las mandadas quedan en cola (`queued`) hasta
+  la fase 4. No abren hipotesis ni operan. Medido: ~12 s y ~200 MB por pasada.
 - **Demo de Bybit en vez de la de Binance (2026-11-20).** Pedido del usuario: "vamos a correr las simulaciones en el
   demo de binance". Verificado: la ayuda de Binance Demo Trading dice que "puede haber discrepancias en los graficos,
   en los precios del libro de ordenes y en la ejecucion" respecto del mercado real (mercado aparte; ademas solo en

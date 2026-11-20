@@ -1,0 +1,20 @@
+# Alertas de oportunidad (heatsignal.alerts, 2026-11-21): corre las reglas del laboratorio (catalogo + generadas) sobre
+# las velas 1m cerradas y registra cada entrada / salida / giro en data/alerts.sqlite. No opera: el panel
+# (Oportunidades) permite mandarlas a la demo de Bybit (fase 4). Baja las velas 1m que falten por REST (incremental).
+[Unit]
+Description=HeatSignal alertas de oportunidad (una pasada)
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/nahue/heatsignal/backend
+Environment=PYTHONPATH=/home/nahue/heatsignal/backend/src
+Environment=HEATSIGNAL_DATA_DIR=/home/nahue/heatsignal/data
+Environment=HEATSIGNAL_HISTORY_DB=/home/nahue/heatsignal/data/heatsignal_history.sqlite
+Environment=HEATSIGNAL_PAPERBOT_DB=/home/nahue/heatsignal/data/paperbot.sqlite
+Environment=HEATSIGNAL_EVAL_DB=/home/nahue/heatsignal/data/heatsignal_eval.sqlite
+ExecStart=/home/nahue/heatsignal/backend/.venv/bin/python -m heatsignal.alerts run
+TimeoutStartSec=240
+MemoryMax=700M
+MemorySwapMax=0
+Nice=10

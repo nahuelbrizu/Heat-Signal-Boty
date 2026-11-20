@@ -1,0 +1,10 @@
+[Unit]
+Description=HeatSignal alertas de oportunidad cada 5 minutos (+20 s: la vela 1m ya cerro)
+
+[Timer]
+OnCalendar=*-*-* *:00/5:20 UTC
+# Sin Persistent: despues de un hueco la primera pasada declara el hueco y solo mira la ultima hora.
+AccuracySec=5s
+
+[Install]
+WantedBy=timers.target

@@ -725,6 +725,28 @@ existe la base del dry-run (...)"). Si la base existe pero la API no responde: 2
 - `ci95`: Wilson 95 % de la tasa de acierto. Con menos de 30 cerradas `notes` avisa que la muestra es chica.
 - `compare`: resumen de la última comparación publicada (ver abajo) o `null`.
 
+## `GET /api/alerts`
+
+Alertas de oportunidad (`heatsignal.alerts`, timer `heatsignal-alerts` cada 5 min): cada cambio de objetivo de una
+estrategia (entrada 0 → ±x, salida ±x → 0, giro de signo) sobre velas 1m **cerradas**, con las mismas reglas del
+laboratorio (catálogo + generadas por bloques; v1: intradía de 1m a 4h que solo piden velas y funding).
+Query: `hours` (1–720, default 48), `strategy`, `symbol`, `kind` (entrada|salida|giro), `limit` (≤ 2000).
+Respuesta: `{configured, ts_ms, hours, alerts: [{alert_id, decision_ms, strategy_id, symbol, kind, direction, target,
+prev_target, price, timeframe, source: catalogo|generada, lab_status: pasa|no pasa|sin probar, lab_sharpe, paper_role,
+exit_plan, actions: [...], state: nueva|enviada|auto|descartada|ejecutada|rechazada}], runs: [últimas 12 corridas con
+detail: salteadas, salteadas_por_motivo, errores, hueco], auto: {strategy_id: bool}, queued, nota}`. Sin base:
+`configured: false`. No abren hipótesis ni operan.
+
+## `POST /api/alerts/{alert_id}/action`
+
+Header `X-HeatSignal-Action: 1`. Cuerpo `{"action": "enviada" | "descartada"}`. «enviada» = mandarla a la demo de
+Bybit (la ejecuta la fase 4; hasta entonces queda en cola). 409 si ya fue enviada, automática o descartada.
+
+## `POST /api/alerts/auto`
+
+Header `X-HeatSignal-Action: 1`. Cuerpo `{"strategy_id", "enabled": bool}`. Interruptor de automático por estrategia
+(evento append-only; default apagado): las alertas nuevas de esa estrategia quedan en cola para la demo sin el botón.
+
 ## `GET /api/paper/demo`
 
 donchian-ensemble-v1 en la **demo de Bybit** (tercera instancia de Freqtrade, `heatsignal-freqtrade-bybitdemo`,

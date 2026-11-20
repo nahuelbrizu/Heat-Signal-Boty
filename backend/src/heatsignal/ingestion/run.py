@@ -561,6 +561,7 @@ async def start_panel(
             api_url=cfg.ft_demo_api or None,
             wallet=cfg.paper_wallet,
         ),
+        alerts_db=Path(cfg.eval_db).parent / "alerts.sqlite",
         health=health,
         memory=_memory_sink(sinks),
         history=_recorder(sinks),

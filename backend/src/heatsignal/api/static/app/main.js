@@ -14,6 +14,7 @@ const VIEWS = {
   analisis: { title: "Análisis del grafo", mod: "analisis" },
   sesiones: { title: "Sesiones del día", mod: "sesiones" },
   envivo: { title: "En vivo", mod: "envivo" },
+  oportunidades: { title: "Oportunidades", mod: "oportunidades" },
   ciclos: { title: "Ciclos", mod: "ciclos" },
   estrategias: { title: "Estrategias", mod: "estrategias" },
   hipotesis: { title: "Hipótesis", mod: "hipotesis" },
