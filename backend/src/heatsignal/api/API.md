@@ -736,6 +736,10 @@ prev_target, price, timeframe, source: catalogo|generada, lab_status: pasa|no pa
 exit_plan, actions: [...], state: nueva|enviada|auto|descartada|ejecutada|rechazada}], runs: [últimas 12 corridas con
 detail: salteadas, salteadas_por_motivo, errores, hueco], auto: {strategy_id: bool}, queued, nota}`. Sin base:
 `configured: false`. No abren hipótesis ni operan.
+`ejecutor`: estado del ejecutor en la demo de Bybit (`alerts/executor.py`): `keys_ok`/`keys_msg` (sin exponer la
+clave), `bloqueado` (último candado si es posterior al último fill), `abiertas` (posiciones virtuales por estrategia y
+cripto: qty, avg, realized, fees), `realizado`, `comisiones`, `eventos` (fill | rechazo | candado | conciliacion |
+error), `conciliacion` (virtual vs exchange) y `limites`.
 
 ## `POST /api/alerts/{alert_id}/action`
 

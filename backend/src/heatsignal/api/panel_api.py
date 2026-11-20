@@ -1692,6 +1692,30 @@ def register_api(app: FastAPI, ctx: PanelContext, build_id: str) -> None:  # noq
 
         return AlertStore(ctx.alerts_db, timeout_s=5.0)
 
+    def _executor_view(store: Any) -> dict[str, Any]:
+        """Ejecutor en la demo (alerts/executor.py): si hay clave cargada (sin exponerla), posiciones virtuales por
+        estrategia, ultimos eventos (fills, rechazos, candado, conciliacion)."""
+        from ..alerts import executor as X
+
+        keys = X.default_config().keys_path
+        try:
+            X.read_keys(keys)
+            keys_ok, keys_msg = True, None
+        except (X.DemoLockError, OSError, ValueError) as exc:
+            keys_ok, keys_msg = False, str(exc)
+        book = X.ExecBook(store)
+        pos = [{"strategy_id": k[0], "symbol": k[1], **v} for k, v in book.positions().items()]
+        events = book.recent(40)
+        last_lock = next((e for e in events if e["kind"] == "candado"), None)
+        last_fill = next((e for e in events if e["kind"] == "fill"), None)
+        return {"keys_path": str(keys), "keys_ok": keys_ok, "keys_msg": keys_msg,
+                "bloqueado": last_lock if last_lock and (last_fill is None or last_lock["id"] > last_fill["id"]) else None,
+                "abiertas": [p for p in pos if p["qty"]], "realizado": sum(p["realized"] for p in pos),
+                "comisiones": sum(p["fees"] for p in pos), "eventos": events,
+                "conciliacion": next((e["detail"] for e in events if e["kind"] == "conciliacion"), None),
+                "limites": {"notional_usdt": X.ExecConfig.notional_usdt, "max_open": X.ExecConfig.max_open,
+                            "max_gross_usdt": X.ExecConfig.max_gross_usdt, "max_entry_age_min": X.ExecConfig.max_entry_age_s // 60}}
+
     @app.get("/api/alerts")
     async def alerts_list(hours: int = Query(48, ge=1, le=24 * 30), strategy: str | None = Query(None, max_length=100),
                           symbol: str | None = Query(None, max_length=20),
@@ -1711,8 +1735,9 @@ def register_api(app: FastAPI, ctx: PanelContext, build_id: str) -> None:  # noq
                 rows = store.recent(limit=limit, since_ms=since, strategy_id=strategy, symbol=symbol, kind=kind)
                 return json_safe({"configured": True, "ts_ms": now_ms(), "hours": hours, "alerts": rows,
                                   "runs": store.runs(12), "auto": store.auto_map(), "queued": len(store.queued()),
-                                  "nota": "Aviso + cola para la demo: las alertas no abren hipotesis ni operan. "
-                                          "La ejecucion en la demo de Bybit llega con la fase 4."})
+                                  "ejecutor": _executor_view(store),
+                                  "nota": "Las alertas no abren hipotesis. Lo mandado a la demo lo opera el ejecutor "
+                                          "(cuenta demo de Bybit aparte, fondos ficticios; nunca plata real)."})
             finally:
                 store.close()
 

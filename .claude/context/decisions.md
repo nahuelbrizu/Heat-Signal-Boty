@@ -51,6 +51,19 @@
   "Oportunidades" (`/api/alerts`): filtros por estado del lab, "Mandar a la demo" / "Descartar" y automatico por
   estrategia (apagado por defecto; recomendado solo para las que pasan). Las mandadas quedan en cola (`queued`) hasta
   la fase 4. No abren hipotesis ni operan. Medido: ~12 s y ~200 MB por pasada.
+  **Fase 4 hecha (2026-11-21): ejecutor en la demo de Bybit** (`alerts/executor.py`, segundo ExecStart de
+  heatsignal-alerts.service con el Python de Freqtrade: ccxt 4.5.93; el backend no suma dependencia). Toma lo mandado
+  (boton o automatico) y TODA salida/giro de una posicion que abrio (una posicion abierta siempre se cierra cuando la
+  regla sale; solo salidas decididas despues de la entrada vigente). Posiciones VIRTUALES por (estrategia, simbolo);
+  en el exchange (one-way) queda la neta; cada corrida concilia virtual vs exchange. Tamano 1.000 USDT x |objetivo|,
+  1x; limites 10 posiciones y 10.000 USDT brutos; entrada de mas de 15 min -> rechazada (el precio ya se movio); sin
+  stop en el exchange (las salidas llegan como alertas, ~5 min de demora). CANDADO: la clave tiene que funcionar en
+  api-demo.bybit.com y ser RECHAZADA por api.bybit.com, y no tener retiros; si no, no opera ('candado' en
+  exec_events). Cuenta demo APARTE de la de Donchian (dos bots en una cuenta romperian la comparacion): la clave va en
+  ~/heatsignal/secrets/bybit_demo_alertas.json (fuera de git, 600). Verificado en la doc de Bybit: crear la demo por
+  API (create-demo-member) pide una clave de la cuenta REAL con permisos de transferencia: se descarto; camino
+  elegido: subcuenta normal -> Demo Trading -> API (la doc no confirma explicitamente este camino en la web).
+  Registro append-only `exec_events` (fill, rechazo, candado, conciliacion, error) + acciones ejecutada/rechazada.
 - **Demo de Bybit en vez de la de Binance (2026-11-20).** Pedido del usuario: "vamos a correr las simulaciones en el
   demo de binance". Verificado: la ayuda de Binance Demo Trading dice que "puede haber discrepancias en los graficos,
   en los precios del libro de ordenes y en la ejecucion" respecto del mercado real (mercado aparte; ademas solo en

@@ -1,6 +1,7 @@
 # Alertas de oportunidad (heatsignal.alerts, 2026-11-21): corre las reglas del laboratorio (catalogo + generadas) sobre
 # las velas 1m cerradas y registra cada entrada / salida / giro en data/alerts.sqlite. No opera: el panel
-# (Oportunidades) permite mandarlas a la demo de Bybit (fase 4). Baja las velas 1m que falten por REST (incremental).
+# (Oportunidades) permite mandarlas a la demo de Bybit; el ejecutor (fase 4) las opera ahi (clave en
+# ~/heatsignal/secrets/bybit_demo_alertas.json, fuera de git; candado: solo claves de la demo). Baja las velas 1m que falten por REST (incremental).
 [Unit]
 Description=HeatSignal alertas de oportunidad (una pasada)
 After=network-online.target
@@ -13,7 +14,10 @@ Environment=HEATSIGNAL_DATA_DIR=/home/nahue/heatsignal/data
 Environment=HEATSIGNAL_HISTORY_DB=/home/nahue/heatsignal/data/heatsignal_history.sqlite
 Environment=HEATSIGNAL_PAPERBOT_DB=/home/nahue/heatsignal/data/paperbot.sqlite
 Environment=HEATSIGNAL_EVAL_DB=/home/nahue/heatsignal/data/heatsignal_eval.sqlite
-ExecStart=/home/nahue/heatsignal/backend/.venv/bin/python -m heatsignal.alerts run
+# '-': si la pasada del motor falla (velas atrasadas), el ejecutor corre igual (cierra posiciones abiertas por alertas
+# ya registradas). El ejecutor usa el Python de Freqtrade (ccxt 4.5.93, el mismo verificado contra la demo de Bybit).
+ExecStart=-/home/nahue/heatsignal/backend/.venv/bin/python -m heatsignal.alerts run
+ExecStart=/home/nahue/freqtrade/.venv/bin/python -m heatsignal.alerts ejecutar
 TimeoutStartSec=240
 MemoryMax=700M
 MemorySwapMax=0

@@ -80,7 +80,7 @@ export async function mount(root, ctx) {
       return [el("label", { class: "chips" }, input, el("span", { class: "small" }, sid)), chipOf(LAB, labOf[sid]),
         int(all.filter((a) => a.strategy_id === sid).length)];
     });
-    clear(box, stats, ...notes, filters,
+    clear(box, stats, executorCard(d.ejecutor), ...notes, filters,
       rows.length ? table([{ label: "Decisión" }, { label: "Cripto" }, { label: "Tipo" }, { label: "Precio", cls: "num" }, { label: "Estrategia" },
         { label: "Laboratorio / bot" }, { label: "Estado" }, { label: "" }], rows)
         : el("p", { class: "muted" }, "No hay alertas con estos filtros."),
@@ -94,4 +94,38 @@ export async function mount(root, ctx) {
   await load();
   ctx.every(60000, load);
   return { refresh: load };
+}
+
+// ------------------------------------------------------------------ ejecutor en la demo de Bybit (alerts/executor.py)
+
+const money = (v) => (typeof v === "number" && Number.isFinite(v) ? (v < 0 ? "−" : "") + "US$ " + fixed(Math.abs(v), 2) : DASH);
+const EV = { fill: ["fill", "ok"], rechazo: ["rechazo", "warn"], candado: ["bloqueado", "bad"], conciliacion: ["conciliación", "warn"], error: ["error", "bad"] };
+
+function executorCard(x) {
+  if (!x) return null;
+  const head = x.keys_ok ? (x.bloqueado ? chip("bloqueado", "bad") : chip("listo", "ok")) : chip("sin clave", "warn");
+  const lim = x.limites || {};
+  const parts = [
+    el("p", { class: "small" }, "Opera lo mandado (botón o automático) en una cuenta ", el("b", {}, "demo"), " de Bybit aparte: " +
+      money(lim.notional_usdt) + " por posición, 1x, hasta " + int(lim.max_open) + " abiertas y " + money(lim.max_gross_usdt) +
+      " en total; una entrada de más de " + int(lim.max_entry_age_min) + " min se rechaza. Cada posición abierta se cierra sola cuando la regla sale. " +
+      "Candado: si la cuenta real acepta la clave, no opera."),
+  ];
+  if (!x.keys_ok) parts.push(el("div", { class: "note warn small" }, "Falta la clave de la cuenta demo: ", el("code", {}, x.keys_path),
+    ". Crear una subcuenta en Bybit → entrar → Demo Trading → avatar → API (contratos: órdenes y posiciones, sin retiros) y pegarla en ese archivo."));
+  if (x.bloqueado) parts.push(el("div", { class: "note warn small" }, "Último bloqueo: " + ((x.bloqueado.detail || {}).error || "")));
+  if (x.conciliacion && Object.keys(x.conciliacion.diferencias || {}).length) parts.push(el("div", { class: "note warn small" },
+    "La posición del exchange no coincide con la suma de las estrategias en: " + Object.keys(x.conciliacion.diferencias).join(", ")));
+  parts.push(el("div", { class: "stats" },
+    stat("Posiciones abiertas", int((x.abiertas || []).length), "por estrategia y cripto"),
+    stat("Resultado realizado", money(x.realizado), "comisiones " + money(x.comisiones), x.realizado >= 0 ? "ok-t" : "bad-t")));
+  if ((x.abiertas || []).length) parts.push(table([{ label: "Estrategia" }, { label: "Cripto" }, { label: "Cantidad", cls: "num" }, { label: "Precio medio", cls: "num" }],
+    x.abiertas.map((p) => [el("span", { class: "small" }, p.strategy_id), toSym(p.symbol), el("span", { class: "num" }, fixed(p.qty, 4)), el("span", { class: "num" }, price(p.avg))])));
+  const evs = (x.eventos || []).slice(0, 12);
+  if (evs.length) parts.push(table([{ label: "Cuándo" }, { label: "Evento" }, { label: "Estrategia / cripto" }, { label: "Detalle" }],
+    evs.map((e) => [el("span", { class: "small" }, when(e.ts_ms)), chipOf(EV, e.kind),
+      el("span", { class: "small" }, (e.strategy_id || DASH) + (e.symbol ? " · " + toSym(e.symbol) : "")),
+      el("span", { class: "small" }, e.kind === "fill" ? (e.qty_delta > 0 ? "compra " : "venta ") + fixed(Math.abs(e.qty_delta), 4) + " a " + price(e.price)
+        : ((e.detail || {}).motivo || (e.detail || {}).error || ""))])));
+  return card("Ejecutor en la demo de Bybit", head, ...parts);
 }

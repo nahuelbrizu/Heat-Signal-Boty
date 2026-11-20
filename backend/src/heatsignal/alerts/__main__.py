@@ -30,8 +30,26 @@ def main(argv: list[str] | None = None) -> int:
     a.add_argument("estado", choices=["on", "off"])
     e = sub.add_parser("enviar")
     e.add_argument("alert_id")
+    sub.add_parser("ejecutar", help="ejecutor en la demo de Bybit (Python de Freqtrade: necesita ccxt)")
+    sub.add_parser("ejecutor", help="estado del ejecutor: posiciones virtuales y ultimos eventos")
     args = p.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    if args.cmd in ("ejecutar", "ejecutor"):
+        from . import executor as X
+
+        xcfg = X.default_config()
+        if args.cmd == "ejecutar":
+            out = X.run_once(xcfg)
+            print(json.dumps(out, ensure_ascii=False, default=str))
+            return 0  # 'bloqueado' (sin clave, candado) queda en exec_events y en el panel: no es una caida del servicio
+        st = AlertStore(xcfg.alerts_db)
+        try:
+            book = X.ExecBook(st)
+            print(json.dumps({"posiciones": {f"{k[0]} {k[1]}": v for k, v in book.positions().items()},
+                              "eventos": book.recent(20)}, ensure_ascii=False, indent=2, default=str))
+        finally:
+            st.close()
+        return 0
     from .engine import default_config
 
     cfg = default_config()
