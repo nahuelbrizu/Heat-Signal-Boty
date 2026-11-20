@@ -1459,6 +1459,32 @@ def register_api(app: FastAPI, ctx: PanelContext, build_id: str) -> None:  # noq
         return {**view, "strategies": [{**s, "exits": ficha_json(str(s.get("strategy_id")))} if isinstance(s, dict) else s
                                        for s in view["strategies"]]}
 
+    @app.get("/api/lab/generated")
+    async def lab_generated() -> dict[str, Any]:
+        """Estrategias armadas por bloques (lab/builder.py): registro append-only + su resultado en el laboratorio
+        si ya corrio (lab_summary.json). Sin pandas: solo lee el JSONL y valida."""
+        from ..lab import builder as B
+
+        path = (ctx.lab_summary_path.parent / "lab_generated.jsonl") if ctx.lab_summary_path is not None else B.registry_path()
+
+        def work() -> dict[str, Any]:
+            entries, warns = B.load_entries(path)
+            view = _lab_view(ctx)
+            done = {s.get("strategy_id"): s for s in (view or {}).get("strategies", []) if isinstance(s, dict)} \
+                if isinstance(view, dict) else {}
+            out = []
+            for e in reversed(entries):  # las mas nuevas primero
+                r = done.get(e["strategy_id"])
+                out.append({"strategy_id": e["strategy_id"], "origin": e["origin"], "created_at": e["created_at"],
+                            "note": e.get("note") or "", "describe": B.describe(e["spec"]), "spec": e["spec"],
+                            "lab": None if r is None else {k: r.get(k) for k in (
+                                "sharpe", "sharpe_ci95", "dsr", "trades", "max_drawdown", "total_return", "verdict")}})
+            return json_safe({"registro": str(path), "avisos": warns, "bloques": {
+                "timeframes": sorted(B.TIMEFRAMES), "entradas": ["breakout", "rsi", "ema_cross", "vwap_dev", "opening_range"],
+                "filtros": ["daily_trend", "atr_pct", "session"], "direcciones": list(B.DIRECTIONS)}, "estrategias": out})
+
+        return await asyncio.to_thread(work)
+
     # ---------------------------------------------------------------- investigacion semanal (Managed Agents)
     def _research_base() -> Path:
         if ctx.lab_summary_path is None:

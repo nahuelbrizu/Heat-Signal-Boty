@@ -320,6 +320,7 @@ export async function mount(root, ctx) {
       ", costo de equilibrio ≥ " + fixed(crit.criterios.breakeven_vs_cost_min, 1) + "× el esperado, p contra azar ≤ " + fixed(crit.criterios.p_random_max, 2) +
       ", y ganarle a la canasta y al buy & hold medio.") : null,
     labTable(items, ctx.href, (id) => ctx.navigate(ctx.href("laboratorio", [id]))),
+    generatedCard(ctx),
     programCard(d.program),
     benchmarkCard(d.benchmark_ta),
     card("Pedidos al laboratorio", el("span", { class: "small muted" }, "los corre tu PC (worker); pueden tardar minutos u horas"),
@@ -510,4 +511,36 @@ function holdoutCard(h, charts) {
         .filter(([k]) => k in bd).map(([k, label]) => ({ label, value: k === "comisiones" || k === "slippage" ? -Math.abs(bd[k]) : bd[k], bold: k === "total" })))) : null,
     h.baselines ? el("p", { class: "small muted", style: { marginTop: "8px" } }, "Baselines en el holdout: canasta " + fixed(h.baselines.basket_sharpe, 2) +
       (h.baselines.random_entries ? " · p contra azar " + fixed(h.baselines.random_entries.p_value, 3) : "")) : null);
+}
+
+// ------------------------------------------------------------------ estrategias generadas (lab/builder.py)
+
+/** Estrategias armadas por bloques (registro append-only): reglas, origen (a mano / agente) y resultado si ya corrieron. */
+function generatedCard(ctx) {
+  const box = el("div", {}, loading("Cargando las estrategias generadas…"));
+  const c = card("Estrategias generadas (por bloques)", el("span", { class: "small muted" }, "se combinan piezas fijas: nadie escribe código"), box);
+  api("/api/lab/generated", null, ctx.signal).then((g) => {
+    const xs = g.estrategias || [];
+    const b = g.bloques || {};
+    const help = el("p", { class: "small muted" },
+      "Cada una combina temporalidad (" + (b.timeframes || []).join(", ") + "), entrada (" + (b.entradas || []).join(", ") +
+      "), hasta 3 filtros (" + (b.filtros || []).join(", ") + ") y salida por velas con stop/objetivo en ATR opcionales. " +
+      "El id lleva el hash de la regla: cambiar un número es otra estrategia y otro intento para la corrección estadística.");
+    const warns = (g.avisos || []).map((w) => el("div", { class: "note warn small" }, w));
+    if (!xs.length) { clear(box, help, ...warns, el("p", { class: "muted small" }, "Todavía no hay estrategias generadas.")); return; }
+    clear(box, help, ...warns, table(
+      [{ label: "Estrategia" }, { label: "Regla" }, { label: "Origen" }, { label: "Sharpe OOS", cls: "num" }, { label: "Trades", cls: "num" }, { label: "Veredicto" }],
+      xs.map((s) => {
+        const l = s.lab;
+        const v = l && l.verdict;
+        return [
+          el("a", { href: ctx.href("laboratorio", [s.strategy_id]) }, el("b", { class: "small" }, s.strategy_id)),
+          el("span", { class: "small" }, s.describe, s.note ? el("div", { class: "muted small" }, s.note) : null),
+          chip(s.origin === "agente" ? "agente" : "a mano", s.origin === "agente" ? "info" : ""),
+          el("span", { class: "num" }, l ? fixed(l.sharpe, 2) : "—"),
+          el("span", { class: "num" }, l ? int(l.trades) : "—"),
+          !l ? chip("sin correr", "warn", "todavía no la corrió el laboratorio") : v && v.pasa ? chip("pasa", "ok") : chip("no pasa", "bad")];
+      })));
+  }).catch((e) => { const b = errorBox(e, "las estrategias generadas"); if (b) clear(box, b); });
+  return c;
 }

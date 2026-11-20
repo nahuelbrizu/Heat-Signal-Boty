@@ -604,6 +604,14 @@ El `lab_summary.json` publicado desde la PC (`python -m heatsignal.lab.publish -
 }
 ```
 
+## `GET /api/lab/generated`
+
+Estrategias armadas **por bloques** (`lab/builder.py`, registro append-only `data/lab_generated.jsonl`), las más
+nuevas primero: `{registro, avisos, bloques: {timeframes, entradas, filtros, direcciones}, estrategias: [{strategy_id,
+origin: manual|agente, created_at, note, describe, spec, lab: null | {sharpe, sharpe_ci95, dsr, trades, max_drawdown,
+total_return, verdict}}]}`. `lab` sale de `lab_summary.json` cuando el laboratorio ya la corrió. `avisos`: líneas del
+registro ignoradas (ilegibles o modificadas: el hash no coincide). Se registra antes que `/api/lab/{strategy_id}`.
+
 ## `GET /api/lab/{strategy_id}`
 
 `strategy_id` del laboratorio (`[a-z0-9][a-z0-9._-]*`, p.ej. `donchian-ensemble-v1`; 400 si no). Lee

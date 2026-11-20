@@ -18,9 +18,27 @@
 > - En vivo: "Velas de 5m y 15m en vivo".
 > - Recuperación: "Ciclos que fallan o se pierden".
 > - Demo: "Demo de Bybit en vez de la de Binance".
+> - Generadas y alertas: "Estrategias generadas por bloques".
 > - Decisiones pendientes: sección `## Abiertas` (cerca del final).
 
 ## Cerradas
+- **Estrategias generadas por bloques + alertas de oportunidad (2026-11-21, fase 1 hecha).** Pedido del usuario:
+  "haz estrategias de 1hs, de 15 min y 5 min" y "haz que las arme la aplicacion, genera un apartado para que luego de
+  hacer todos los analisis genere alertas de posibilidades y de ahi las mandemos o las haga automaticamente los bots".
+  Elegido (preguntado): que el agente las invente; alertas de TODAS las estrategias con su estado en el laboratorio;
+  ejecucion en la demo de Bybit; manual + automatico por estrategia (apagado por defecto). Plan: (1) constructor por
+  bloques, (3) alertas, (4) ejecutor en la demo (otra cuenta/subcuenta demo: la actual es de Donchian), (2) el agente
+  propone hasta 5 por semana (~US$0,05/corrida, con OK del usuario). Fase 1 (`lab/builder.py`, `builder-v1`): JSON
+  con piezas fijas (temporalidad 5min/15min/1h; entrada breakout | rsi | ema_cross | vwap_dev | opening_range; hasta 3
+  filtros daily_trend | atr_pct | session; salida por velas + stop/objetivo en ATR opcionales; direccion) con rangos
+  cerrados: el agente nunca escribe codigo. `strategy_id = gen-<name>-<hash8>` (hash de la regla normalizada, sin la
+  descripcion): cambiar un numero es otra estrategia y otro intento (grilla vacia = 1 combinacion para el DSR).
+  Registro append-only `data/lab_generated.jsonl` (linea modificada -> hash no coincide -> se ignora con aviso); se
+  suman al CATALOG y a EXITS (ficha desde los bloques) sin pisar las escritas a mano. Verificado: sin mirar el futuro
+  (senales hasta T iguales con o sin datos posteriores). CLI `python -m heatsignal.lab.builder validar|agregar
+  [--encolar]|listar`; panel Laboratorio -> "Estrategias generadas (por bloques)" (`GET /api/lab/generated`). Los
+  tests apuntan HEATSIGNAL_GENERATED_PATH a un archivo inexistente (tests/conftest.py) para no depender del registro
+  real. Advertencia registrada: en 5m/15m el catalogo escrito a mano fallo siempre por costos (~14 bps ida y vuelta).
 - **Demo de Bybit en vez de la de Binance (2026-11-20).** Pedido del usuario: "vamos a correr las simulaciones en el
   demo de binance". Verificado: la ayuda de Binance Demo Trading dice que "puede haber discrepancias en los graficos,
   en los precios del libro de ordenes y en la ejecucion" respecto del mercado real (mercado aparte; ademas solo en

@@ -1624,3 +1624,14 @@ CATALOG.update({
         grid={"interval": [0.02, 0.04]}, source=_GRILLA_SRC), grilla),
 })
 LOTE7 = ("grilla-long-v1", "grilla-long-lateral-v1")
+
+# Estrategias GENERADAS por bloques (lab/builder.py, 2026-11-21): registro append-only data/lab_generated.jsonl.
+# Se suman al final y nunca pisan una del catalogo escrito a mano (prefijo gen-). Registro roto -> se ignora y se avisa.
+try:
+    from .builder import generated_catalog as _generated_catalog
+
+    CATALOG.update({k: v for k, v in _generated_catalog().items() if k not in CATALOG})
+except Exception:  # noqa: BLE001 - el catalogo escrito a mano nunca se cae por las generadas
+    import logging as _logging
+
+    _logging.getLogger("heatsignal.lab.builder").exception("no se pudieron cargar las estrategias generadas")

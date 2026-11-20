@@ -359,6 +359,32 @@ DESCRIPTIVE_STOPS_ATR = (1.0, 1.5, 2.0)
 # ---- textos -----------------------------------------------------------------------------------------------------
 
 
+def generated_ficha(spec: dict[str, Any]) -> dict[str, Any]:
+    """Ficha de salidas de una estrategia generada por bloques (lab/builder.py), armada desde su spec normalizada.
+    `param` None: los valores son fijos de la regla (cambiarlos es otra estrategia, con otro id)."""
+    from .builder import TIMEFRAMES
+
+    x, tf = spec["exit"], spec["timeframe"]
+    base = f"ATR(14) de {tf} desde el close de entrada"
+    stop = {"tipo": "atr", "valor": x["stop_atr"], "param": None, "base": base, **_ATR_1M} if x.get("stop_atr") else None
+    tp = {"tipo": "atr", "valor": x["target_atr"], "param": None, "base": base, **_ATR_1M} if x.get("target_atr") else None
+    hours = x["bars"] * TIMEFRAMES[tf] / 60
+    parts = [f"stop {_n(x['stop_atr'])} ATR" if stop else "sin stop", f"objetivo {_n(x['target_atr'])} ATR" if tp else "sin objetivo",
+             f"máximo {x['bars']} velas de {tf}"]
+    return {"stop": stop, "take_profit": tp, "tiempo": _t(hours, "h", None, "bloques de la estrategia"), "otra": None,
+            "nota": "Generada por bloques: " + ", ".join(parts) + ".", "cierre": "tiempo", "giro": "tiempo"}
+
+
+def _generated_exits() -> dict[str, dict[str, Any]]:
+    try:
+        from .builder import load_entries
+
+        entries, _ = load_entries()
+    except Exception:  # noqa: BLE001 - las fichas escritas a mano nunca se caen por las generadas
+        return {}
+    return {e["strategy_id"]: generated_ficha(e["spec"]) for e in entries}
+
+
 def _n(v: Any) -> str:
     if isinstance(v, float) and v.is_integer():
         v = int(v)
@@ -751,3 +777,8 @@ def attribute(strategy_id: str, rule, data: dict[str, Any], params: dict[str, An
     out.update({"strategy_id": strategy_id, "trades": sum(out["por_motivo"].values()),
                 "verificacion": {"coincide": ok, "llamadas": len(rec)}, "ficha": ficha_json(strategy_id)})
     return out
+
+
+# Fichas de las estrategias GENERADAS por bloques (lab/builder.py): al final del modulo (usa _n/_t). No pisan las
+# escritas a mano. Mismo registro que el CATALOG, asi EXITS y CATALOG tienen las mismas estrategias.
+EXITS.update({k: v for k, v in _generated_exits().items() if k not in EXITS})
