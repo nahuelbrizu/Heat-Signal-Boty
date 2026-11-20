@@ -1643,6 +1643,38 @@ def register_api(app: FastAPI, ctx: PanelContext, build_id: str) -> None:  # noq
             raise HTTPException(status_code=500, detail=cmp["error"])
         return cmp
 
+    @app.get("/api/paper/demo")
+    async def paper_demo() -> dict[str, Any]:
+        """donchian-ensemble-v1 en la demo de Bybit (ordenes reales, fondos ficticios) y su comparacion operacion por
+        operacion contra el dry-run de Binance. Sin la base de la demo: `configured: false` y los pasos para armarla."""
+        src = ctx.demo
+        setup = ["Bybit: entrar a la cuenta real, pasar a 'Demo Trading' (cuenta aparte, con su propio usuario) y en el "
+                 "avatar -> API crear una clave (lectura + operar contratos; sin retiros). No usar claves de Testnet.",
+                 "Pegar la clave y el secreto en ~/heatsignal/freqtrade/config.bybitdemo.secrets.json (fuera de git).",
+                 "systemctl --user enable --now heatsignal-freqtrade-bybitdemo"]
+        if src is None or not Path(src.db_path).is_file():
+            return {"configured": False, "db": None if src is None else str(src.db_path), "setup": setup}
+
+        def work() -> dict[str, Any]:
+            from ..paper import freqtrade_db as ftdb
+
+            d = _paper_dump(src)
+            api = ftdb.api_snapshot(src.api_url, src.secrets_path, fetch=src.fetch) if src.api_url else \
+                {"ok": False, "url": None, "error": "API de la demo no configurada"}
+            state = ftdb.paper_state(d, api=api, wallet_start=src.wallet)
+            vs = None
+            if ctx.paper is not None:
+                try:
+                    vs = ftdb.demo_vs_dryrun(d, _paper_dump(ctx.paper))
+                except HTTPException as exc:
+                    vs = {"error": exc.detail}
+            return json_safe({"configured": True, **state, "vs_dryrun": vs,
+                              "nota": "Demo de Bybit: ordenes reales contra el libro de Bybit con fondos ficticios. "
+                                      "La comparacion es contra el dry-run de Binance (misma estrategia): parte de la "
+                                      "diferencia de precio es el spread entre exchanges, no slippage."})
+
+        return await _paper_cached("demo", 10.0, work)
+
     @app.get("/api/paper/hypotheses")
     async def paper_hypotheses() -> Any:
         """Hipotesis de 1h mandadas al Freqtrade de hipotesis (dry-run) y su comparacion con la resolucion."""

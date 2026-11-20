@@ -1,0 +1,60 @@
+{
+  "$comment": "HeatSignal - donchian-ensemble-v1 en la DEMO DE BYBIT (ordenes reales contra el libro de Bybit, fondos ficticios). Misma estrategia y capital que el dry-run de Binance (config.dryrun.json) para compararlos operacion por operacion en el panel (Paper trading -> Demo de Bybit). Claves de la cuenta demo y api_server (127.0.0.1:8083) en config.bybitdemo.secrets.json, fuera de git. dry_run=false: Freqtrade manda ordenes de verdad, pero a api-demo.bybit.com. Sin stop en el exchange por ahora: la estrategia no tiene stop (-99 %, sale por canal) y un stop rechazado hace que Freqtrade cierre de emergencia, rompiendo la comparacion con el dry-run. Se activa junto con el stop de catastrofe (decisions.md, 'Stop loss'), cuando el usuario lo confirme.",
+  "strategy": "DonchianEnsembleV1",
+  "dry_run": false,
+  "stake_currency": "USDT",
+  "stake_amount": "unlimited",
+  "tradable_balance_ratio": 0.99,
+  "max_open_trades": 7,
+  "trading_mode": "futures",
+  "margin_mode": "isolated",
+  "timeframe": "4h",
+  "cancel_open_orders_on_exit": false,
+  "unfilledtimeout": {
+    "entry": 10,
+    "exit": 10,
+    "unit": "minutes"
+  },
+  "entry_pricing": {
+    "price_side": "other",
+    "use_order_book": true,
+    "order_book_top": 1
+  },
+  "exit_pricing": {
+    "price_side": "other",
+    "use_order_book": true,
+    "order_book_top": 1
+  },
+  "order_types": {
+    "entry": "market",
+    "exit": "market",
+    "stoploss": "market",
+    "stoploss_on_exchange": false
+  },
+  "exchange": {
+    "name": "bybit",
+    "demo_trading": true,
+    "key": "",
+    "secret": "",
+    "pair_whitelist": [
+      "BTC/USDT:USDT",
+      "SOL/USDT:USDT",
+      "XRP/USDT:USDT",
+      "ETH/USDT:USDT",
+      "XLM/USDT:USDT",
+      "BNB/USDT:USDT",
+      "TRX/USDT:USDT"
+    ]
+  },
+  "pairlists": [
+    {
+      "method": "StaticPairList"
+    }
+  ],
+  "bot_name": "heatsignal-donchian-bybitdemo",
+  "initial_state": "running",
+  "internals": {
+    "process_throttle_secs": 30
+  },
+  "available_capital": 10000
+}

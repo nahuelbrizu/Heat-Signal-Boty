@@ -717,6 +717,21 @@ existe la base del dry-run (...)"). Si la base existe pero la API no responde: 2
 - `ci95`: Wilson 95 % de la tasa de acierto. Con menos de 30 cerradas `notes` avisa que la muestra es chica.
 - `compare`: resumen de la última comparación publicada (ver abajo) o `null`.
 
+## `GET /api/paper/demo`
+
+donchian-ensemble-v1 en la **demo de Bybit** (tercera instancia de Freqtrade, `heatsignal-freqtrade-bybitdemo`,
+API 127.0.0.1:8083, base `data/freqtrade_bybitdemo.sqlite`): órdenes reales contra el libro de Bybit con fondos
+ficticios, mismo capital (10.000) que el dry-run. Cache 10 s.
+
+- Sin la base: `{"configured": false, "db", "setup": [pasos]}` (200).
+- Con la base: los mismos campos que `/api/paper` + `configured: true`, `nota` y `vs_dryrun`
+  (`freqtrade_db.demo_vs_dryrun`): operaciones emparejadas con el dry-run de Binance por par + dirección + apertura a
+  menos de 4 h desde que arrancó la demo (`pairs[]` con `entry_bps` / `exit_bps`, positivos = peor precio en la
+  demo, `delay_s`, `demo_return` / `dry_return`), `solo_demo` / `solo_dryrun` (rechazos, mínimos, saldo, timing),
+  medias `entry_bps_mean`, `exit_bps_mean`, `return_diff_mean`. Son exchanges distintos: parte de la diferencia de
+  precio es el spread entre Bybit y Binance, no slippage.
+- Env: `HEATSIGNAL_FT_DEMO_DB`, `HEATSIGNAL_FT_DEMO_SECRETS`, `HEATSIGNAL_FT_DEMO_API` (`""` = no consultar la API).
+
 ## `GET /api/paper/compare`
 
 `paper_summary.json` que sube la PC (`python -m heatsignal.lab.paper_compare --upload`, timer semanal

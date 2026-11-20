@@ -144,6 +144,10 @@ class RunConfig:
     ft_hyp_secrets: str = "~/heatsignal/freqtrade/config.hyp.secrets.json"
     ft_hyp_api: str = "http://127.0.0.1:8082"
     ft_bridge_db: str | None = None  # None = ft_bridge.sqlite junto a la base de evaluacion
+    # donchian-ensemble-v1 en la demo de Bybit (tercera instancia, ordenes reales con fondos ficticios)
+    ft_demo_db: str = "~/heatsignal/data/freqtrade_bybitdemo.sqlite"
+    ft_demo_secrets: str = "~/heatsignal/freqtrade/config.bybitdemo.secrets.json"
+    ft_demo_api: str = "http://127.0.0.1:8083"
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> RunConfig:
@@ -232,6 +236,9 @@ class RunConfig:
             ft_hyp_secrets=_opt("HEATSIGNAL_FT_HYP_SECRETS") or "~/heatsignal/freqtrade/config.hyp.secrets.json",
             ft_hyp_api=env.get("HEATSIGNAL_FT_HYP_API", "http://127.0.0.1:8082").strip(),
             ft_bridge_db=_opt("HEATSIGNAL_FT_BRIDGE_DB"),
+            ft_demo_db=_opt("HEATSIGNAL_FT_DEMO_DB") or "~/heatsignal/data/freqtrade_bybitdemo.sqlite",
+            ft_demo_secrets=_opt("HEATSIGNAL_FT_DEMO_SECRETS") or "~/heatsignal/freqtrade/config.bybitdemo.secrets.json",
+            ft_demo_api=env.get("HEATSIGNAL_FT_DEMO_API", "http://127.0.0.1:8083").strip(),
         )
 
     def enabled_exchanges(self) -> list[str]:
@@ -546,6 +553,12 @@ async def start_panel(
             secrets_path=Path(cfg.freqtrade_secrets).expanduser() if cfg.freqtrade_secrets else None,
             api_url=cfg.freqtrade_api or None,
             summary_path=Path(cfg.eval_db).parent / "paper_summary.json",
+            wallet=cfg.paper_wallet,
+        ),
+        demo=PaperSources(
+            db_path=Path(cfg.ft_demo_db).expanduser(),
+            secrets_path=Path(cfg.ft_demo_secrets).expanduser() if cfg.ft_demo_secrets else None,
+            api_url=cfg.ft_demo_api or None,
             wallet=cfg.paper_wallet,
         ),
         health=health,

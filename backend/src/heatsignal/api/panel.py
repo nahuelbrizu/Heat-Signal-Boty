@@ -130,6 +130,7 @@ class PanelContext:
     settings: dict[str, Any] = field(default_factory=dict)  # intervalos y retenciones para /api/system
     lab_requests: Any = None  # evaluation.lab_requests.LabRequestStore: cola "Mandar al laboratorio"
     paper: PaperSources | None = None  # paper trading (Freqtrade dry-run): base, API REST y comparacion publicada
+    demo: PaperSources | None = None  # la misma estrategia en la demo de Bybit (ordenes reales, fondos ficticios)
     archive: Any = None  # history.cold.ColdReader: lectura fria de lo archivado en Drive (almacenamiento por niveles)
     paperbot_db: Path | None = None  # data/paperbot.sqlite del bot propio de paper trading (lote 3), solo lectura
     hyp_bridge: HypBridgeSources | None = None  # hipotesis de 1h en el Freqtrade de hipotesis (dry-run), solo lectura

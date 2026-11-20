@@ -1,0 +1,27 @@
+# donchian-ensemble-v1 con Freqtrade en la DEMO DE BYBIT: ordenes reales contra el libro de Bybit con fondos
+# ficticios (api-demo.bybit.com), sin stop en el exchange (como el dry-run). Misma estrategia y capital que el dry-run de Binance
+# (heatsignal-freqtrade) para compararlos en el panel (Paper trading -> Demo de Bybit). FreqUI/API en 127.0.0.1:8083.
+# Claves de la cuenta demo + api_server en freqtrade/config.bybitdemo.secrets.json (fuera de git).
+# No arranca mientras el secreto tenga el marcador PEGAR_ (ExecCondition).
+[Unit]
+Description=HeatSignal Freqtrade demo de Bybit (donchian-ensemble-v1)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/nahue/heatsignal/freqtrade
+ExecCondition=/bin/sh -c '! grep -q PEGAR_ /home/nahue/heatsignal/freqtrade/config.bybitdemo.secrets.json'
+ExecStart=/home/nahue/freqtrade/.venv/bin/freqtrade trade \
+  -c /home/nahue/heatsignal/freqtrade/config.bybitdemo.json \
+  -c /home/nahue/heatsignal/freqtrade/config.bybitdemo.secrets.json \
+  --userdir /home/nahue/heatsignal/freqtrade/user_data \
+  --db-url sqlite:////home/nahue/heatsignal/data/freqtrade_bybitdemo.sqlite \
+  --logfile /home/nahue/heatsignal/freqtrade/user_data/logs/freqtrade-bybitdemo.log
+Restart=always
+RestartSec=30
+MemoryMax=700M
+Nice=5
+
+[Install]
+WantedBy=default.target

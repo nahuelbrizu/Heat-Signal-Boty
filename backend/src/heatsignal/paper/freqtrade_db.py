@@ -485,6 +485,72 @@ def brief(d: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+DEMO_MATCH_MS = 4 * 3_600_000  # una vela de 4h (timeframe de donchian-ensemble-v1)
+
+
+def _bps_against(demo: float | None, ref: float | None, *, worse_if_higher: bool) -> float | None:
+    """Diferencia de precio demo vs dry-run en bps, positiva = la demo consiguio PEOR precio."""
+    if not demo or not ref:
+        return None
+    x = (demo / ref - 1) * 10_000
+    return x if worse_if_higher else -x
+
+
+def demo_vs_dryrun(demo: dict[str, Any], dry: dict[str, Any], *, match_ms: int = DEMO_MATCH_MS) -> dict[str, Any]:
+    """Misma estrategia en la demo de Bybit (ordenes reales, fondos ficticios) y en el dry-run de Binance (ordenes
+    simuladas): empareja operaciones por par + direccion + apertura a menos de `match_ms`, desde que arranco la demo.
+
+    Mide lo que el dry-run no ve: precio de ejecucion (bps; + = peor en la demo), demora, operaciones que hizo uno
+    solo (rechazos, minimos, saldo) y la diferencia de PnL. Ojo: son exchanges distintos (Bybit vs Binance): parte de
+    la diferencia de precio es el spread entre exchanges, no slippage."""
+    start = demo.get("kv", {}).get("bot_start_time") or min(
+        (t["open_ms"] for t in demo.get("trades", []) if t["open_ms"]), default=None)
+    dtr = sorted((t for t in demo.get("trades", []) if t["open_ms"]), key=lambda t: t["open_ms"])
+    rtr = sorted((t for t in dry.get("trades", []) if t["open_ms"] and (start is None or t["open_ms"] >= start - match_ms)),
+                 key=lambda t: t["open_ms"])
+    used: set[Any] = set()
+    pairs, solo_demo = [], []
+    for t in dtr:
+        cand = [r for r in rtr if r["id"] not in used and r["pair"] == t["pair"] and r["is_short"] == t["is_short"]
+                and abs(r["open_ms"] - t["open_ms"]) <= match_ms]
+        if not cand:
+            solo_demo.append({"symbol": t["symbol"], "direction": "short" if t["is_short"] else "long",
+                              "open_ms": t["open_ms"], "open_at": iso(t["open_ms"]), "is_open": t["is_open"]})
+            continue
+        r = min(cand, key=lambda r: abs(r["open_ms"] - t["open_ms"]))
+        used.add(r["id"])
+        closed = not t["is_open"] and not r["is_open"]
+        pairs.append({
+            "symbol": t["symbol"], "direction": "short" if t["is_short"] else "long",
+            "demo_open_ms": t["open_ms"], "dry_open_ms": r["open_ms"], "open_at": iso(t["open_ms"]),
+            "delay_s": (t["open_ms"] - r["open_ms"]) / 1000,
+            "demo_open_rate": t["open_rate"], "dry_open_rate": r["open_rate"],
+            "entry_bps": _bps_against(t["open_rate"], r["open_rate"], worse_if_higher=not t["is_short"]),
+            "exit_bps": _bps_against(t["close_rate"], r["close_rate"], worse_if_higher=t["is_short"]) if closed else None,
+            "closed": closed, "demo_return": t["close_profit"] if closed else None,
+            "dry_return": r["close_profit"] if closed else None,
+            "demo_exit_reason": t["exit_reason"], "dry_exit_reason": r["exit_reason"],
+        })
+    solo_dry = [{"symbol": r["symbol"], "direction": "short" if r["is_short"] else "long", "open_ms": r["open_ms"],
+                 "open_at": iso(r["open_ms"]), "is_open": r["is_open"]}
+                for r in rtr if r["id"] not in used and (start is None or r["open_ms"] >= start)]
+
+    def mean(xs: list[float | None]) -> float | None:
+        v = [x for x in xs if x is not None]
+        return sum(v) / len(v) if v else None
+
+    closed = [p for p in pairs if p["closed"]]
+    return {
+        "demo_start_ms": start, "demo_start_at": iso(start), "match_window_s": match_ms / 1000,
+        "paired": len(pairs), "closed_paired": len(closed), "solo_demo": solo_demo, "solo_dryrun": solo_dry,
+        "entry_bps_mean": mean([p["entry_bps"] for p in pairs]),
+        "exit_bps_mean": mean([p["exit_bps"] for p in closed]),
+        "return_diff_mean": mean([(p["demo_return"] - p["dry_return"]) for p in closed
+                                  if p["demo_return"] is not None and p["dry_return"] is not None]),
+        "pairs": pairs,
+    }
+
+
 # ---- CLI (tambien es lo que corre la PC por SSH con `python3 - dump RUTA`) ---------------------------------
 
 

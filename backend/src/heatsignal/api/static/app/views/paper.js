@@ -38,10 +38,16 @@ export async function mount(root, ctx) {
   const head = pageHead("Paper trading", "Freqtrade en dry-run de donchian-ensemble-v1 y, abajo, las hipótesis de 1h en una segunda instancia: dinero simulado, precios reales de Binance. Solo lectura.",
     el("a", { class: "btn", href: ctx.href("paperbot") }, "Bot paper propio →"));
   const top = el("div", {}, loading());
+  const demoBox = el("div", {}, loading("Cargando la demo de Bybit…"));
   const cmpBox = el("div", {}, loading("Cargando la comparación con el backtest…"));
   // Segunda instancia de Freqtrade (hipotesis de 1h del grafo): seccion aparte, independiente del bot de Donchian
   const hypBox = el("div", { class: "stack", style: { marginTop: "24px" } }, loading("Cargando las hipótesis en Freqtrade…"));
-  clear(root, head, top, cmpBox, hypBox);
+  clear(root, head, top, demoBox, cmpBox, hypBox);
+  async function loadDemo() {
+    try { clear(demoBox, renderDemo(await api("/api/paper/demo", null, ctx.signal))); } catch (e) {
+      const b = errorBox(e, "la demo de Bybit"); if (b) clear(demoBox, b);
+    }
+  }
   const charts = [];
   let paper = null;
 
@@ -70,9 +76,46 @@ export async function mount(root, ctx) {
   }
   ctx.redraw = () => { if (paper) { charts.splice(0).forEach(disposeChart); clear(top, ...renderPaper(paper, f, ctx, charts)); loadCompare(); } };
   let loadHyp = null;
-  await Promise.all([load(), loadCompare(), mountHypFt(hypBox, ctx).then((f) => { loadHyp = f; })]);
-  ctx.every(30000, () => { load(); if (loadHyp) loadHyp(); });
-  return { refresh: () => { load(); loadCompare(); if (loadHyp) loadHyp(); }, unmount: () => charts.forEach(disposeChart) };
+  await Promise.all([load(), loadDemo(), loadCompare(), mountHypFt(hypBox, ctx).then((f) => { loadHyp = f; })]);
+  ctx.every(30000, () => { load(); loadDemo(); if (loadHyp) loadHyp(); });
+  return { refresh: () => { load(); loadDemo(); loadCompare(); if (loadHyp) loadHyp(); }, unmount: () => charts.forEach(disposeChart) };
+}
+
+// ------------------------------------------------------------------ demo de Bybit (ordenes reales, fondos ficticios)
+
+function renderDemo(d) {
+  const title = "Demo de Bybit: la misma estrategia con órdenes reales";
+  if (!d.configured) {
+    return card(title, chip("sin configurar", "warn"),
+      el("p", {}, "Tercera instancia de Freqtrade con donchian-ensemble-v1 en la cuenta demo de Bybit: órdenes reales contra el libro de Bybit, fondos ficticios. Mide lo que el dry-run no ve: precio de ejecución, demoras y rechazos. Sin stop en el exchange por ahora (la estrategia sale por canal, igual que el dry-run)."),
+      el("ol", { class: "small" }, ...(d.setup || []).map((s) => el("li", {}, s))));
+  }
+  const b = d.bot || {}, w = d.wallet || {}, t = d.totals || {}, v = d.vs_dryrun || {};
+  const apiOk = d.source && d.source.api && d.source.api.ok;
+  const stats = el("div", { class: "stats" },
+    stat("Bot", el("span", { class: "chips" }, chip("demo Bybit", "info"),
+      b.state ? chip(b.state === "running" ? "corriendo" : b.state, b.state === "running" ? "ok" : "warn") : chip("API sin respuesta", "warn")),
+      (b.strategy || DASH)),
+    stat("Wallet (equity)", isNum(w.equity) ? money(w.equity) : money(w.start + (w.realized || 0)),
+      "inicial " + money(w.start) + (isNum(w.return) ? " · " + signedFrac(w.return, 2) : ""), isNum(w.return) ? (w.return >= 0 ? "ok-t" : "bad-t") : ""),
+    stat("Operaciones", int(t.closed) + " cerradas", int(t.open) + " abiertas" + (apiOk ? "" : " · API sin respuesta")),
+    stat("Precio de entrada vs dry-run", bps(v.entry_bps_mean), int(v.paired) + " emparejadas (+ = peor en la demo)", isNum(v.entry_bps_mean) && v.entry_bps_mean > 0 ? "warn-t" : ""),
+    stat("Precio de salida vs dry-run", bps(v.exit_bps_mean), int(v.closed_paired) + " cerradas en las dos"),
+    stat("Solo en una", int((v.solo_demo || []).length) + " demo · " + int((v.solo_dryrun || []).length) + " dry-run", "rechazos, mínimos, saldo o timing"));
+  const rows = (v.pairs || []).slice(-20).reverse().map((p) => [
+    when(p.demo_open_ms), pairName(p.symbol), chip(p.direction, p.direction === "long" ? "ok" : "bad"),
+    el("span", { class: "num small" }, price(p.demo_open_rate) + " / " + price(p.dry_open_rate)),
+    el("span", { class: "num" }, bps(p.entry_bps)), el("span", { class: "num" }, bps(p.exit_bps)),
+    el("span", { class: "num small" }, isNum(p.delay_s) ? num(p.delay_s / 60, 1) + " min" : DASH),
+    el("span", { class: "num small" }, (isNum(p.demo_return) ? signedFrac(p.demo_return, 2) : DASH) + " / " + (isNum(p.dry_return) ? signedFrac(p.dry_return, 2) : DASH))]);
+  return card(title, d.source && d.source.read_at ? "leído " + when(d.source.read_at_ms) : null,
+    stats,
+    (d.notes || []).map((n) => el("div", { class: "note warn" }, n)),
+    v.error ? el("div", { class: "note warn" }, "Sin comparación con el dry-run: " + v.error) : null,
+    rows.length ? table([{ label: "Apertura" }, { label: "Par" }, { label: "Dir." }, { label: "Entrada demo / dry-run" },
+      { label: "Entrada", cls: "num" }, { label: "Salida", cls: "num" }, { label: "Demora" }, { label: "Resultado demo / dry-run" }], rows)
+      : el("p", { class: "muted small" }, "Todavía no hay operaciones emparejadas (la estrategia es de 4h: puede tardar días en entrar)."),
+    el("p", { class: "small muted" }, d.nota || ""));
 }
 
 // FreqUI: puerto local del tunel permanente heatsignal-tunnel (la URL viene de /api/paper; sin respuesta se arma con el mismo esquema que el panel)

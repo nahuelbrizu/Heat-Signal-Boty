@@ -17,9 +17,23 @@
 > - Bot paper: "Enviar estrategias del laboratorio al bot".
 > - En vivo: "Velas de 5m y 15m en vivo".
 > - Recuperación: "Ciclos que fallan o se pierden".
+> - Demo: "Demo de Bybit en vez de la de Binance".
 > - Decisiones pendientes: sección `## Abiertas` (cerca del final).
 
 ## Cerradas
+- **Demo de Bybit en vez de la de Binance (2026-11-20).** Pedido del usuario: "vamos a correr las simulaciones en el
+  demo de binance". Verificado: la ayuda de Binance Demo Trading dice que "puede haber discrepancias en los graficos,
+  en los precios del libro de ordenes y en la ejecucion" respecto del mercado real (mercado aparte; ademas solo en
+  algunos paises) y Freqtrade 2026.9 la bloquea a proposito (`supports_demo_trading: False`, "separate market - not a
+  simulated live market"). Bybit V5 demo: "public data is identical to mainnet", "basic trading rules are the same as
+  real trading", REST `api-demo.bybit.com`, clave creada en la cuenta real -> Demo Trading (no Testnet), ordenes
+  guardadas 7 dias. Elegido (preguntado): demo de Bybit. Tercera instancia `heatsignal-freqtrade-bybitdemo`
+  (`freqtrade/config.bybitdemo.json`: donchian-ensemble-v1, `dry_run: false`, `exchange.demo_trading: true`,
+  `available_capital` 10.000 = el dry-run). Sin stop en el exchange por ahora: la estrategia no tiene stop (-99 %) y un
+  stop rechazado hace que Freqtrade cierre de emergencia; se activa con el stop de catastrofe cuando el usuario lo
+  confirme. Panel Paper trading -> "Demo de Bybit" (`GET /api/paper/demo`): empareja cada operacion con la del dry-run
+  de Binance (par + direccion + apertura a < 4 h) y mide bps de entrada/salida, demora, operaciones que hizo uno solo
+  y diferencia de resultado. Limite: parte de la diferencia de precio es el spread Bybit-Binance, no slippage.
 - **Ciclos que fallan o se pierden: reintento y revisión del hueco (2026-11-19).** Pedido del usuario: "cuando no
   puede hacer correr por algun error, cuando vuelva la red o se resulva el error analize el ciclo para analizar el
   sentido y revisarlo, de manera simple". Caso real: PC suspendida 03:00-10:10 UTC y sin cable de red al volver.

@@ -41,6 +41,11 @@ Ahora todo corre en la PC (WSL) como **servicios de usuario** (`systemctl --user
 - **En vivo (2026-11-19)**: velas de 5m/15m cerradas con los bars_1m propios (`features/live.py`); panel "En vivo"
   sigue cada hipotesis abierta con alertas de codigo; el Analista de Contexto recibe una linea por cripto. No abre ni
   cierra hipotesis.
+- **Demo de Bybit (2026-11-20, armada, falta la clave)**: `heatsignal-freqtrade-bybitdemo` (deshabilitado hasta que
+  el usuario pegue la clave demo en `freqtrade/config.bybitdemo.secrets.json`; ExecCondition lo frena con el marcador
+  PEGAR_) corre donchian-ensemble-v1 en la demo de Bybit, API :8083. Panel Paper trading -> "Demo de Bybit".
+- **La PC se suspende**: 2026-11-19 03:00-10:10, 11:01-11:12, 15:44 -> 2026-11-20 14:19 y 14:37-15:08 UTC sin
+  datos. Hay que desactivar la suspension de Windows.
 - **Macro caido (2026-11-19)**: el DNS de la red de la PC devuelve NXDOMAIN para `gamma-api.polymarket.com`
   (1.1.1.1 y 8.8.8.8 si resuelven) y falta `FRED_API_KEY` en `~/heatsignal/.env`. El calendario si se exporta.
 - **Tope de LLM (2026-11-18, pedido del usuario):** US$5 por semana para todo lo que se analiza (grafo + lecciones +
